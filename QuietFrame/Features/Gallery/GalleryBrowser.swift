@@ -93,7 +93,7 @@ private struct GalleryBrowserContent: View {
             matching: .any(of: [.images, .videos]),
             preferredItemEncoding: .current
         )
-        .onChange(of: pickerItems) { _, newItems in
+        .onChange(of: pickerItems) { newItems in
             guard !newItems.isEmpty else { return }
             showsImportPreview = true
             importViewModel.prepare(items: newItems)

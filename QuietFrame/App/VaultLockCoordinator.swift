@@ -41,7 +41,7 @@ final class VaultLockCoordinator {
         modelContext: ModelContext,
         cancelMediaOperations: (@Sendable () async -> Void)? = nil,
         postUnlockMaintenance: (@Sendable () async throws -> Void)? = nil,
-        now: @escaping @Sendable () -> Date = Date.init
+        now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.authentication = authentication
         self.secureStorage = secureStorage

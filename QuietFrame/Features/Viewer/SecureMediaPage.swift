@@ -65,7 +65,7 @@ private struct SecurePhotoPage: View {
                 location: media.isTrashed ? .trash : .media,
                 maximumByteCount: 512 * 1_024 * 1_024
             )
-            let decoded = await Task.detached(priority: .userInitiated) {
+            let decoded: UIImage? = await Task.detached(priority: .userInitiated) { () -> UIImage? in
                 guard let source = CGImageSourceCreateWithData(data as CFData, nil),
                       let image = CGImageSourceCreateThumbnailAtIndex(
                         source,

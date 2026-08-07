@@ -69,7 +69,7 @@ actor AuthenticationService: AuthenticationServicing {
         keychain: any KeychainServing,
         session: VaultSession,
         policy: Policy = .production,
-        now: @escaping @Sendable () -> Date = Date.init
+        now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.keychain = keychain
         self.session = session
@@ -219,6 +219,7 @@ actor AuthenticationService: AuthenticationServicing {
         switch context.biometryType {
         case .faceID: return .faceID
         case .touchID: return .touchID
+        case .opticID: return .none
         case .none: return .none
         @unknown default: return .none
         }
