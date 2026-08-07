@@ -1,0 +1,18 @@
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+
+# Build products
+build/
+DerivedData/
+*.ipa
+*.xcarchive
+
+# macOS
+.DS_Store
+
+# Signing material must never be committed
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile

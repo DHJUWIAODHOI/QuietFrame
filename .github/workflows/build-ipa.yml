@@ -1,0 +1,68 @@
+name: Build Unsigned IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Archive QuietFrame
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Archive without signing
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project QuietFrame.xcodeproj \
+            -scheme QuietFrame \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/QuietFrame.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            AD_HOC_CODE_SIGNING_ALLOWED=NO \
+            clean archive \
+            | tee "$RUNNER_TEMP/xcodebuild.log"
+
+      - name: Package unsigned IPA
+        run: |
+          APP_PATH="$RUNNER_TEMP/QuietFrame.xcarchive/Products/Applications/QuietFrame.app"
+          test -d "$APP_PATH"
+          mkdir -p "$RUNNER_TEMP/package/Payload"
+          cp -R "$APP_PATH" "$RUNNER_TEMP/package/Payload/QuietFrame.app"
+          cd "$RUNNER_TEMP/package"
+          ditto -c -k --sequesterRsrc --keepParent Payload QuietFrame-unsigned.ipa
+          shasum -a 256 QuietFrame-unsigned.ipa > QuietFrame-unsigned.ipa.sha256
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuietFrame-unsigned-ipa
+          path: |
+            ${{ runner.temp }}/package/QuietFrame-unsigned.ipa
+            ${{ runner.temp }}/package/QuietFrame-unsigned.ipa.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuietFrame-build-log
+          path: ${{ runner.temp }}/xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 7

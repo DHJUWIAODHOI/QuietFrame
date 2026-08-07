@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="64" y1="48" x2="954" y2="970" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#090A10"/>
+      <stop offset="0.58" stop-color="#1D172B"/>
+      <stop offset="1" stop-color="#372650"/>
+    </linearGradient>
+    <linearGradient id="lens" x1="330" y1="290" x2="710" y2="744" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B9C3FF"/>
+      <stop offset="1" stop-color="#7155D8"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <rect x="174" y="174" width="676" height="676" rx="202" fill="none" stroke="#FFFFFF" stroke-opacity="0.16" stroke-width="28"/>
+  <circle cx="512" cy="512" r="218" fill="#05060A" stroke="#FFFFFF" stroke-opacity="0.9" stroke-width="30"/>
+  <circle cx="512" cy="512" r="142" fill="url(#lens)"/>
+  <path d="M512 374C445 374 390 426 386 492C419 451 470 426 526 426C575 426 620 445 654 476C639 417 581 374 512 374Z" fill="#FFFFFF" fill-opacity="0.34"/>
+  <circle cx="512" cy="512" r="61" fill="#0B0C12" fill-opacity="0.86"/>
+  <circle cx="512" cy="512" r="22" fill="#FFFFFF"/>
+</svg>
