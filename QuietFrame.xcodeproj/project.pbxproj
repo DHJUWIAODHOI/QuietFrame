@@ -403,7 +403,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Use Face ID to unlock your private QuietFrame library.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "QuietFrame adds media only when you choose to export it.";
-				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "QuietFrame accesses selected items only when you import or delete originals.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "QuietFrame uses Photos access during import so it can identify and optionally delete the exact originals you selected.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -436,7 +436,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Use Face ID to unlock your private QuietFrame library.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "QuietFrame adds media only when you choose to export it.";
-				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "QuietFrame accesses selected items only when you import or delete originals.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "QuietFrame uses Photos access during import so it can identify and optionally delete the exact originals you selected.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

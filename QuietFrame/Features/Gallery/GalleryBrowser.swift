@@ -1,6 +1,7 @@
 import PhotosUI
 import SwiftData
 import SwiftUI
+import UIKit
 
 struct GalleryBrowser: View {
     @Environment(AppDependencies.self) private var dependencies
@@ -37,6 +38,8 @@ private struct GalleryBrowserContent: View {
     @State private var viewerRequest: MediaViewerRequest?
     @State private var shareLease: MediaExportLease?
     @State private var confirmsMoveToTrash = false
+    @State private var showsPhotosAccessWarning = false
+    @State private var photosAccessWarningMessage = ""
     @State private var isExporting = false
     @State private var actionMessage: String?
 
@@ -76,7 +79,7 @@ private struct GalleryBrowserContent: View {
                 ? "Import photos and videos to protect them on this device."
                 : "Items matching this collection will appear here.",
             emptyActionTitle: allowsImport ? "Choose Media" : nil,
-            emptyAction: allowsImport ? { showsPicker = true } : nil
+            emptyAction: allowsImport ? beginImportSelection : nil
         ) { media in
             viewerRequest = MediaViewerRequest(mediaID: media.id)
         }
@@ -145,6 +148,17 @@ private struct GalleryBrowserContent: View {
         } message: {
             Text("Items remain encrypted and can be restored until the Trash retention period expires.")
         }
+        .confirmationDialog(
+            "Photos Access Needed",
+            isPresented: $showsPhotosAccessWarning,
+            titleVisibility: .visible
+        ) {
+            Button("Open Settings") { openSystemSettings() }
+            Button("Continue Without Automatic Deletion") { showsPicker = true }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(photosAccessWarningMessage)
+        }
         .alert("QuietFrame", isPresented: messageIsPresented) {
             Button("OK", role: .cancel) { actionMessage = nil; galleryViewModel.clearError() }
         } message: {
@@ -194,7 +208,7 @@ private struct GalleryBrowserContent: View {
                     galleryViewModel.beginSelection()
                 }
                 if allowsImport {
-                    Button("Import", systemImage: "plus") { showsPicker = true }
+                    Button("Import", systemImage: "plus") { beginImportSelection() }
                         .accessibilityIdentifier("import-media")
                 }
             }
@@ -314,6 +328,27 @@ private struct GalleryBrowserContent: View {
                     ?? VaultError.fileOperationFailed.localizedDescription
             }
         }
+    }
+
+    private func beginImportSelection() {
+        Task {
+            let access = await dependencies.photoLibraryService.requestImportAccess()
+            switch access {
+            case .full:
+                showsPicker = true
+            case .limited:
+                photosAccessWarningMessage = "QuietFrame needs Full Photos Access to identify every selected original for safe deletion after import. Choose Full Access in Settings, or continue knowing you may need to delete originals manually."
+                showsPhotosAccessWarning = true
+            case .denied:
+                photosAccessWarningMessage = "Photos access is disabled. QuietFrame can still import through the system picker, but iOS will not provide the identifiers required to delete originals automatically. Enable Full Access in Settings to use deletion prompts."
+                showsPhotosAccessWarning = true
+            }
+        }
+    }
+
+    private func openSystemSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
     }
 }
 

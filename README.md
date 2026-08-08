@@ -166,7 +166,7 @@ A forgotten passcode or missing key cannot recover media. Users may authenticate
 
 QuietFrame requests no permission on launch.
 
-- Photos picker import uses `PhotosPicker`, which grants access only to user-selected items.
+- Photos picker import starts only after the user taps Import. QuietFrame requests read/write Photos access then so PhotoKit can identify the exact selected originals for optional deletion.
 - `NSPhotoLibraryUsageDescription` is used only when the user explicitly asks to delete imported originals.
 - `NSPhotoLibraryAddUsageDescription` is used only when the user explicitly saves media back to Photos.
 - `NSFaceIDUsageDescription` explains biometric vault unlock.
