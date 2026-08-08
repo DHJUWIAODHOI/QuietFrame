@@ -47,6 +47,13 @@ struct ImportPreviewView: View {
             }
             .interactiveDismissDisabled(viewModel.isImporting)
         }
+        .onChange(of: viewModel.summary) { _, summary in
+            guard summary?.shouldOfferOriginalDeletion == true else { return }
+            Task { @MainActor in
+                await Task.yield()
+                confirmsOriginalDeletion = true
+            }
+        }
         .onDisappear { viewModel.cleanupIfIdle() }
     }
 
@@ -167,7 +174,7 @@ struct ImportPreviewView: View {
         if !viewModel.isPreparing {
             VStack(spacing: 10) {
                 if let summary = viewModel.summary {
-                    if !summary.importedSourceLocalIdentifiers.isEmpty {
+                    if summary.shouldOfferOriginalDeletion {
                         Button("Delete Imported Originals from Photos", role: .destructive) {
                             confirmsOriginalDeletion = true
                         }

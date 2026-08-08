@@ -41,6 +41,14 @@ struct ImportSummary: Sendable, Equatable {
     var wasCancelled = false
     var importedMediaIDs: [UUID] = []
     var importedSourceLocalIdentifiers: [String] = []
+
+    var shouldOfferOriginalDeletion: Bool {
+        importedCount > 0
+    }
+
+    var canDeleteImportedOriginals: Bool {
+        importedSourceLocalIdentifiers.count == importedCount
+    }
 }
 
 protocol MediaImporting: Sendable {

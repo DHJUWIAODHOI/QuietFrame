@@ -183,9 +183,12 @@ final class ImportViewModel {
     }
 
     func deleteImportedOriginals() {
-        guard let identifiers = summary?.importedSourceLocalIdentifiers,
-              !identifiers.isEmpty,
-              !isDeletingOriginals else { return }
+        guard let summary, !isDeletingOriginals else { return }
+        guard summary.canDeleteImportedOriginals else {
+            userMessage = "iOS did not provide a safe reference for every imported original. QuietFrame did not delete anything; remove those items manually in Photos."
+            return
+        }
+        let identifiers = summary.importedSourceLocalIdentifiers
         isDeletingOriginals = true
         Task { [weak self] in
             guard let self else { return }
