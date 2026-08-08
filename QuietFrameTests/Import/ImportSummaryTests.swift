@@ -9,10 +9,11 @@ final class ImportSummaryTests: XCTestCase {
 
         summary.importedCount = 2
         summary.importedSourceLocalIdentifiers = ["first"]
-        XCTAssertTrue(summary.shouldOfferOriginalDeletion)
+        XCTAssertFalse(summary.shouldOfferOriginalDeletion)
         XCTAssertFalse(summary.canDeleteImportedOriginals)
 
         summary.importedSourceLocalIdentifiers.append("second")
+        XCTAssertTrue(summary.shouldOfferOriginalDeletion)
         XCTAssertTrue(summary.canDeleteImportedOriginals)
     }
 }

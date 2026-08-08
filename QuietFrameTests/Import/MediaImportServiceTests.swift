@@ -48,9 +48,11 @@ final class MediaImportServiceTests: XCTestCase {
                 temporaryURL: firstURL,
                 metadata: metadata,
                 thumbnailJPEGData: nil,
-                sourceLocalIdentifier: nil
+                sourceLocalIdentifier: "asset-1"
             )],
             albumID: nil,
+            preflightFailureCount: 1,
+            preflightThumbnailFailureCount: 1,
             progress: nil
         )
         let duplicateSummary = try await importer.importMedia(
@@ -61,11 +63,21 @@ final class MediaImportServiceTests: XCTestCase {
                 sourceLocalIdentifier: nil
             )],
             albumID: nil,
+            preflightFailureCount: 0,
+            preflightThumbnailFailureCount: 0,
             progress: nil
         )
 
         XCTAssertEqual(firstSummary.importedCount, 1)
+        XCTAssertEqual(firstSummary.failedCount, 1)
+        XCTAssertEqual(firstSummary.thumbnailFailureCount, 1)
+        XCTAssertEqual(firstSummary.importedSourceLocalIdentifiers, ["asset-1"])
+        XCTAssertTrue(firstSummary.shouldOfferOriginalDeletion)
         XCTAssertEqual(duplicateSummary.duplicateCount, 1)
+        let importRecords = try modelContainer.mainContext.fetch(FetchDescriptor<ImportRecord>())
+        XCTAssertTrue(importRecords.contains {
+            $0.requestedCount == 2 && $0.importedCount == 1 && $0.failedCount == 1
+        })
         let records = try modelContainer.mainContext.fetch(FetchDescriptor<VaultMedia>())
         XCTAssertEqual(records.count, 1)
         XCTAssertEqual(records.first?.originalFilename, "sample.jpg")

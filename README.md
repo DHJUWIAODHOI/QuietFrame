@@ -166,12 +166,12 @@ A forgotten passcode or missing key cannot recover media. Users may authenticate
 
 QuietFrame requests no permission on launch.
 
-- Photos picker import starts only after the user taps Import. QuietFrame requests read/write Photos access then so PhotoKit can identify the exact selected originals for optional deletion.
-- `NSPhotoLibraryUsageDescription` is used only when the user explicitly asks to delete imported originals.
+- Photos picker import starts only after the user taps Import. QuietFrame requests read/write Photos access then so PhotoKit can inspect and revalidate the exact selected originals for optional deletion.
+- `NSPhotoLibraryUsageDescription` explains that user-initiated request. Import can continue through the system picker if access is denied, but deletion is unavailable when QuietFrame cannot validate the corresponding assets.
 - `NSPhotoLibraryAddUsageDescription` is used only when the user explicitly saves media back to Photos.
 - `NSFaceIDUsageDescription` explains biometric vault unlock.
 
-Original Photos assets are never deleted automatically. The import summary offers deletion only for successfully imported assets, presents a destructive confirmation, and explains that Photos permission is required and items may remain in Recently Deleted.
+Original Photos assets are never deleted automatically. The import summary offers deletion only when every successfully imported item maps to an exact, unadjusted, single-resource Photos asset. QuietFrame revalidates those assets, presents a destructive confirmation, and explains that items may remain in Recently Deleted.
 
 ## Implemented Features
 
@@ -201,7 +201,7 @@ Original Photos assets are never deleted automatically. The import summary offer
 
 ## Tests
 
-The unit target contains 27 tests covering:
+The unit target contains 28 tests covering:
 
 - PBKDF2 known vector
 - passcode creation, unlock, wrong attempts, lockout, change, and reset
@@ -235,7 +235,7 @@ Tests use in-memory SwiftData stores and protocol mocks. Security file tests use
 10. Viewer swipe navigation covers currently loaded gallery pages. It does not yet fetch the next metadata page from inside the viewer.
 11. Tags are represented, displayed, and searchable but v1 has no tag editing screen.
 12. Failed import thumbnails remain as placeholders; there is no background thumbnail-regeneration queue.
-13. Live Photos, bursts, RAW workflows, and animated-image semantics are not preserved as compound Photos-library assets. The picker imports an image or movie representation.
+13. Live Photos, bursts, RAW workflows, and animated-image semantics are not preserved as compound Photos-library assets. The picker imports an image or movie representation, and automatic source deletion is unavailable for adjusted or multi-resource assets.
 14. Exact duplicate detection does not detect visually similar, edited, or re-encoded media.
 15. Trash expiration runs when QuietFrame unlocks or Trash opens; iOS may not run the app exactly at a deadline.
 16. Random export paths intentionally avoid exposing original filenames. Native share recipients receive random filenames with the correct extension.

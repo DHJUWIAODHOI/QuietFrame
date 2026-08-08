@@ -72,7 +72,7 @@ On flash storage, unlinking files does not guarantee physical overwrite. Destroy
 
 ## Import and Export
 
-- Broad Photos access is not requested for picker import.
+- Read/write Photos access is requested only after the user starts an import so QuietFrame can inspect and revalidate exact assets before deletion. Picker import remains available without that access, but original deletion does not.
 - Incoming picker files are plaintext but random-named, complete-protected, backup-excluded, cancellation-tracked, and removed after import or lock.
 - Originals are never deleted automatically.
 - Export asks for Photos authorization before decryption.

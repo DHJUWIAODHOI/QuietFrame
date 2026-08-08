@@ -1,4 +1,3 @@
-import PhotosUI
 import SwiftData
 import SwiftUI
 import UIKit
@@ -31,8 +30,9 @@ private struct GalleryBrowserContent: View {
 
     @State private var galleryViewModel: GalleryViewModel
     @State private var importViewModel: ImportViewModel
-    @State private var pickerItems: [PhotosPickerItem] = []
     @State private var showsPicker = false
+    @State private var allowsOriginalDeletionForImport = false
+    @State private var pickerOutput: PhotoLibraryPickerOutput?
     @State private var showsImportPreview = false
     @State private var showsAlbumDestinations = false
     @State private var viewerRequest: MediaViewerRequest?
@@ -89,20 +89,16 @@ private struct GalleryBrowserContent: View {
         .toolbar { galleryToolbar }
         .safeAreaInset(edge: .bottom) { selectionBar }
         .task { await galleryViewModel.loadInitial() }
-        .photosPicker(
-            isPresented: $showsPicker,
-            selection: $pickerItems,
-            maxSelectionCount: 250,
-            matching: .any(of: [.images, .videos]),
-            preferredItemEncoding: .current
-        )
-        .onChange(of: pickerItems) { newItems in
-            guard !newItems.isEmpty else { return }
-            showsImportPreview = true
-            importViewModel.prepare(items: newItems)
+        .sheet(isPresented: $showsPicker, onDismiss: finishImportSelection) {
+            PhotoLibraryPicker(
+                allowsOriginalDeletion: allowsOriginalDeletionForImport
+            ) { output in
+                pickerOutput = output
+                showsPicker = false
+            }
+            .ignoresSafeArea()
         }
         .sheet(isPresented: $showsImportPreview, onDismiss: {
-            pickerItems = []
             importViewModel.cleanupIfIdle()
             Task { await galleryViewModel.loadInitial() }
         }) {
@@ -335,15 +331,30 @@ private struct GalleryBrowserContent: View {
             let access = await dependencies.photoLibraryService.requestImportAccess()
             switch access {
             case .full:
+                allowsOriginalDeletionForImport = true
                 showsPicker = true
             case .limited:
-                photosAccessWarningMessage = "QuietFrame needs Full Photos Access to identify every selected original for safe deletion after import. Choose Full Access in Settings, or continue knowing you may need to delete originals manually."
+                allowsOriginalDeletionForImport = false
+                photosAccessWarningMessage = "QuietFrame needs Full Photos Access to inspect and revalidate every selected original before safe deletion. Choose Full Access in Settings, or continue knowing you may need to delete originals manually."
                 showsPhotosAccessWarning = true
             case .denied:
-                photosAccessWarningMessage = "Photos access is disabled. QuietFrame can still import through the system picker, but iOS will not provide the identifiers required to delete originals automatically. Enable Full Access in Settings to use deletion prompts."
+                allowsOriginalDeletionForImport = false
+                photosAccessWarningMessage = "Photos access is disabled. QuietFrame can still import through the system picker, but automatic deletion remains off because QuietFrame cannot inspect and revalidate the selected originals through PhotoKit. Enable Full Access in Settings to use deletion prompts."
                 showsPhotosAccessWarning = true
             }
         }
+    }
+
+    private func finishImportSelection() {
+        guard let output = pickerOutput else { return }
+        pickerOutput = nil
+        guard !output.selections.isEmpty
+                || output.pickerFailureCount > 0 else { return }
+        importViewModel.prepare(
+            selections: output.selections,
+            pickerFailureCount: output.pickerFailureCount
+        )
+        showsImportPreview = true
     }
 
     private func openSystemSettings() {

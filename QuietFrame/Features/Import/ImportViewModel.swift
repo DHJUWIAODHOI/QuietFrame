@@ -1,12 +1,11 @@
 import Foundation
 import Observation
-import PhotosUI
-import SwiftUI
 import UIKit
 
 struct ImportPreviewCandidate: Identifiable {
     let source: ImportSource
     let previewImage: UIImage?
+    let thumbnailFailed: Bool
 
     var id: UUID { source.id }
 }
@@ -29,6 +28,8 @@ final class ImportViewModel {
     private var preparationTask: Task<Void, Never>?
     private var importTask: Task<Void, Never>?
     private var preparationGeneration: UInt64 = 0
+    private var preparationFailureCount = 0
+    private var preparationThumbnailFailureCount = 0
 
     init(
         metadataReader: any MediaMetadataReading,
@@ -42,7 +43,10 @@ final class ImportViewModel {
         self.photoLibrary = photoLibrary
     }
 
-    func prepare(items: [PhotosPickerItem]) {
+    func prepare(
+        selections: [PhotoLibrarySelection],
+        pickerFailureCount: Int = 0
+    ) {
         preparationTask?.cancel()
         preparationGeneration &+= 1
         let generation = preparationGeneration
@@ -51,67 +55,71 @@ final class ImportViewModel {
         summary = nil
         userMessage = nil
         isPreparing = true
+        preparationFailureCount = 0
+        preparationThumbnailFailureCount = 0
 
         preparationTask = Task { [weak self] in
             guard let self else { return }
             var prepared: [ImportPreviewCandidate] = []
-            var failedCount = 0
+            let deletionUnavailableCount = selections.reduce(into: 0) { count, selection in
+                if selection.sourceLocalIdentifier == nil { count += 1 }
+            }
+            var failedCount = pickerFailureCount
             var thumbnailFailureCount = 0
 
-            for item in items {
+            for selection in selections {
+                var temporaryURL: URL?
                 do {
                     try Task.checkCancellation()
-                    guard let transfer = try await item.loadTransferable(type: PhotoPickerTransfer.self) else {
-                        throw VaultError.importFailed
+                    let loadedFile = try await selection.loadProtectedFile()
+                    temporaryURL = loadedFile.temporaryURL
+                    guard generation == preparationGeneration, !Task.isCancelled else {
+                        throw CancellationError()
                     }
+                    let metadata = try await metadataReader.metadata(
+                        for: loadedFile.temporaryURL,
+                        mediaType: selection.mediaType,
+                        originalFilename: loadedFile.originalFilename
+                    )
+                    guard generation == preparationGeneration, !Task.isCancelled else {
+                        throw CancellationError()
+                    }
+                    let thumbnailData: Data?
+                    let thumbnailFailed: Bool
                     do {
-                        guard generation == preparationGeneration, !Task.isCancelled else {
-                            IncomingMediaFileStore.remove(transfer.url)
-                            throw CancellationError()
-                        }
-                        let metadata = try await metadataReader.metadata(
-                            for: transfer.url,
-                            mediaType: transfer.mediaType,
-                            originalFilename: transfer.originalFilename
+                        thumbnailData = try await thumbnailGenerator.jpegThumbnail(
+                            for: loadedFile.temporaryURL,
+                            mediaType: selection.mediaType,
+                            maximumPixelSize: 720
                         )
-                        guard generation == preparationGeneration, !Task.isCancelled else {
-                            IncomingMediaFileStore.remove(transfer.url)
-                            throw CancellationError()
-                        }
-                        let thumbnailData: Data?
-                        do {
-                            thumbnailData = try await thumbnailGenerator.jpegThumbnail(
-                                for: transfer.url,
-                                mediaType: transfer.mediaType,
-                                maximumPixelSize: 720
-                            )
-                        } catch {
-                            thumbnailData = nil
-                            thumbnailFailureCount += 1
-                        }
-                        guard generation == preparationGeneration, !Task.isCancelled else {
-                            IncomingMediaFileStore.remove(transfer.url)
-                            throw CancellationError()
-                        }
-                        let source = ImportSource(
-                            temporaryURL: transfer.url,
-                            metadata: metadata,
-                            thumbnailJPEGData: thumbnailData,
-                            sourceLocalIdentifier: item.itemIdentifier
-                        )
-                        prepared.append(ImportPreviewCandidate(
-                            source: source,
-                            previewImage: thumbnailData.flatMap { UIImage(data: $0) }
-                        ))
+                        thumbnailFailed = false
                     } catch {
-                        IncomingMediaFileStore.remove(transfer.url)
-                        throw error
+                        thumbnailData = nil
+                        thumbnailFailed = true
+                        thumbnailFailureCount += 1
                     }
+                    guard generation == preparationGeneration, !Task.isCancelled else {
+                        throw CancellationError()
+                    }
+                    let source = ImportSource(
+                        temporaryURL: loadedFile.temporaryURL,
+                        metadata: metadata,
+                        thumbnailJPEGData: thumbnailData,
+                        sourceLocalIdentifier: selection.sourceLocalIdentifier
+                    )
+                    prepared.append(ImportPreviewCandidate(
+                        source: source,
+                        previewImage: thumbnailData.flatMap { UIImage(data: $0) },
+                        thumbnailFailed: thumbnailFailed
+                    ))
+                    temporaryURL = nil
                 } catch is CancellationError {
+                    if let temporaryURL { IncomingMediaFileStore.remove(temporaryURL) }
                     prepared.forEach { IncomingMediaFileStore.remove($0.source.temporaryURL) }
                     if generation == preparationGeneration { isPreparing = false }
                     return
                 } catch {
+                    if let temporaryURL { IncomingMediaFileStore.remove(temporaryURL) }
                     failedCount += 1
                 }
             }
@@ -121,9 +129,14 @@ final class ImportViewModel {
                 return
             }
             candidates = prepared
+            preparationFailureCount = failedCount
+            preparationThumbnailFailureCount = thumbnailFailureCount
             isPreparing = false
-            if failedCount > 0 || thumbnailFailureCount > 0 {
+            if deletionUnavailableCount > 0 || failedCount > 0 || thumbnailFailureCount > 0 {
                 var messages: [String] = []
+                if deletionUnavailableCount > 0 {
+                    messages.append("automatic deletion is unavailable for \(deletionUnavailableCount) item\(deletionUnavailableCount == 1 ? "" : "s") in this selection")
+                }
                 if failedCount > 0 {
                     messages.append("\(failedCount) item\(failedCount == 1 ? "" : "s") could not be prepared")
                 }
@@ -132,17 +145,18 @@ final class ImportViewModel {
                 }
                 userMessage = messages.joined(separator: "; ") + "."
             }
-            if prepared.isEmpty, failedCount > 0 {
-                userMessage = VaultError.importFailed.localizedDescription
-            }
         }
     }
 
     func removeCandidate(id: UUID) {
         guard !isImporting,
               let index = candidates.firstIndex(where: { $0.id == id }) else { return }
-        IncomingMediaFileStore.remove(candidates[index].source.temporaryURL)
+        let candidate = candidates[index]
+        IncomingMediaFileStore.remove(candidate.source.temporaryURL)
         candidates.remove(at: index)
+        if candidate.thumbnailFailed {
+            preparationThumbnailFailureCount = max(0, preparationThumbnailFailureCount - 1)
+        }
     }
 
     func startImport(albumID: UUID? = nil) {
@@ -156,11 +170,19 @@ final class ImportViewModel {
         importTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let result = try await importer.importMedia(sources, albumID: albumID) { [weak self] value in
+                let result = try await importer.importMedia(
+                    sources,
+                    albumID: albumID,
+                    preflightFailureCount: preparationFailureCount,
+                    preflightThumbnailFailureCount: preparationThumbnailFailureCount
+                ) { [weak self] value in
                     await MainActor.run { self?.progress = value }
                 }
                 summary = result
                 candidates = []
+                if result.importedCount > 0, !result.canDeleteImportedOriginals {
+                    userMessage = "Automatic deletion was not offered because every imported item could not be matched safely to a replaceable Photos asset."
+                }
                 if result.importedCount > 0 { HapticFeedback.success() }
             } catch {
                 userMessage = (error as? VaultError)?.localizedDescription

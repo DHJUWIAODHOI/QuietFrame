@@ -81,13 +81,13 @@ Primary files:
 
 - `QuietFrame/Features/Import/*`
 - `QuietFrame/Services/MediaImportService.swift`
-- `QuietFrame/Services/PhotoPickerTransfer.swift`
+- `QuietFrame/Features/Import/PhotoLibraryPicker.swift`
 - `QuietFrame/Services/MediaMetadataService.swift`
 - `QuietFrame/Services/ThumbnailGenerator.swift`
 - `QuietFrame/Services/PhotoLibraryService.swift`
 - `QuietFrameTests/Import/*`
 
-Decision: `.current` picker encoding preserves original bytes; deletion is offered only after successful import and never runs automatically.
+Decision: `PHPickerViewController` uses `.current` representations and a PhotoKit-backed configuration so it can return exact asset identifiers. Deletion is offered only when every successful import has an identifier and never runs automatically.
 
 Verification: encrypted import/dedup test added; Photos system UI requires macOS/device verification.
 

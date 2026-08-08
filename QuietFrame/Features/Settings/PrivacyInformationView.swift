@@ -25,7 +25,7 @@ struct PrivacyInformationView: View {
             privacyRow(
                 "Photos Access",
                 symbol: "photo.badge.plus",
-                text: "The system picker opens only after you choose Import. QuietFrame requests Photos access at that point so it can identify and optionally delete the exact originals after encryption."
+                text: "The system picker opens only after you choose Import. QuietFrame requests Photos access at that point so it can inspect, revalidate, and optionally delete the exact originals after encryption."
             )
             privacyRow(
                 "Backups and Device Lock",

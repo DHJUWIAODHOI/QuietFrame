@@ -43,7 +43,7 @@ struct ImportSummary: Sendable, Equatable {
     var importedSourceLocalIdentifiers: [String] = []
 
     var shouldOfferOriginalDeletion: Bool {
-        importedCount > 0
+        importedCount > 0 && canDeleteImportedOriginals
     }
 
     var canDeleteImportedOriginals: Bool {
@@ -55,6 +55,8 @@ protocol MediaImporting: Sendable {
     func importMedia(
         _ sources: [ImportSource],
         albumID: UUID?,
+        preflightFailureCount: Int,
+        preflightThumbnailFailureCount: Int,
         progress: (@Sendable (ImportProgress) async -> Void)?
     ) async throws -> ImportSummary
     func cleanupAbandonedIncomingFiles() async
@@ -74,12 +76,18 @@ actor MediaImportService: MediaImporting {
     func importMedia(
         _ sources: [ImportSource],
         albumID: UUID? = nil,
+        preflightFailureCount: Int = 0,
+        preflightThumbnailFailureCount: Int = 0,
         progress: (@Sendable (ImportProgress) async -> Void)? = nil
     ) async throws -> ImportSummary {
         guard !sources.isEmpty else { throw VaultError.invalidInput("Choose at least one item to import.") }
         let generation = operationGeneration
-        let recordID = try await repository.beginImport(requestedCount: sources.count)
+        let initialFailureCount = max(0, preflightFailureCount)
+        let requestedCount = sources.count + initialFailureCount
+        let recordID = try await repository.beginImport(requestedCount: requestedCount)
         var summary = ImportSummary()
+        summary.failedCount = initialFailureCount
+        summary.thumbnailFailureCount = max(0, preflightThumbnailFailureCount)
         defer { sources.forEach { IncomingMediaFileStore.remove($0.temporaryURL) } }
 
         for (index, source) in sources.enumerated() {
@@ -203,7 +211,7 @@ actor MediaImportService: MediaImporting {
         let status: ImportStatus
         if summary.wasCancelled {
             status = .cancelled
-        } else if summary.failedCount == sources.count {
+        } else if summary.failedCount == requestedCount {
             status = .failed
         } else {
             status = .completed

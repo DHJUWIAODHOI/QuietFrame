@@ -30,6 +30,40 @@ actor PhotoLibraryService: PhotoLibraryServing {
         }
     }
 
+    static func isSafeToDeleteAfterRepresentationImport(_ asset: PHAsset) -> Bool {
+        isSafeDeletionResourceProfile(
+            mediaType: asset.mediaType,
+            mediaSubtypes: asset.mediaSubtypes,
+            hasAdjustments: asset.hasAdjustments,
+            representsBurst: asset.representsBurst,
+            resourceTypes: PHAssetResource.assetResources(for: asset).map(\.type)
+        )
+    }
+
+    static func isSafeDeletionResourceProfile(
+        mediaType: PHAssetMediaType,
+        mediaSubtypes: PHAssetMediaSubtype,
+        hasAdjustments: Bool,
+        representsBurst: Bool,
+        resourceTypes: [PHAssetResourceType]
+    ) -> Bool {
+        guard !hasAdjustments,
+              !representsBurst,
+              !mediaSubtypes.contains(.photoLive),
+              resourceTypes.count == 1 else { return false }
+
+        switch mediaType {
+        case .image:
+            return resourceTypes[0] == .photo
+        case .video:
+            return resourceTypes[0] == .video
+        case .audio, .unknown:
+            return false
+        @unknown default:
+            return false
+        }
+    }
+
     func deleteOriginals(localIdentifiers: [String]) async throws {
         let identifiers = Array(Set(localIdentifiers))
         guard !identifiers.isEmpty else { return }
@@ -42,6 +76,11 @@ actor PhotoLibraryService: PhotoLibraryServing {
         let assets = PHAsset.fetchAssets(withLocalIdentifiers: identifiers, options: nil)
         guard assets.count == identifiers.count else {
             throw status == .limited ? VaultError.limitedPhotosAccess : VaultError.fileOperationFailed
+        }
+        for index in 0..<assets.count {
+            guard Self.isSafeToDeleteAfterRepresentationImport(assets.object(at: index)) else {
+                throw VaultError.fileOperationFailed
+            }
         }
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
