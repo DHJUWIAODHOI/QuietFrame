@@ -16,9 +16,20 @@ enum BiometricKind: String, Sendable {
     }
 }
 
+enum VaultAuthenticationMode: Equatable, Sendable {
+    case notConfigured
+    case passcode
+    case none
+}
+
 protocol AuthenticationServicing: Sendable {
+    func authenticationMode() async throws -> VaultAuthenticationMode
     func hasPasscode() async throws -> Bool
     func createPasscode(_ passcode: String) async throws
+    func createWithoutPasscode() async throws
+    func unlockWithoutPasscode() async throws
+    func addPasscode(_ passcode: String) async throws
+    func removePasscode(current: String) async throws
     func unlock(passcode: String) async throws
     func unlockWithBiometrics(reason: String) async throws
     func enableBiometrics() async throws
@@ -54,6 +65,7 @@ actor AuthenticationService: AuthenticationServicing {
 
     private enum Account {
         static let passcodeEnvelope = "passcode-envelope-v1"
+        static let unwrappedMasterKey = "unwrapped-master-key-v1"
         static let biometricMasterKey = "biometric-master-key-v1"
         static let attemptState = "attempt-state-v1"
     }
@@ -81,16 +93,88 @@ actor AuthenticationService: AuthenticationServicing {
         try keychain.data(for: Account.passcodeEnvelope) != nil
     }
 
+    func authenticationMode() throws -> VaultAuthenticationMode {
+        if try keychain.data(for: Account.passcodeEnvelope) != nil { return .passcode }
+        if try keychain.data(for: Account.unwrappedMasterKey) != nil { return .none }
+        return .notConfigured
+    }
+
     func createPasscode(_ passcode: String) async throws {
         try Self.validate(passcode)
-        guard try !hasPasscode() else {
-            throw VaultError.invalidInput("A passcode already exists.")
+        guard try authenticationMode() == .notConfigured else {
+            throw VaultError.invalidInput("Vault authentication is already configured.")
         }
 
         let masterKeyData = try Data.secureRandom(count: 32)
         let envelope = try makeEnvelope(passcode: passcode, masterKeyData: masterKeyData)
         try keychain.set(encoder.encode(envelope), account: Account.passcodeEnvelope)
         try? keychain.delete(account: Account.attemptState)
+        try await session.unlock(with: masterKeyData)
+    }
+
+    func createWithoutPasscode() async throws {
+        guard try authenticationMode() == .notConfigured else {
+            throw VaultError.invalidInput("Vault authentication is already configured.")
+        }
+        let masterKeyData = try Data.secureRandom(count: 32)
+        try keychain.set(masterKeyData, account: Account.unwrappedMasterKey)
+        try await session.unlock(with: masterKeyData)
+    }
+
+    func unlockWithoutPasscode() async throws {
+        guard let masterKeyData = try keychain.data(for: Account.unwrappedMasterKey),
+              masterKeyData.count == 32 else {
+            throw VaultError.missingEncryptionKey
+        }
+        try await session.unlock(with: masterKeyData)
+    }
+
+    func addPasscode(_ passcode: String) async throws {
+        try Self.validate(passcode)
+        guard try authenticationMode() == .none,
+              let masterKeyData = try keychain.data(for: Account.unwrappedMasterKey),
+              masterKeyData.count == 32 else {
+            throw VaultError.missingEncryptionKey
+        }
+        let envelope = try makeEnvelope(passcode: passcode, masterKeyData: masterKeyData)
+        try keychain.set(encoder.encode(envelope), account: Account.passcodeEnvelope)
+        do {
+            try keychain.delete(account: Account.unwrappedMasterKey)
+        } catch {
+            try? keychain.delete(account: Account.passcodeEnvelope)
+            throw error
+        }
+        try await session.unlock(with: masterKeyData)
+    }
+
+    func removePasscode(current: String) async throws {
+        try Self.validate(current)
+        if let blockedUntil = try currentLockoutDate(), blockedUntil > now() {
+            throw VaultError.temporarilyLocked(until: blockedUntil)
+        }
+        guard let envelopeData = try keychain.data(for: Account.passcodeEnvelope),
+              let envelope = try? decoder.decode(PasscodeEnvelope.self, from: envelopeData) else {
+            throw VaultError.missingEncryptionKey
+        }
+
+        let masterKeyData: Data
+        do {
+            masterKeyData = try unwrapMasterKey(passcode: current, envelope: envelope)
+        } catch VaultError.invalidPasscode {
+            let lockout = try recordFailedAttempt()
+            if let lockout { throw VaultError.temporarilyLocked(until: lockout) }
+            throw VaultError.invalidPasscode
+        }
+
+        try keychain.set(masterKeyData, account: Account.unwrappedMasterKey)
+        do {
+            try keychain.delete(account: Account.passcodeEnvelope)
+        } catch {
+            try? keychain.delete(account: Account.unwrappedMasterKey)
+            throw error
+        }
+        try keychain.delete(account: Account.biometricMasterKey)
+        try keychain.delete(account: Account.attemptState)
         try await session.unlock(with: masterKeyData)
     }
 
@@ -233,6 +317,7 @@ actor AuthenticationService: AuthenticationServicing {
         await session.lock()
         try keychain.delete(account: Account.biometricMasterKey)
         try keychain.delete(account: Account.passcodeEnvelope)
+        try keychain.delete(account: Account.unwrappedMasterKey)
         try keychain.delete(account: Account.attemptState)
     }
 

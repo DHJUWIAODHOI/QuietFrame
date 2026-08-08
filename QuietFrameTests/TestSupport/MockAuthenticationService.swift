@@ -3,14 +3,40 @@ import Foundation
 
 actor MockAuthenticationService: AuthenticationServicing {
     var passcodeExists = true
+    var mode: VaultAuthenticationMode = .passcode
     var lockCount = 0
     var nextError: VaultError?
+
+    func authenticationMode() async throws -> VaultAuthenticationMode { mode }
 
     func hasPasscode() async throws -> Bool { passcodeExists }
 
     func createPasscode(_ passcode: String) async throws {
         if let nextError { throw nextError }
         passcodeExists = true
+        mode = .passcode
+    }
+
+    func createWithoutPasscode() async throws {
+        if let nextError { throw nextError }
+        passcodeExists = false
+        mode = .none
+    }
+
+    func unlockWithoutPasscode() async throws {
+        if let nextError { throw nextError }
+    }
+
+    func addPasscode(_ passcode: String) async throws {
+        if let nextError { throw nextError }
+        passcodeExists = true
+        mode = .passcode
+    }
+
+    func removePasscode(current: String) async throws {
+        if let nextError { throw nextError }
+        passcodeExists = false
+        mode = .none
     }
 
     func unlock(passcode: String) async throws {
@@ -42,6 +68,7 @@ actor MockAuthenticationService: AuthenticationServicing {
 
     func resetCredentials() async throws {
         passcodeExists = false
+        mode = .notConfigured
     }
 
     func authorizeDestructiveReset() async throws {

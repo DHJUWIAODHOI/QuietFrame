@@ -8,7 +8,7 @@ The app targets iOS 17 or later and uses the installed iOS SDK, so it can be bui
 
 The project and shared scheme are checked in at `QuietFrame.xcodeproj`. All source, resource, unit-test, and UI-test targets are present.
 
-This repository was produced on a Windows host where Xcode, `xcodebuild`, iOS SDKs, and Simulator runtimes are unavailable. Static reviews found no known Swift source compilation errors, but a native build and test run could not be performed here. A macOS/Xcode build is a required release gate, not an optional step.
+The GitHub Actions macOS workflow successfully archives an unsigned device build with Xcode 16.4 and publishes an IPA artifact on every push to `main`. Unit and UI tests still require a separate Simulator test run before release.
 
 ## Setup
 
@@ -99,15 +99,16 @@ Media bytes and thumbnails are never stored in SwiftData.
 
 ## Security Design
 
-### Passcode and master key
+### Optional passcode and master key
 
 1. Setup generates a random 256-bit master key with `SecRandomCopyBytes`.
-2. A random 128-bit salt and PBKDF2-HMAC-SHA256 with 210,000 iterations derive a wrapping key from the six-digit passcode.
-3. AES-GCM wraps the master key with authenticated context data.
-4. The envelope, salt, iteration count, and HMAC verifier are encoded into a Keychain generic-password item.
-5. The normal item uses `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` and is explicitly non-synchronizing.
-6. The passcode itself is never stored.
-7. Failed attempts persist in Keychain and produce escalating delays up to one hour.
+2. Users may protect access with a six-digit app passcode or continue without one.
+3. With a passcode, a random 128-bit salt and PBKDF2-HMAC-SHA256 with 210,000 iterations derive a wrapping key.
+4. AES-GCM wraps the master key with authenticated context data.
+5. Without a passcode, the random master key is stored directly in the device-only Keychain and restored silently while the iPhone is unlocked.
+6. Keychain items use `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` and are explicitly non-synchronizing.
+7. The passcode itself is never stored.
+8. Failed attempts persist in Keychain and produce escalating delays up to one hour.
 
 An unlocked master key exists only in the actor-isolated `VaultSession`. Lock increments a session generation and removes the key. Every encryption/decryption chunk validates that generation, so work started by a prior unlocked session is revoked at the next chunk boundary.
 
@@ -174,7 +175,8 @@ Original Photos assets are never deleted automatically. The import summary offer
 
 ## Implemented Features
 
-- Privacy onboarding and six-digit passcode confirmation
+- Privacy onboarding with a choice between six-digit passcode protection and no app passcode
+- Passcode setup/removal later from Settings without re-encrypting media
 - Passcode unlock, change, escalating lockout, manual lock, and configurable auto-lock
 - Face ID and Touch ID opt-in with current-enrollment invalidation
 - App-switcher privacy cover and active-capture lock
@@ -199,7 +201,7 @@ Original Photos assets are never deleted automatically. The import summary offer
 
 ## Tests
 
-The unit target contains 24 tests covering:
+The unit target contains 27 tests covering:
 
 - PBKDF2 known vector
 - passcode creation, unlock, wrong attempts, lockout, change, and reset
@@ -221,26 +223,27 @@ Tests use in-memory SwiftData stores and protocol mocks. Security file tests use
 
 ## Known Limitations and Remaining Release Work
 
-1. Native Xcode compilation, XCTest execution, Simulator testing, physical-device testing, and archive validation have not been run in this Windows environment.
-2. App icon SVG acceptance must be confirmed with the selected Xcode `actool`; export to full-bleed PNG if required.
+1. XCTest execution, Simulator testing, and physical-device testing have not been run in this Windows environment. The unsigned device archive is built by GitHub Actions with Xcode 16.4.
+2. Xcode 16.4 archives the supplied SVG icons but emits app-icon extension warnings. Convert them to full-bleed PNG before App Store submission.
 3. A six-digit passcode has at most one million combinations. PBKDF2 slows guesses, and iOS sandbox/Keychain controls protect the envelope, but an extracted envelope has a limited offline search space. There is no alphanumeric passphrase option in v1.
-4. The normal passcode envelope uses `WhenUnlockedThisDeviceOnly`, not `WhenPasscodeSetThisDeviceOnly`. QuietFrame should either require an iOS device passcode in a future security-policy revision or explicitly accept operation on devices without one.
-5. SwiftData catalog metadata is plaintext inside an OS-protected, backup-excluded store. The app passcode encrypts media and thumbnails, not filenames, albums, dates, dimensions, sizes, tags, or SQLite free pages while the device is already unlocked.
-6. AVPlayer requires a fully decrypted protected temporary video before playback. Very large videos need free space approximately equal to their original size plus a safety margin and do not begin streaming immediately.
-7. Bulk sharing decrypts all selected files before presenting the activity sheet. Each file receives a capacity check, but v1 has no aggregate progress UI.
-8. Search loads the scoped metadata set for multi-field matching. Normal browsing is paged, but search and some bulk operations can become slower with very large vaults.
-9. Viewer swipe navigation covers currently loaded gallery pages. It does not yet fetch the next metadata page from inside the viewer.
-10. Tags are represented, displayed, and searchable but v1 has no tag editing screen.
-11. Failed import thumbnails remain as placeholders; there is no background thumbnail-regeneration queue.
-12. Live Photos, bursts, RAW workflows, and animated-image semantics are not preserved as compound Photos-library assets. The picker imports an image or movie representation.
-13. Exact duplicate detection does not detect visually similar, edited, or re-encoded media.
-14. Trash expiration runs when QuietFrame unlocks or Trash opens; iOS may not run the app exactly at a deadline.
-15. Random export paths intentionally avoid exposing original filenames. Native share recipients receive random filenames with the correct extension.
-16. Once a user hands a decrypted item to Photos or an activity extension, the destination may retain, upload, thumbnail, sync, or back up its copy. QuietFrame cannot control that behavior.
-17. iOS has no public API that fully blocks screenshots. QuietFrame covers inactive snapshots and locks on active capture, but screenshot notification is post-capture.
-18. APFS and flash storage do not support verifiable application-level secure overwrite. Reset relies primarily on cryptographic key destruction.
-19. Metadata schema V1 is ready for future migration stages, but no shipped legacy schema exists. The keyed deduplication-token change assumes this is the first public release.
-20. Localization is English-only in v1.
+4. Choosing no app passcode means anyone using the unlocked iPhone can open QuietFrame. Media remains encrypted at rest by a random key in the device-only Keychain.
+5. The normal passcode envelope uses `WhenUnlockedThisDeviceOnly`, not `WhenPasscodeSetThisDeviceOnly`. QuietFrame should either require an iOS device passcode in a future security-policy revision or explicitly accept operation on devices without one.
+6. SwiftData catalog metadata is plaintext inside an OS-protected, backup-excluded store. The app passcode encrypts media and thumbnails, not filenames, albums, dates, dimensions, sizes, tags, or SQLite free pages while the device is already unlocked.
+7. AVPlayer requires a fully decrypted protected temporary video before playback. Very large videos need free space approximately equal to their original size plus a safety margin and do not begin streaming immediately.
+8. Bulk sharing decrypts all selected files before presenting the activity sheet. Each file receives a capacity check, but v1 has no aggregate progress UI.
+9. Search loads the scoped metadata set for multi-field matching. Normal browsing is paged, but search and some bulk operations can become slower with very large vaults.
+10. Viewer swipe navigation covers currently loaded gallery pages. It does not yet fetch the next metadata page from inside the viewer.
+11. Tags are represented, displayed, and searchable but v1 has no tag editing screen.
+12. Failed import thumbnails remain as placeholders; there is no background thumbnail-regeneration queue.
+13. Live Photos, bursts, RAW workflows, and animated-image semantics are not preserved as compound Photos-library assets. The picker imports an image or movie representation.
+14. Exact duplicate detection does not detect visually similar, edited, or re-encoded media.
+15. Trash expiration runs when QuietFrame unlocks or Trash opens; iOS may not run the app exactly at a deadline.
+16. Random export paths intentionally avoid exposing original filenames. Native share recipients receive random filenames with the correct extension.
+17. Once a user hands a decrypted item to Photos or an activity extension, the destination may retain, upload, thumbnail, sync, or back up its copy. QuietFrame cannot control that behavior.
+18. iOS has no public API that fully blocks screenshots. QuietFrame covers inactive snapshots and locks on active capture, but screenshot notification is post-capture.
+19. APFS and flash storage do not support verifiable application-level secure overwrite. Reset relies primarily on cryptographic key destruction.
+20. Metadata schema V1 is ready for future migration stages, but no shipped legacy schema exists. The keyed deduplication-token change assumes this is the first public release.
+21. Localization is English-only in v1.
 
 ## Release Checklist
 

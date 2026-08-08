@@ -71,9 +71,15 @@ private struct AuthenticatedRootView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIScreen.capturedDidChangeNotification)) { _ in
-            screenIsCaptured = UIScreen.main.isCaptured
-            if screenIsCaptured {
+            let isCaptured = UIScreen.main.isCaptured
+            if isCaptured {
+                screenIsCaptured = true
                 Task { await coordinator.lock() }
+            } else {
+                Task {
+                    await coordinator.resumeWithoutPasscodeIfNeeded()
+                    screenIsCaptured = false
+                }
             }
         }
     }
@@ -86,7 +92,11 @@ private struct AuthenticatedRootView: View {
         case .needsOnboarding:
             OnboardingView(coordinator: coordinator)
         case .locked:
-            UnlockView(coordinator: coordinator)
+            if coordinator.authenticationMode == .none {
+                LaunchView()
+            } else {
+                UnlockView(coordinator: coordinator)
+            }
         case .unlocked:
             MainTabView()
         case .recoveryRequired:

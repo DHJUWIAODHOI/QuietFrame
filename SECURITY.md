@@ -32,11 +32,14 @@ QuietFrame trusts Apple platform cryptography and does not implement AES, SHA-25
 - Key envelope: AES-GCM with domain-separated authenticated data
 - Passcode check: constant-time comparison of an HMAC verifier
 - Main Keychain class: `WhenUnlockedThisDeviceOnly`, non-synchronizing
+- No-passcode mode: random master key stored directly in the device-only Keychain
 - Biometric Keychain class: `WhenPasscodeSetThisDeviceOnly` plus `biometryCurrentSet`
 - Runtime key: actor-isolated and removed on lock
 - Reset: journaled Keychain destruction before encrypted-file deletion
 
 The six-digit passcode has limited entropy. The design relies on Keychain/sandbox protection to prevent extraction of the offline-verifiable envelope. A future high-assurance mode should require a device passcode and support an alphanumeric passphrase or a device-bound Secure Enclave secret.
+
+No-passcode mode intentionally removes QuietFrame's app-level access gate. It does not remove media encryption, but anyone who can use the unlocked iPhone can open the vault. Users can add or remove a passcode later without rewriting media.
 
 ## File Encryption
 

@@ -6,6 +6,7 @@ struct MediaThumbnailView: View {
     let thumbnailService: ThumbnailService
     var isSelected = false
     var selectionMode = false
+    var thumbnailAspectRatio: CGFloat = 1
 
     @State private var image: UIImage?
 
@@ -76,7 +77,7 @@ struct MediaThumbnailView: View {
                     .accessibilityHidden(true)
             }
         }
-        .aspectRatio(1, contentMode: .fit)
+        .aspectRatio(thumbnailAspectRatio, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .task(id: media.thumbnailIdentifier) {

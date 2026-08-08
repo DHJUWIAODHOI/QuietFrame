@@ -7,6 +7,8 @@ struct SettingsScreen: View {
     @Query private var settingsRecords: [AppSettings]
 
     @State private var showsChangePasscode = false
+    @State private var showsSetPasscode = false
+    @State private var showsRemovePasscode = false
     @State private var confirmsReset = false
     @State private var showsReset = false
     @State private var userMessage: String?
@@ -26,9 +28,20 @@ struct SettingsScreen: View {
         .sheet(isPresented: $showsChangePasscode) {
             ChangePasscodeView(coordinator: dependencies.lockCoordinator)
         }
+        .sheet(isPresented: $showsSetPasscode) {
+            SetPasscodeView(coordinator: dependencies.lockCoordinator)
+        }
+        .sheet(isPresented: $showsRemovePasscode) {
+            RemovePasscodeView(coordinator: dependencies.lockCoordinator)
+        }
         .sheet(isPresented: $showsReset) {
-            ResetApplicationView(coordinator: dependencies.lockCoordinator)
-                .interactiveDismissDisabled(dependencies.lockCoordinator.isWorking)
+            if dependencies.lockCoordinator.authenticationMode == .passcode {
+                ResetApplicationView(coordinator: dependencies.lockCoordinator)
+                    .interactiveDismissDisabled(dependencies.lockCoordinator.isWorking)
+            } else {
+                RecoveryResetView(coordinator: dependencies.lockCoordinator)
+                    .interactiveDismissDisabled(dependencies.lockCoordinator.isWorking)
+            }
         }
         .confirmationDialog(
             "Reset QuietFrame?",
@@ -38,7 +51,7 @@ struct SettingsScreen: View {
             Button("Continue to Reset", role: .destructive) { showsReset = true }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Reset permanently deletes all encrypted media, albums, settings, and encryption keys. You will confirm again and enter your passcode.")
+            Text(resetConfirmationMessage)
         }
         .alert("QuietFrame", isPresented: messageIsPresented) {
             Button("OK", role: .cancel) { userMessage = nil }
@@ -49,35 +62,65 @@ struct SettingsScreen: View {
 
     private var securitySection: some View {
         Section("Security") {
-            Toggle(isOn: biometricsBinding) {
-                Label(dependencies.lockCoordinator.biometricKind.title, systemImage: biometricSymbol)
-            }
-            .disabled(dependencies.lockCoordinator.biometricKind == .none)
-            .accessibilityHint("Uses biometrics currently enrolled on this device")
+            if dependencies.lockCoordinator.authenticationMode == .passcode {
+                LabeledContent {
+                    Text("On").foregroundStyle(.secondary)
+                } label: {
+                    Label("App Passcode", systemImage: "lock.fill")
+                }
 
-            Button {
-                showsChangePasscode = true
-            } label: {
-                Label("Change Passcode", systemImage: "ellipsis.rectangle")
-            }
+                Toggle(isOn: biometricsBinding) {
+                    Label(dependencies.lockCoordinator.biometricKind.title, systemImage: biometricSymbol)
+                }
+                .disabled(dependencies.lockCoordinator.biometricKind == .none)
+                .accessibilityHint("Uses biometrics currently enrolled on this device")
 
-            Button {
-                Task { await dependencies.lockCoordinator.lock() }
-            } label: {
-                Label("Lock QuietFrame Now", systemImage: "lock.fill")
+                Button {
+                    showsChangePasscode = true
+                } label: {
+                    Label("Change Passcode", systemImage: "ellipsis.rectangle")
+                }
+
+                Button("Turn Off App Passcode", systemImage: "lock.open", role: .destructive) {
+                    showsRemovePasscode = true
+                }
+
+                Button {
+                    Task { await dependencies.lockCoordinator.lock() }
+                } label: {
+                    Label("Lock QuietFrame Now", systemImage: "lock.fill")
+                }
+                .accessibilityIdentifier("lock-now")
+            } else {
+                LabeledContent {
+                    Text("Off").foregroundStyle(.secondary)
+                } label: {
+                    Label("App Passcode", systemImage: "lock.open")
+                }
+
+                Button {
+                    showsSetPasscode = true
+                } label: {
+                    Label("Set a Passcode", systemImage: "lock.badge.plus")
+                }
+
+                Text("Media remains encrypted, but QuietFrame opens whenever your iPhone is unlocked.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
-            .accessibilityIdentifier("lock-now")
         }
     }
 
     private var behaviorSection: some View {
         Section {
-            Picker(selection: autoLockBinding) {
-                ForEach(AutoLockPeriod.allCases) { option in
-                    Text(option.title).tag(option)
+            if dependencies.lockCoordinator.authenticationMode == .passcode {
+                Picker(selection: autoLockBinding) {
+                    ForEach(AutoLockPeriod.allCases) { option in
+                        Text(option.title).tag(option)
+                    }
+                } label: {
+                    Label("Auto-Lock", systemImage: "lock.rotation")
                 }
-            } label: {
-                Label("Auto-Lock", systemImage: "lock.rotation")
             }
 
             Picker(selection: trashRetentionBinding) {
@@ -154,6 +197,13 @@ struct SettingsScreen: View {
 
     private var biometricSymbol: String {
         dependencies.lockCoordinator.biometricKind == .touchID ? "touchid" : "faceid"
+    }
+
+    private var resetConfirmationMessage: String {
+        if dependencies.lockCoordinator.authenticationMode == .passcode {
+            return "Reset permanently deletes all encrypted media, albums, settings, and encryption keys. You will confirm again and enter your passcode."
+        }
+        return "Reset permanently deletes all encrypted media, albums, settings, and encryption keys. You will confirm again and authenticate with iOS."
     }
 
     private var biometricsBinding: Binding<Bool> {

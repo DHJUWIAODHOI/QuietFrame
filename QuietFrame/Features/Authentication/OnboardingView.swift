@@ -11,6 +11,7 @@ struct OnboardingView: View {
     @State private var step: Step = .privacy
     @State private var passcode = ""
     @State private var confirmation = ""
+    @State private var confirmsNoPasscode = false
 
     var body: some View {
         ZStack {
@@ -59,6 +60,20 @@ struct OnboardingView: View {
                 }
             }
         }
+        .confirmationDialog(
+            "Continue without an app passcode?",
+            isPresented: $confirmsNoPasscode,
+            titleVisibility: .visible
+        ) {
+            Button("Continue Without Passcode") {
+                Task { await coordinator.createWithoutPasscode() }
+            }
+            Button("Use a Passcode", role: .cancel) {
+                withAnimation(.snappy) { step = .create }
+            }
+        } message: {
+            Text("Your media will still be encrypted and protected by the iPhone Keychain, but anyone using your unlocked iPhone can open QuietFrame. You can add a passcode later in Settings.")
+        }
         .accessibilityIdentifier("onboarding")
     }
 
@@ -82,7 +97,7 @@ struct OnboardingView: View {
                 privacyPoint("icloud.slash.fill", "Excluded from iCloud backup")
                 privacyPoint("photo.badge.plus", "Photos access only when you choose")
             }
-            Button("Set Up QuietFrame") {
+            Button("Use a Passcode") {
                 withAnimation(.snappy) { step = .create }
             }
             .buttonStyle(.borderedProminent)
@@ -90,6 +105,14 @@ struct OnboardingView: View {
             .foregroundStyle(.black)
             .controlSize(.large)
             .accessibilityIdentifier("start-setup")
+
+            Button("Continue Without Passcode") {
+                confirmsNoPasscode = true
+            }
+            .buttonStyle(.bordered)
+            .tint(.white)
+            .controlSize(.large)
+            .accessibilityIdentifier("skip-passcode")
         }
     }
 

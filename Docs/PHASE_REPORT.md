@@ -48,6 +48,7 @@ Verification: static API/security reviews completed; XCTest execution unavailabl
 Implemented:
 
 - Privacy onboarding
+- Optional no-passcode mode with device-only Keychain protection
 - Six-digit create/confirm/unlock
 - Escalating lockout
 - Face ID/Touch ID setup and unlock

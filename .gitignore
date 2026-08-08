@@ -16,3 +16,6 @@ DerivedData/
 *.cer
 *.mobileprovision
 *.provisionprofile
+
+# Locally downloaded GitHub Actions artifacts
+Artifacts/

@@ -268,7 +268,11 @@ private struct AlbumCard: View {
         VStack(alignment: .leading, spacing: 10) {
             Group {
                 if let cover {
-                    MediaThumbnailView(media: cover, thumbnailService: thumbnailService)
+                    MediaThumbnailView(
+                        media: cover,
+                        thumbnailService: thumbnailService,
+                        thumbnailAspectRatio: 1.35
+                    )
                 } else {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .fill(.quaternary)
@@ -281,7 +285,6 @@ private struct AlbumCard: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .aspectRatio(1.35, contentMode: .fill)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
             Text(album.name)

@@ -20,6 +20,7 @@ final class VaultLockCoordinator {
     }
 
     private(set) var state: State = .loading
+    private(set) var authenticationMode: VaultAuthenticationMode = .notConfigured
     private(set) var biometricKind: BiometricKind = .none
     private(set) var lockoutDate: Date?
     private(set) var isWorking = false
@@ -67,13 +68,21 @@ final class VaultLockCoordinator {
 
         do {
             lockoutDate = try await authentication.currentLockoutDate()
-            if try await authentication.hasPasscode() {
+            authenticationMode = try await authentication.authenticationMode()
+            switch authenticationMode {
+            case .passcode:
                 state = .locked
-            } else if try hasPersistedMedia() {
-                state = .recoveryRequired
-                userMessage = VaultError.missingEncryptionKey.localizedDescription
-            } else {
-                state = .needsOnboarding
+            case .none:
+                try await authentication.unlockWithoutPasscode()
+                try await postUnlockMaintenance?()
+                state = .unlocked
+            case .notConfigured:
+                if try hasPersistedMedia() {
+                    state = .recoveryRequired
+                    userMessage = VaultError.missingEncryptionKey.localizedDescription
+                } else {
+                    state = .needsOnboarding
+                }
             }
         } catch {
             state = .recoveryRequired
@@ -88,9 +97,66 @@ final class VaultLockCoordinator {
         }
         await perform {
             try await authentication.createPasscode(passcode)
+            authenticationMode = .passcode
             state = .locked
             try await postUnlockMaintenance?()
             state = .unlocked
+        }
+    }
+
+    func createWithoutPasscode() async {
+        await perform {
+            try await authentication.createWithoutPasscode()
+            authenticationMode = .none
+            state = .locked
+            try await postUnlockMaintenance?()
+            state = .unlocked
+        }
+    }
+
+    func addPasscode(_ passcode: String, confirmation: String) async -> Bool {
+        guard passcode == confirmation else {
+            userMessage = VaultError.passcodesDoNotMatch.localizedDescription
+            return false
+        }
+        do {
+            try await authentication.addPasscode(passcode)
+            authenticationMode = .passcode
+            userMessage = nil
+            return true
+        } catch {
+            handleAuthenticationError(error)
+            return false
+        }
+    }
+
+    func removePasscode(current: String) async -> Bool {
+        do {
+            try await authentication.removePasscode(current: current)
+            authenticationMode = .none
+            if let settings = settings() {
+                settings.biometricsEnabled = false
+                settings.modifiedAt = now()
+                try modelContext.save()
+            }
+            userMessage = nil
+            return true
+        } catch {
+            handleAuthenticationError(error)
+            return false
+        }
+    }
+
+    func resumeWithoutPasscodeIfNeeded() async {
+        guard authenticationMode == .none, state != .recoveryRequired else { return }
+        do {
+            try await authentication.unlockWithoutPasscode()
+            try await postUnlockMaintenance?()
+            state = .unlocked
+            userMessage = nil
+        } catch {
+            state = .recoveryRequired
+            userMessage = userFacingMessage(for: error)
         }
     }
 
@@ -144,6 +210,9 @@ final class VaultLockCoordinator {
 
     func setBiometricsEnabled(_ enabled: Bool) async -> Bool {
         do {
+            guard authenticationMode == .passcode else {
+                throw VaultError.invalidInput("Turn on app passcode protection before enabling biometrics.")
+            }
             guard let settings = settings() else { throw VaultError.persistenceFailure }
             if enabled {
                 guard biometricKind != .none else { throw VaultError.biometricsUnavailable }
@@ -251,6 +320,10 @@ final class VaultLockCoordinator {
             delayedLockTask?.cancel()
             delayedLockTask = nil
             defer { backgroundedAt = nil }
+            if authenticationMode == .none {
+                await resumeWithoutPasscodeIfNeeded()
+                return
+            }
             guard state == .unlocked,
                   let backgroundedAt else { return }
             let delay = TimeInterval(settings()?.autoLockPeriod.rawValue ?? 0)
@@ -329,6 +402,7 @@ final class VaultLockCoordinator {
         try modelContext.save()
 
         try AppResetJournal.finish()
+        authenticationMode = .notConfigured
         lockoutDate = nil
         userMessage = nil
         state = .needsOnboarding

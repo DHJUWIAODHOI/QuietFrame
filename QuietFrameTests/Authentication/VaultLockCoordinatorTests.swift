@@ -47,6 +47,28 @@ final class VaultLockCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.state, .locked)
     }
 
+    func testNoPasscodeModeSilentlyReopensAfterBackgroundLock() async throws {
+        let container = try makeContainer(autoLock: .immediately)
+        let authentication = MockAuthenticationService()
+        try await authentication.removePasscode(current: "123456")
+        let storage = MockSecureFileStorage()
+        let coordinator = VaultLockCoordinator(
+            authentication: authentication,
+            secureStorage: storage,
+            modelContext: container.mainContext
+        )
+
+        await coordinator.initializeIfNeeded()
+        XCTAssertEqual(coordinator.authenticationMode, .none)
+        XCTAssertEqual(coordinator.state, .unlocked)
+
+        await coordinator.handleLifecycle(.background)
+        XCTAssertEqual(coordinator.state, .locked)
+
+        await coordinator.handleLifecycle(.active)
+        XCTAssertEqual(coordinator.state, .unlocked)
+    }
+
     private func makeContainer(autoLock: AutoLockPeriod) throws -> ModelContainer {
         let schema = Schema([
             VaultMedia.self,

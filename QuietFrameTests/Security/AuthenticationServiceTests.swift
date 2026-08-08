@@ -87,4 +87,51 @@ final class AuthenticationServiceTests: XCTestCase {
         let unwrappedKey = try await session.keyData()
         XCTAssertEqual(unwrappedKey, originalKey)
     }
+
+    func testVaultCanOpenWithoutAppPasscode() async throws {
+        let session = VaultSession()
+        let service = AuthenticationService(
+            keychain: MockKeychainService(),
+            session: session,
+            policy: .init(derivationIterations: 50, saltByteCount: 16)
+        )
+
+        try await service.createWithoutPasscode()
+        let originalKey = try await session.keyData()
+        let initialMode = try await service.authenticationMode()
+        XCTAssertEqual(initialMode, .none)
+
+        await service.lock()
+        try await service.unlockWithoutPasscode()
+
+        let reopenedKey = try await session.keyData()
+        XCTAssertEqual(reopenedKey, originalKey)
+    }
+
+    func testPasscodeCanBeAddedAndRemovedWithoutChangingVaultKey() async throws {
+        let session = VaultSession()
+        let service = AuthenticationService(
+            keychain: MockKeychainService(),
+            session: session,
+            policy: .init(derivationIterations: 50, saltByteCount: 16)
+        )
+        try await service.createWithoutPasscode()
+        let originalKey = try await session.keyData()
+
+        try await service.addPasscode("112233")
+        let passcodeMode = try await service.authenticationMode()
+        XCTAssertEqual(passcodeMode, .passcode)
+        await service.lock()
+        try await service.unlock(passcode: "112233")
+        let passcodeKey = try await session.keyData()
+        XCTAssertEqual(passcodeKey, originalKey)
+
+        try await service.removePasscode(current: "112233")
+        let noPasscodeMode = try await service.authenticationMode()
+        XCTAssertEqual(noPasscodeMode, .none)
+        await service.lock()
+        try await service.unlockWithoutPasscode()
+        let reopenedKey = try await session.keyData()
+        XCTAssertEqual(reopenedKey, originalKey)
+    }
 }
