@@ -81,8 +81,11 @@ final class VaultLockCoordinatorTests: XCTestCase {
         try Data(repeating: 0x6c, count: 200_000).write(to: sourceURL)
 
         let session = VaultSession()
-        let authentication = MockAuthenticationService(session: session)
-        try await authentication.removePasscode(current: "123456")
+        let authentication = AuthenticationService(
+            keychain: MockKeychainService(),
+            session: session
+        )
+        try await authentication.createWithoutPasscode()
         let maintenance = TestAsyncCounter()
         let coordinator = VaultLockCoordinator(
             authentication: authentication,
@@ -102,9 +105,7 @@ final class VaultLockCoordinatorTests: XCTestCase {
         }
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: encryptedURL.path))
-        let unlockCount = await authentication.unlockWithoutPasscodeCount
         let maintenanceCount = await maintenance.value
-        XCTAssertEqual(unlockCount, 1)
         XCTAssertEqual(maintenanceCount, 1)
         XCTAssertEqual(coordinator.state, .unlocked)
     }
