@@ -6,7 +6,12 @@ actor MockSecureFileStorage: SecureFileStoring {
     var moveCount = 0
     var deleteCount = 0
     var removeAllCount = 0
+    var allIdentifiersCount = 0
     var identifiers: [EncryptedAssetLocation: Set<String>] = [:]
+    private var shouldPauseNextMove = false
+    private var isMovePaused = false
+    private var pausedMoveContinuation: CheckedContinuation<Void, Never>?
+    private var pausedMoveWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(identifiers: [EncryptedAssetLocation: Set<String>] = [:]) {
         self.identifiers = identifiers
@@ -42,10 +47,22 @@ actor MockSecureFileStorage: SecureFileStoring {
         to: EncryptedAssetLocation
     ) async throws {
         moveCount += 1
+        identifiers[from, default: []].remove(identifier)
+        identifiers[to, default: []].insert(identifier)
+        guard shouldPauseNextMove else { return }
+        shouldPauseNextMove = false
+        await withCheckedContinuation { continuation in
+            pausedMoveContinuation = continuation
+            isMovePaused = true
+            pausedMoveWaiters.forEach { $0.resume() }
+            pausedMoveWaiters.removeAll()
+        }
+        isMovePaused = false
     }
 
     func delete(identifier: String, location: EncryptedAssetLocation) async throws {
         deleteCount += 1
+        identifiers[location, default: []].remove(identifier)
     }
 
     func cleanupTemporaryFiles() async {
@@ -62,6 +79,21 @@ actor MockSecureFileStorage: SecureFileStoring {
     }
 
     func allIdentifiers(location: EncryptedAssetLocation) async throws -> Set<String> {
+        allIdentifiersCount += 1
         identifiers[location] ?? []
+    }
+
+    func pauseNextMove() {
+        shouldPauseNextMove = true
+    }
+
+    func waitForPausedMove() async {
+        guard !isMovePaused else { return }
+        await withCheckedContinuation { pausedMoveWaiters.append($0) }
+    }
+
+    func resumePausedMove() {
+        pausedMoveContinuation?.resume()
+        pausedMoveContinuation = nil
     }
 }

@@ -29,6 +29,7 @@ final class VaultLockCoordinator {
 
     private let authentication: any AuthenticationServicing
     private let secureStorage: any SecureFileStoring
+    private let operationGate: VaultOperationGate
     private let cancelMediaOperations: (@Sendable () async -> Void)?
     private let postUnlockMaintenance: (@Sendable () async throws -> Void)?
     private let modelContext: ModelContext
@@ -41,12 +42,14 @@ final class VaultLockCoordinator {
         authentication: any AuthenticationServicing,
         secureStorage: any SecureFileStoring,
         modelContext: ModelContext,
+        operationGate: VaultOperationGate = VaultOperationGate(),
         cancelMediaOperations: (@Sendable () async -> Void)? = nil,
         postUnlockMaintenance: (@Sendable () async throws -> Void)? = nil,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.authentication = authentication
         self.secureStorage = secureStorage
+        self.operationGate = operationGate
         self.modelContext = modelContext
         self.cancelMediaOperations = cancelMediaOperations
         self.postUnlockMaintenance = postUnlockMaintenance
@@ -284,6 +287,8 @@ final class VaultLockCoordinator {
         do {
             try await eraseLocalVault()
             return true
+        } catch is CancellationError {
+            return false
         } catch {
             state = .recoveryRequired
             handleAuthenticationError(error)
@@ -304,6 +309,8 @@ final class VaultLockCoordinator {
         do {
             try await eraseLocalVault()
             return true
+        } catch is CancellationError {
+            return false
         } catch {
             state = .recoveryRequired
             handleAuthenticationError(error)
@@ -414,10 +421,16 @@ final class VaultLockCoordinator {
     }
 
     private func eraseLocalVault() async throws {
+        await cancelMediaOperations?()
+        try await operationGate.withLock {
+            try await self.eraseLocalVaultExclusively()
+        }
+    }
+
+    private func eraseLocalVaultExclusively() async throws {
         try AppResetJournal.begin()
         state = .locked
         await authentication.lock()
-        await cancelMediaOperations?()
         try await authentication.resetCredentials()
         try await secureStorage.removeAllEncryptedData()
 

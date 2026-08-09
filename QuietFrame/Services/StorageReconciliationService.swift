@@ -11,13 +11,25 @@ struct ReconciliationResult: Sendable, Equatable {
 final class StorageReconciliationService {
     private let modelContext: ModelContext
     private let storage: any SecureFileStoring
+    private let operationGate: VaultOperationGate
 
-    init(modelContext: ModelContext, storage: any SecureFileStoring) {
+    init(
+        modelContext: ModelContext,
+        storage: any SecureFileStoring,
+        operationGate: VaultOperationGate = VaultOperationGate()
+    ) {
         self.modelContext = modelContext
         self.storage = storage
+        self.operationGate = operationGate
     }
 
     func reconcile() async throws -> ReconciliationResult {
+        try await operationGate.withLock {
+            try await self.reconcileExclusively()
+        }
+    }
+
+    private func reconcileExclusively() async throws -> ReconciliationResult {
         let media = try modelContext.fetch(FetchDescriptor<VaultMedia>())
         let activeReferences = Set(media.filter { !$0.isTrashed }.map(\.storageIdentifier))
         let trashReferences = Set(media.filter(\.isTrashed).map(\.storageIdentifier))

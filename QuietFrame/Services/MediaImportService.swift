@@ -66,11 +66,17 @@ protocol MediaImporting: Sendable {
 actor MediaImportService: MediaImporting {
     private let storage: any SecureFileStoring
     private let repository: any VaultRepositoryProtocol
+    private let operationGate: VaultOperationGate
     private var operationGeneration: UInt64 = 0
 
-    init(storage: any SecureFileStoring, repository: any VaultRepositoryProtocol) {
+    init(
+        storage: any SecureFileStoring,
+        repository: any VaultRepositoryProtocol,
+        operationGate: VaultOperationGate = VaultOperationGate()
+    ) {
         self.storage = storage
         self.repository = repository
+        self.operationGate = operationGate
     }
 
     func importMedia(
@@ -80,8 +86,28 @@ actor MediaImportService: MediaImporting {
         preflightThumbnailFailureCount: Int = 0,
         progress: (@Sendable (ImportProgress) async -> Void)? = nil
     ) async throws -> ImportSummary {
-        guard !sources.isEmpty else { throw VaultError.invalidInput("Choose at least one item to import.") }
         let generation = operationGeneration
+        return try await operationGate.withLock {
+            try await self.importMediaExclusively(
+                sources,
+                albumID: albumID,
+                preflightFailureCount: preflightFailureCount,
+                preflightThumbnailFailureCount: preflightThumbnailFailureCount,
+                progress: progress,
+                generation: generation
+            )
+        }
+    }
+
+    private func importMediaExclusively(
+        _ sources: [ImportSource],
+        albumID: UUID?,
+        preflightFailureCount: Int,
+        preflightThumbnailFailureCount: Int,
+        progress: (@Sendable (ImportProgress) async -> Void)?,
+        generation: UInt64
+    ) async throws -> ImportSummary {
+        guard !sources.isEmpty else { throw VaultError.invalidInput("Choose at least one item to import.") }
         let initialFailureCount = max(0, preflightFailureCount)
         let requestedCount = sources.count + initialFailureCount
         let recordID = try await repository.beginImport(requestedCount: requestedCount)

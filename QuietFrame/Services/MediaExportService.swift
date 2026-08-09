@@ -34,12 +34,23 @@ actor MediaExportService: MediaExporting {
     }
 
     private let storage: any SecureFileStoring
+    private let operationGate: VaultOperationGate
 
-    init(storage: any SecureFileStoring) {
+    init(
+        storage: any SecureFileStoring,
+        operationGate: VaultOperationGate = VaultOperationGate()
+    ) {
         self.storage = storage
+        self.operationGate = operationGate
     }
 
     func prepareForSharing(media: [VaultMedia]) async throws -> MediaExportLease {
+        try await operationGate.withLock {
+            try await self.prepareForSharingExclusively(media: media)
+        }
+    }
+
+    private func prepareForSharingExclusively(media: [VaultMedia]) async throws -> MediaExportLease {
         guard !media.isEmpty else { throw VaultError.invalidInput("Select at least one item to export.") }
         var files: [SecureTemporaryFileLease] = []
         do {
@@ -68,7 +79,13 @@ actor MediaExportService: MediaExporting {
         guard authorization == .authorized || authorization == .limited else {
             throw VaultError.photosPermissionDenied
         }
-        let lease = try await prepareForSharing(media: media)
+        try await operationGate.withLock {
+            try await self.saveToPhotosExclusively(media: media)
+        }
+    }
+
+    private func saveToPhotosExclusively(media: [VaultMedia]) async throws {
+        let lease = try await prepareForSharingExclusively(media: media)
         defer { lease.cleanup() }
         let exportItems = zip(media, lease.urls).map { item, url in
             PhotosExportItem(url: url, mediaType: item.mediaType, creationDate: item.originalCreationDate)

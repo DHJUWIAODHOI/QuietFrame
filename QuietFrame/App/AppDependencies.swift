@@ -33,29 +33,40 @@ final class AppDependencies {
         )
         let encryption = ChunkedEncryptionService(session: session)
         let secureStorage = try SecureFileStorageService(encryption: encryption)
+        let operationGate = VaultOperationGate()
         let repository = VaultRepository(modelContext: modelContainer.mainContext)
         let albumService = AlbumService(
             repository: repository,
             modelContext: modelContainer.mainContext,
-            storage: secureStorage
+            storage: secureStorage,
+            operationGate: operationGate
         )
         let metadataService = MediaMetadataService()
         let thumbnailGenerator = ThumbnailGenerator()
         let thumbnailService = ThumbnailService(storage: secureStorage)
-        let mediaImportService = MediaImportService(storage: secureStorage, repository: repository)
+        let mediaImportService = MediaImportService(
+            storage: secureStorage,
+            repository: repository,
+            operationGate: operationGate
+        )
         let photoLibraryService = PhotoLibraryService()
         let trashService = TrashService(
             modelContext: modelContainer.mainContext,
-            storage: secureStorage
+            storage: secureStorage,
+            operationGate: operationGate
         )
-        let mediaExportService = MediaExportService(storage: secureStorage)
+        let mediaExportService = MediaExportService(
+            storage: secureStorage,
+            operationGate: operationGate
+        )
         let storageAnalysisService = StorageAnalysisService(
             modelContext: modelContainer.mainContext,
             storage: secureStorage
         )
         let storageReconciliationService = StorageReconciliationService(
             modelContext: modelContainer.mainContext,
-            storage: secureStorage
+            storage: secureStorage,
+            operationGate: operationGate
         )
 
         self.session = session
@@ -77,6 +88,7 @@ final class AppDependencies {
             authentication: authentication,
             secureStorage: secureStorage,
             modelContext: modelContainer.mainContext,
+            operationGate: operationGate,
             cancelMediaOperations: {
                 await mediaImportService.cancelAllOperations()
             },

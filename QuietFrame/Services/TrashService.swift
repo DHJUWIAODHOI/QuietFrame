@@ -14,13 +14,25 @@ protocol TrashServicing: AnyObject {
 final class TrashService: TrashServicing {
     private let modelContext: ModelContext
     private let storage: any SecureFileStoring
+    private let operationGate: VaultOperationGate
 
-    init(modelContext: ModelContext, storage: any SecureFileStoring) {
+    init(
+        modelContext: ModelContext,
+        storage: any SecureFileStoring,
+        operationGate: VaultOperationGate = VaultOperationGate()
+    ) {
         self.modelContext = modelContext
         self.storage = storage
+        self.operationGate = operationGate
     }
 
     func moveToTrash(ids: Set<UUID>) async throws {
+        try await operationGate.withLock {
+            try await self.moveToTrashExclusively(ids: ids)
+        }
+    }
+
+    private func moveToTrashExclusively(ids: Set<UUID>) async throws {
         let media = try fetchMedia(ids: ids).filter { !$0.isTrashed }
         guard media.count == ids.count else { throw VaultError.persistenceFailure }
         var moved: [String] = []
@@ -56,6 +68,12 @@ final class TrashService: TrashServicing {
     }
 
     func restore(ids: Set<UUID>) async throws {
+        try await operationGate.withLock {
+            try await self.restoreExclusively(ids: ids)
+        }
+    }
+
+    private func restoreExclusively(ids: Set<UUID>) async throws {
         let media = try fetchMedia(ids: ids).filter(\.isTrashed)
         guard media.count == ids.count else { throw VaultError.persistenceFailure }
         var moved: [String] = []
@@ -91,6 +109,12 @@ final class TrashService: TrashServicing {
     }
 
     func permanentlyDelete(ids: Set<UUID>) async throws {
+        try await operationGate.withLock {
+            try await self.permanentlyDeleteExclusively(ids: ids)
+        }
+    }
+
+    private func permanentlyDeleteExclusively(ids: Set<UUID>) async throws {
         let media = try fetchMedia(ids: ids).filter(\.isTrashed)
         guard media.count == ids.count else { throw VaultError.persistenceFailure }
 
@@ -123,15 +147,27 @@ final class TrashService: TrashServicing {
     }
 
     func emptyTrash() async throws {
+        try await operationGate.withLock {
+            try await self.emptyTrashExclusively()
+        }
+    }
+
+    private func emptyTrashExclusively() async throws {
         let descriptor = FetchDescriptor<VaultMedia>(
             predicate: #Predicate { media in media.trashedAt != nil }
         )
         let ids = Set(try modelContext.fetch(descriptor).map(\.id))
         guard !ids.isEmpty else { return }
-        try await permanentlyDelete(ids: ids)
+        try await permanentlyDeleteExclusively(ids: ids)
     }
 
     func purgeExpiredItems() async throws -> Int {
+        try await operationGate.withLock {
+            try await self.purgeExpiredItemsExclusively()
+        }
+    }
+
+    private func purgeExpiredItemsExclusively() async throws -> Int {
         var settingsDescriptor = FetchDescriptor<AppSettings>()
         settingsDescriptor.fetchLimit = 1
         let retentionDays = try modelContext.fetch(settingsDescriptor).first?.trashRetentionDays ?? 30
@@ -145,7 +181,7 @@ final class TrashService: TrashServicing {
         }
         let expiredIDs = Set<UUID>(expiredIDValues)
         guard !expiredIDs.isEmpty else { return 0 }
-        try await permanentlyDelete(ids: expiredIDs)
+        try await permanentlyDeleteExclusively(ids: expiredIDs)
         return expiredIDs.count
     }
 

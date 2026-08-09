@@ -38,6 +38,10 @@ jobs:
             -only-testing:QuietFrameTests/MediaImportServiceTests \
             -only-testing:QuietFrameTests/PhotoLibraryAccessTests \
             -only-testing:QuietFrameTests/VaultLockCoordinatorTests \
+            -only-testing:QuietFrameTests/StorageReconciliationServiceTests \
+            -only-testing:QuietFrameTests/TrashServiceTests \
+            -only-testing:QuietFrameTests/AlbumServiceTests \
+            -only-testing:QuietFrameTests/MediaExportServiceTests \
             | tee "$RUNNER_TEMP/xctest.log"
 
       - name: Archive without signing

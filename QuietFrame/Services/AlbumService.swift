@@ -15,15 +15,18 @@ final class AlbumService: AlbumServicing {
     private let repository: VaultRepository
     private let modelContext: ModelContext
     private let storage: any SecureFileStoring
+    private let operationGate: VaultOperationGate
 
     init(
         repository: VaultRepository,
         modelContext: ModelContext,
-        storage: any SecureFileStoring
+        storage: any SecureFileStoring,
+        operationGate: VaultOperationGate = VaultOperationGate()
     ) {
         self.repository = repository
         self.modelContext = modelContext
         self.storage = storage
+        self.operationGate = operationGate
     }
 
     func createAlbum(name: String) throws -> VaultAlbum {
@@ -43,6 +46,12 @@ final class AlbumService: AlbumServicing {
     }
 
     func deleteAlbum(id: UUID, mode: AlbumDeletionMode) async throws {
+        try await operationGate.withLock {
+            try await self.deleteAlbumExclusively(id: id, mode: mode)
+        }
+    }
+
+    private func deleteAlbumExclusively(id: UUID, mode: AlbumDeletionMode) async throws {
         var descriptor = FetchDescriptor<VaultAlbum>(predicate: #Predicate { album in album.id == id })
         descriptor.fetchLimit = 1
         guard let album = try modelContext.fetch(descriptor).first else {
