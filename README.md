@@ -190,7 +190,7 @@ Original Photos assets are never deleted automatically. The import summary offer
 - Paged adaptive lazy gallery with photo/video/favorite filters and five sort modes
 - Search by filename, album, import/creation date, year, and optional tags
 - Multi-selection with favorite, move, export, and Trash actions
-- Swipe viewer, photo pinch/double-tap zoom, native video controls, favorite, move, export, Trash, and information panel
+- Swipe viewer with swipe-down dismissal, photo pinch/double-tap zoom, tap-to-play looping video with unobstructed native controls, favorite, move, export, Trash, and information panel
 - Encrypted Trash with deletion dates, restoration, permanent deletion, Empty Trash, and 7/15/30-day purge
 - Native multi-item share sheet and original-byte Photos export
 - Settings for biometrics, passcode, lock timing, Trash retention, appearance, thumbnail size, storage, privacy, export behavior, manual lock, and reset

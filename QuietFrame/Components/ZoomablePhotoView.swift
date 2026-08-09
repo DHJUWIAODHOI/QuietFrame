@@ -4,9 +4,10 @@ import UIKit
 struct ZoomablePhotoView: UIViewRepresentable {
     let image: UIImage
     let accessibilityLabel: String
+    let onZoomChanged: (Bool) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(onZoomChanged: onZoomChanged)
     }
 
     func makeUIView(context: Context) -> UIScrollView {
@@ -43,6 +44,7 @@ struct ZoomablePhotoView: UIViewRepresentable {
     }
 
     func updateUIView(_ scrollView: UIScrollView, context: Context) {
+        context.coordinator.onZoomChanged = onZoomChanged
         if context.coordinator.imageView.image !== image {
             context.coordinator.imageView.image = image
             scrollView.setZoomScale(1, animated: false)
@@ -53,9 +55,22 @@ struct ZoomablePhotoView: UIViewRepresentable {
     final class Coordinator: NSObject, UIScrollViewDelegate {
         let imageView = UIImageView()
         weak var scrollView: UIScrollView?
+        var onZoomChanged: (Bool) -> Void
+        private var reportedIsZoomed = false
+
+        init(onZoomChanged: @escaping (Bool) -> Void) {
+            self.onZoomChanged = onZoomChanged
+        }
 
         func viewForZooming(in scrollView: UIScrollView) -> UIView? {
             imageView
+        }
+
+        func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            let isZoomed = scrollView.zoomScale > scrollView.minimumZoomScale + 0.01
+            guard reportedIsZoomed != isZoomed else { return }
+            reportedIsZoomed = isZoomed
+            onZoomChanged(isZoomed)
         }
 
         @objc func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {

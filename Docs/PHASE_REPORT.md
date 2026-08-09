@@ -98,7 +98,7 @@ Implemented:
 - Smart and user albums
 - Album lifecycle, cover, move, count, and sort
 - Paged adaptive gallery, encrypted memory-cached thumbnails, filters, sorting, search, and selection
-- Swipe viewer, photo zoom, native video playback, information, favorites, and moves
+- Swipe viewer with swipe-down dismissal, photo zoom, tap-to-play looping video, information, favorites, and moves
 
 Primary files:
 
@@ -111,7 +111,7 @@ Primary files:
 - `QuietFrame/Services/ThumbnailService.swift`
 - `QuietFrameTests/Albums/*`
 
-Decision: the viewer decrypts only its active page and releases media when swiping away.
+Decision: the viewer decrypts only its active page and releases media when swiping away. Videos loop while playing, pause when the app becomes inactive, and hide QuietFrame controls without covering AVKit controls.
 
 Verification: repository/service tests and static SwiftUI review completed; native UI/performance testing remains required.
 

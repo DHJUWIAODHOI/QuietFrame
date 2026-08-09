@@ -10,6 +10,7 @@ struct MediaViewer: View {
     @Query(sort: \VaultAlbum.name) private var albums: [VaultAlbum]
     @State private var selectedMediaID: UUID
     @State private var controlsAreVisible = true
+    @State private var selectedPhotoIsZoomed = false
     @State private var informationMedia: VaultMedia?
     @State private var movingMedia: VaultMedia?
     @State private var shareLease: MediaExportLease?
@@ -36,19 +37,24 @@ struct MediaViewer: View {
                     SecureMediaPage(
                         media: media,
                         isActive: media.id == selectedMediaID,
-                        storage: dependencies.secureStorage
-                    )
+                        storage: dependencies.secureStorage,
+                        onPhotoTap: togglePhotoControls,
+                        onPhotoZoomChanged: { isZoomed in
+                            guard media.id == selectedMediaID else { return }
+                            selectedPhotoIsZoomed = isZoomed
+                        },
+                        onVideoPlaybackChanged: { isPlaying in
+                            guard media.id == selectedMediaID, isPlaying else { return }
+                            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
+                                controlsAreVisible = false
+                            }
+                        }
+                    }
                     .tag(media.id)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
-            .simultaneousGesture(
-                TapGesture().onEnded {
-                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
-                        controlsAreVisible.toggle()
-                    }
-                }
-            )
+            .simultaneousGesture(dismissGesture)
 
             if controlsAreVisible {
                 controls
@@ -57,7 +63,10 @@ struct MediaViewer: View {
         }
         .statusBarHidden(!controlsAreVisible)
         .persistentSystemOverlays(controlsAreVisible ? .automatic : .hidden)
-        .onChange(of: selectedMediaID) { _, _ in controlsAreVisible = true }
+        .onChange(of: selectedMediaID) { _, _ in
+            selectedPhotoIsZoomed = false
+            controlsAreVisible = true
+        }
         .sheet(item: $informationMedia) { media in
             MediaInfoView(media: media)
                 .presentationDetents([.medium, .large])
@@ -104,6 +113,7 @@ struct MediaViewer: View {
             Text(userMessage ?? "The action could not be completed.")
         }
         .accessibilityIdentifier("media-viewer")
+        .accessibilityAction(named: "Close Viewer") { dismiss() }
     }
 
     private var controls: some View {
@@ -204,6 +214,25 @@ struct MediaViewer: View {
 
     private var messageIsPresented: Binding<Bool> {
         Binding(get: { userMessage != nil }, set: { if !$0 { userMessage = nil } })
+    }
+
+    private var dismissGesture: some Gesture {
+        DragGesture(minimumDistance: 24, coordinateSpace: .global)
+            .onEnded { value in
+                let translation = value.translation
+                let predicted = value.predictedEndTranslation
+                guard !selectedPhotoIsZoomed,
+                      translation.height > 80,
+                      predicted.height > 160,
+                      abs(predicted.height) > abs(predicted.width) * 1.2 else { return }
+                dismiss()
+            }
+    }
+
+    private func togglePhotoControls() {
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
+            controlsAreVisible.toggle()
+        }
     }
 
     private func favorite(_ media: VaultMedia) {
