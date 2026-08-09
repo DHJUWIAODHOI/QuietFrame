@@ -39,16 +39,8 @@ struct MediaViewer: View {
                         isActive: media.id == selectedMediaID,
                         storage: dependencies.secureStorage,
                         onPhotoTap: togglePhotoControls,
-                        onPhotoZoomChanged: { isZoomed in
-                            guard media.id == selectedMediaID else { return }
-                            selectedPhotoIsZoomed = isZoomed
-                        },
-                        onVideoPlaybackChanged: { isPlaying in
-                            guard media.id == selectedMediaID, isPlaying else { return }
-                            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
-                                controlsAreVisible = false
-                            }
-                        }
+                        onPhotoZoomChanged: { updatePhotoZoom($0, mediaID: media.id) },
+                        onVideoPlaybackChanged: { updateVideoPlayback($0, mediaID: media.id) }
                     }
                     .tag(media.id)
                 }
@@ -232,6 +224,18 @@ struct MediaViewer: View {
     private func togglePhotoControls() {
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
             controlsAreVisible.toggle()
+        }
+    }
+
+    private func updatePhotoZoom(_ isZoomed: Bool, mediaID: UUID) {
+        guard mediaID == selectedMediaID else { return }
+        selectedPhotoIsZoomed = isZoomed
+    }
+
+    private func updateVideoPlayback(_ isPlaying: Bool, mediaID: UUID) {
+        guard mediaID == selectedMediaID, isPlaying else { return }
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
+            controlsAreVisible = false
         }
     }
 
