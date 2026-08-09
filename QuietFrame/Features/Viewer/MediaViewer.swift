@@ -30,29 +30,7 @@ struct MediaViewer: View {
     }
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            TabView(selection: $selectedMediaID) {
-                ForEach(items) { media in
-                    SecureMediaPage(
-                        media: media,
-                        isActive: media.id == selectedMediaID,
-                        storage: dependencies.secureStorage,
-                        onPhotoTap: togglePhotoControls,
-                        onPhotoZoomChanged: { updatePhotoZoom($0, mediaID: media.id) },
-                        onVideoPlaybackChanged: { updateVideoPlayback($0, mediaID: media.id) }
-                    }
-                    .tag(media.id)
-                }
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .simultaneousGesture(dismissGesture)
-
-            if controlsAreVisible {
-                controls
-                    .transition(.opacity)
-            }
-        }
+        viewerContent
         .statusBarHidden(!controlsAreVisible)
         .persistentSystemOverlays(controlsAreVisible ? .automatic : .hidden)
         .onChange(of: selectedMediaID) { _, _ in
@@ -106,6 +84,36 @@ struct MediaViewer: View {
         }
         .accessibilityIdentifier("media-viewer")
         .accessibilityAction(named: "Close Viewer") { dismiss() }
+    }
+
+    private var viewerContent: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            mediaPager
+
+            if controlsAreVisible {
+                controls
+                    .transition(.opacity)
+            }
+        }
+    }
+
+    private var mediaPager: some View {
+        TabView(selection: $selectedMediaID) {
+            ForEach(items) { media in
+                SecureMediaPage(
+                    media: media,
+                    isActive: media.id == selectedMediaID,
+                    storage: dependencies.secureStorage,
+                    onPhotoTap: togglePhotoControls,
+                    onPhotoZoomChanged: { updatePhotoZoom($0, mediaID: media.id) },
+                    onVideoPlaybackChanged: { updateVideoPlayback($0, mediaID: media.id) }
+                )
+                .tag(media.id)
+            }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .simultaneousGesture(dismissGesture)
     }
 
     private var controls: some View {
