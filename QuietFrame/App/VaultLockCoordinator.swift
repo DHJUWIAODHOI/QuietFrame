@@ -275,11 +275,9 @@ final class VaultLockCoordinator {
         guard !isWorking else { return false }
         isWorking = true
         defer { isWorking = false }
-        let previousState = state
         do {
             try await authentication.unlock(passcode: passcode)
         } catch {
-            state = previousState
             handleAuthenticationError(error)
             return false
         }
@@ -297,11 +295,9 @@ final class VaultLockCoordinator {
         guard !isWorking else { return false }
         isWorking = true
         defer { isWorking = false }
-        let previousState = state
         do {
             try await authentication.authorizeDestructiveReset()
         } catch {
-            state = previousState
             handleAuthenticationError(error)
             return false
         }

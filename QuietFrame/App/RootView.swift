@@ -100,7 +100,7 @@ private struct AuthenticatedRootView: View {
         case .unlocked:
             MainTabView()
         case .retryRequired:
-            RetryRequiredView(coordinator: coordinator, message: coordinator.userMessage)
+            RetryRequiredView(coordinator: coordinator)
         case .recoveryRequired:
             RecoveryRequiredView(coordinator: coordinator, message: coordinator.userMessage)
         }
@@ -133,18 +133,16 @@ private struct AuthenticatedRootView: View {
 
 private struct RetryRequiredView: View {
     let coordinator: VaultLockCoordinator
-    let message: String?
 
     var body: some View {
         VStack(spacing: 20) {
             ContentUnavailableView(
                 "QuietFrame Couldn't Open",
                 systemImage: "arrow.clockwise.circle",
-                description: Text(message ?? "Try opening the vault again.")
+                description: Text(coordinator.userMessage ?? "Try opening the vault again.")
             )
             Button("Try Again") { Task { await coordinator.retryOpeningVault() } }
                 .buttonStyle(.borderedProminent)
-                .disabled(coordinator.isWorking)
         }
         .accessibilityIdentifier("vault-retry-required")
     }

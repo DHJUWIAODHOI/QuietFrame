@@ -197,7 +197,7 @@ final class VaultLockCoordinatorTests: XCTestCase {
         container.mainContext.insert(makeMedia())
         try container.mainContext.save()
         let authentication = MockAuthenticationService()
-        await authentication.setMode(.notConfigured)
+        try await authentication.resetCredentials()
         let coordinator = VaultLockCoordinator(
             authentication: authentication,
             secureStorage: MockSecureFileStorage(),

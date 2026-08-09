@@ -11,10 +11,6 @@ actor MockAuthenticationService: AuthenticationServicing {
         nextError = error
     }
 
-    func setMode(_ mode: VaultAuthenticationMode) {
-        self.mode = mode
-    }
-
     func authenticationMode() async throws -> VaultAuthenticationMode {
         if let nextError { throw nextError }
         return mode
