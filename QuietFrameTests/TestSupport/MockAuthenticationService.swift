@@ -7,7 +7,18 @@ actor MockAuthenticationService: AuthenticationServicing {
     var lockCount = 0
     var nextError: VaultError?
 
-    func authenticationMode() async throws -> VaultAuthenticationMode { mode }
+    func setNextError(_ error: VaultError?) {
+        nextError = error
+    }
+
+    func setMode(_ mode: VaultAuthenticationMode) {
+        self.mode = mode
+    }
+
+    func authenticationMode() async throws -> VaultAuthenticationMode {
+        if let nextError { throw nextError }
+        return mode
+    }
 
     func hasPasscode() async throws -> Bool { passcodeExists }
 

@@ -16,6 +16,7 @@ final class VaultLockCoordinator {
         case needsOnboarding
         case locked
         case unlocked
+        case retryRequired
         case recoveryRequired
     }
 
@@ -85,8 +86,7 @@ final class VaultLockCoordinator {
                 }
             }
         } catch {
-            state = .recoveryRequired
-            userMessage = userFacingMessage(for: error)
+            await handleVaultOpenFailure(error)
         }
     }
 
@@ -155,9 +155,18 @@ final class VaultLockCoordinator {
             state = .unlocked
             userMessage = nil
         } catch {
-            state = .recoveryRequired
-            userMessage = userFacingMessage(for: error)
+            await handleVaultOpenFailure(error)
         }
+    }
+
+    func retryOpeningVault() async {
+        guard state == .retryRequired, !isWorking else { return }
+        isWorking = true
+        didInitialize = false
+        state = .loading
+        userMessage = nil
+        await initializeIfNeeded()
+        isWorking = false
     }
 
     func unlock(passcode: String) async {
@@ -198,7 +207,7 @@ final class VaultLockCoordinator {
     func lock() async {
         delayedLockTask?.cancel()
         delayedLockTask = nil
-        if state != .needsOnboarding && state != .recoveryRequired {
+        if state != .needsOnboarding && state != .retryRequired && state != .recoveryRequired {
             state = .locked
         }
         await authentication.lock()
@@ -266,8 +275,15 @@ final class VaultLockCoordinator {
         guard !isWorking else { return false }
         isWorking = true
         defer { isWorking = false }
+        let previousState = state
         do {
             try await authentication.unlock(passcode: passcode)
+        } catch {
+            state = previousState
+            handleAuthenticationError(error)
+            return false
+        }
+        do {
             try await eraseLocalVault()
             return true
         } catch {
@@ -281,8 +297,15 @@ final class VaultLockCoordinator {
         guard !isWorking else { return false }
         isWorking = true
         defer { isWorking = false }
+        let previousState = state
         do {
             try await authentication.authorizeDestructiveReset()
+        } catch {
+            state = previousState
+            handleAuthenticationError(error)
+            return false
+        }
+        do {
             try await eraseLocalVault()
             return true
         } catch {
@@ -353,9 +376,21 @@ final class VaultLockCoordinator {
             try await operation()
             userMessage = nil
         } catch {
-            await authentication.lock()
-            handleAuthenticationError(error)
+            if authenticationMode == .none, state == .locked {
+                await handleVaultOpenFailure(error)
+            } else {
+                await authentication.lock()
+                handleAuthenticationError(error)
+            }
         }
+    }
+
+    private func handleVaultOpenFailure(_ error: Error) async {
+        await authentication.lock()
+        state = error as? VaultError == .missingEncryptionKey
+            ? .recoveryRequired
+            : .retryRequired
+        userMessage = userFacingMessage(for: error)
     }
 
     private func handleAuthenticationError(_ error: Error) {

@@ -91,7 +91,7 @@ final class VaultLockCoordinatorTests: XCTestCase {
             authentication: authentication,
             secureStorage: MockSecureFileStorage(),
             modelContext: container.mainContext,
-            postUnlockMaintenance: { await maintenance.increment() }
+            postUnlockMaintenance: { try await maintenance.increment() }
         )
 
         await coordinator.initializeIfNeeded()
@@ -110,6 +110,105 @@ final class VaultLockCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.state, .unlocked)
     }
 
+    func testNoPasscodeMaintenanceFailureCanRetryWithoutRecovery() async throws {
+        let container = try makeContainer(autoLock: .oneMinute)
+        let authentication = MockAuthenticationService()
+        try await authentication.removePasscode(current: "123456")
+        let maintenance = TestAsyncCounter(nextError: .fileOperationFailed)
+        let coordinator = VaultLockCoordinator(
+            authentication: authentication,
+            secureStorage: MockSecureFileStorage(),
+            modelContext: container.mainContext,
+            postUnlockMaintenance: { try await maintenance.increment() }
+        )
+
+        await coordinator.initializeIfNeeded()
+        XCTAssertEqual(coordinator.state, .retryRequired)
+
+        await coordinator.retryOpeningVault()
+
+        let maintenanceCount = await maintenance.value
+        XCTAssertEqual(maintenanceCount, 2)
+        XCTAssertEqual(coordinator.state, .unlocked)
+    }
+
+    func testKeychainFailureCanRetryWithoutRecovery() async throws {
+        let container = try makeContainer(autoLock: .oneMinute)
+        let authentication = MockAuthenticationService()
+        await authentication.setNextError(.keychainFailure)
+        let coordinator = VaultLockCoordinator(
+            authentication: authentication,
+            secureStorage: MockSecureFileStorage(),
+            modelContext: container.mainContext
+        )
+
+        await coordinator.initializeIfNeeded()
+        XCTAssertEqual(coordinator.state, .retryRequired)
+
+        await authentication.setNextError(nil)
+        await coordinator.retryOpeningVault()
+        XCTAssertEqual(coordinator.state, .locked)
+    }
+
+    func testResetAuthenticationFailurePreservesUnlockedVault() async throws {
+        let container = try makeContainer(autoLock: .oneMinute)
+        let authentication = MockAuthenticationService()
+        let storage = MockSecureFileStorage()
+        let coordinator = VaultLockCoordinator(
+            authentication: authentication,
+            secureStorage: storage,
+            modelContext: container.mainContext
+        )
+        await coordinator.initializeIfNeeded()
+        await coordinator.unlock(passcode: "123456")
+        await authentication.setNextError(.invalidPasscode)
+
+        let succeeded = await coordinator.resetApplication(passcode: "000000")
+
+        XCTAssertFalse(succeeded)
+        XCTAssertEqual(coordinator.state, .unlocked)
+        let removeAllCount = await storage.removeAllCount
+        XCTAssertEqual(removeAllCount, 0)
+    }
+
+    func testCancelledDeviceAuthenticationPreservesHealthyNoPasscodeVault() async throws {
+        let container = try makeContainer(autoLock: .oneMinute)
+        let authentication = MockAuthenticationService()
+        try await authentication.removePasscode(current: "123456")
+        let storage = MockSecureFileStorage()
+        let coordinator = VaultLockCoordinator(
+            authentication: authentication,
+            secureStorage: storage,
+            modelContext: container.mainContext
+        )
+        await coordinator.initializeIfNeeded()
+        await authentication.setNextError(.authenticationFailed)
+
+        let succeeded = await coordinator.resetUnrecoverableApplication()
+
+        XCTAssertFalse(succeeded)
+        XCTAssertEqual(coordinator.state, .unlocked)
+        let removeAllCount = await storage.removeAllCount
+        XCTAssertEqual(removeAllCount, 0)
+    }
+
+    func testPersistedMediaWithoutCredentialsRequiresRecovery() async throws {
+        let container = try makeContainer(autoLock: .oneMinute)
+        container.mainContext.insert(makeMedia())
+        try container.mainContext.save()
+        let authentication = MockAuthenticationService()
+        await authentication.setMode(.notConfigured)
+        let coordinator = VaultLockCoordinator(
+            authentication: authentication,
+            secureStorage: MockSecureFileStorage(),
+            modelContext: container.mainContext
+        )
+
+        await coordinator.initializeIfNeeded()
+
+        XCTAssertEqual(coordinator.state, .recoveryRequired)
+    }
+
     private func makeContainer(autoLock: AutoLockPeriod) throws -> ModelContainer {
         let schema = Schema([
             VaultMedia.self,
@@ -123,13 +222,39 @@ final class VaultLockCoordinatorTests: XCTestCase {
         try container.mainContext.save()
         return container
     }
+
+    private func makeMedia() -> VaultMedia {
+        VaultMedia(
+            storageIdentifier: UUID().uuidString,
+            contentFingerprint: UUID().uuidString,
+            metadata: MediaMetadata(
+                mediaType: .photo,
+                contentTypeIdentifier: "public.jpeg",
+                originalFilename: nil,
+                originalCreationDate: nil,
+                pixelWidth: 10,
+                pixelHeight: 10,
+                duration: nil,
+                byteCount: 100
+            )
+        )
+    }
 }
 
 private actor TestAsyncCounter {
     private(set) var value = 0
+    private var nextError: VaultError?
 
-    func increment() {
+    init(nextError: VaultError? = nil) {
+        self.nextError = nextError
+    }
+
+    func increment() throws {
         value += 1
+        if let nextError {
+            self.nextError = nil
+            throw nextError
+        }
     }
 }
 
