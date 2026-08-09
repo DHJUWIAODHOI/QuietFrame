@@ -80,7 +80,7 @@ actor MockSecureFileStorage: SecureFileStoring {
 
     func allIdentifiers(location: EncryptedAssetLocation) async throws -> Set<String> {
         allIdentifiersCount += 1
-        identifiers[location] ?? []
+        return identifiers[location] ?? []
     }
 
     func pauseNextMove() {
