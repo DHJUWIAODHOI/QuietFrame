@@ -112,17 +112,12 @@ private struct AuthenticatedRootView: View {
         @unknown default: event = .inactive
         }
         await coordinator.handleLifecycle(event)
-        if phase == .active {
-            guard scenePhase == .active else {
-                await coordinator.lock()
-                return
-            }
-            if screenIsCaptured {
-                await coordinator.lock()
-            } else {
-                sceneIsObscured = false
-            }
+        guard phase == .active else { return }
+        guard scenePhase == .active, !screenIsCaptured else {
+            await coordinator.lock()
+            return
         }
+        sceneIsObscured = false
     }
 
     private func updateCaptureState(_ isCaptured: Bool) {

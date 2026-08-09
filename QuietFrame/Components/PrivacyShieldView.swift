@@ -91,13 +91,11 @@ struct PrivacyShieldWindow: UIViewRepresentable {
             let hostingController = UIHostingController(
                 rootView: PrivacyShieldView(isScreenCaptured: scene.screen.isCaptured)
             )
-            hostingController.view.backgroundColor = .black
 
             let privacyWindow = UIWindow(windowScene: scene)
             privacyWindow.windowLevel = .alert + 1
             privacyWindow.backgroundColor = .black
             privacyWindow.rootViewController = hostingController
-            privacyWindow.isHidden = true
 
             self.hostingController = hostingController
             self.privacyWindow = privacyWindow
@@ -137,8 +135,6 @@ struct PrivacyShieldWindow: UIViewRepresentable {
 
         private func removeWindow() {
             NotificationCenter.default.removeObserver(self)
-            privacyWindow?.isHidden = true
-            privacyWindow?.rootViewController = nil
             privacyWindow = nil
             hostingController = nil
             scene = nil
