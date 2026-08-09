@@ -5,7 +5,19 @@ actor MockAuthenticationService: AuthenticationServicing {
     var passcodeExists = true
     var mode: VaultAuthenticationMode = .passcode
     var lockCount = 0
+    var unlockWithoutPasscodeCount = 0
     var nextError: VaultError?
+
+    private let session: VaultSession?
+    private let keyData: Data
+
+    init(
+        session: VaultSession? = nil,
+        keyData: Data = Data(repeating: 0x5a, count: 32)
+    ) {
+        self.session = session
+        self.keyData = keyData
+    }
 
     func authenticationMode() async throws -> VaultAuthenticationMode { mode }
 
@@ -24,7 +36,9 @@ actor MockAuthenticationService: AuthenticationServicing {
     }
 
     func unlockWithoutPasscode() async throws {
+        unlockWithoutPasscodeCount += 1
         if let nextError { throw nextError }
+        if let session { try await session.unlock(with: keyData) }
     }
 
     func addPasscode(_ passcode: String) async throws {

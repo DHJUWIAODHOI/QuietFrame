@@ -148,7 +148,7 @@ final class VaultLockCoordinator {
     }
 
     func resumeWithoutPasscodeIfNeeded() async {
-        guard authenticationMode == .none, state != .recoveryRequired else { return }
+        guard authenticationMode == .none, state == .locked else { return }
         do {
             try await authentication.unlockWithoutPasscode()
             try await postUnlockMaintenance?()

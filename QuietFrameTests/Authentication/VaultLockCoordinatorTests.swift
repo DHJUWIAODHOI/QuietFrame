@@ -69,6 +69,46 @@ final class VaultLockCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.state, .unlocked)
     }
 
+    func testNoPasscodeForegroundDoesNotRevokeActiveEncryption() async throws {
+        let container = try makeContainer(autoLock: .oneMinute)
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let sourceURL = directory.appendingPathComponent("source.bin")
+        let encryptedURL = directory.appendingPathComponent("encrypted.qfe")
+        try Data(repeating: 0x6c, count: 200_000).write(to: sourceURL)
+
+        let session = VaultSession()
+        let authentication = MockAuthenticationService(session: session)
+        try await authentication.removePasscode(current: "123456")
+        let maintenance = TestAsyncCounter()
+        let coordinator = VaultLockCoordinator(
+            authentication: authentication,
+            secureStorage: MockSecureFileStorage(),
+            modelContext: container.mainContext,
+            postUnlockMaintenance: { await maintenance.increment() }
+        )
+
+        await coordinator.initializeIfNeeded()
+        XCTAssertEqual(coordinator.state, .unlocked)
+
+        let encryption = ChunkedEncryptionService(session: session, chunkByteCount: 65_536)
+        _ = try await encryption.encryptFile(at: sourceURL, to: encryptedURL) { fraction in
+            guard fraction > 0 else { return }
+            await coordinator.handleLifecycle(.inactive)
+            await coordinator.handleLifecycle(.active)
+        }
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: encryptedURL.path))
+        let unlockCount = await authentication.unlockWithoutPasscodeCount
+        let maintenanceCount = await maintenance.value
+        XCTAssertEqual(unlockCount, 1)
+        XCTAssertEqual(maintenanceCount, 1)
+        XCTAssertEqual(coordinator.state, .unlocked)
+    }
+
     private func makeContainer(autoLock: AutoLockPeriod) throws -> ModelContainer {
         let schema = Schema([
             VaultMedia.self,
@@ -81,6 +121,14 @@ final class VaultLockCoordinatorTests: XCTestCase {
         container.mainContext.insert(AppSettings(autoLockPeriod: autoLock))
         try container.mainContext.save()
         return container
+    }
+}
+
+private actor TestAsyncCounter {
+    private(set) var value = 0
+
+    func increment() {
+        value += 1
     }
 }
 
