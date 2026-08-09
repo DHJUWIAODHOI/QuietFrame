@@ -31,10 +31,9 @@ struct RootView: View {
 
 private struct AuthenticatedRootView: View {
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query private var settingsRecords: [AppSettings]
     @State private var sceneIsObscured = true
-    @State private var screenIsCaptured = UIScreen.main.isCaptured
+    @State private var screenIsCaptured = false
     @State private var lifecycleTask: Task<Void, Never>?
 
     let dependencies: AppDependencies
@@ -49,16 +48,17 @@ private struct AuthenticatedRootView: View {
 
             if isShielded {
                 PrivacyShieldView(isScreenCaptured: screenIsCaptured)
-                    .transition(.opacity)
                     .zIndex(100)
             }
         }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: sceneIsObscured)
+        .background {
+            PrivacyShieldWindow(isVisible: isShielded, captureStateDidChange: updateCaptureState)
+        }
         .preferredColorScheme(preferredColorScheme)
         .task {
             await coordinator.initializeIfNeeded()
-            await dependencies.mediaImportService.cleanupAbandonedIncomingFiles()
             await handle(scenePhase)
+            await dependencies.mediaImportService.cleanupAbandonedIncomingFiles()
         }
         .onChange(of: scenePhase) { _, newValue in
             if newValue != .active { sceneIsObscured = true }
@@ -68,18 +68,6 @@ private struct AuthenticatedRootView: View {
         .onChange(of: coordinator.state) { _, newState in
             if newState != .unlocked {
                 dependencies.thumbnailService.clearCache()
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIScreen.capturedDidChangeNotification)) { _ in
-            let isCaptured = UIScreen.main.isCaptured
-            if isCaptured {
-                screenIsCaptured = true
-                Task { await coordinator.lock() }
-            } else {
-                Task {
-                    await coordinator.resumeWithoutPasscodeIfNeeded()
-                    screenIsCaptured = false
-                }
             }
         }
     }
@@ -111,6 +99,11 @@ private struct AuthenticatedRootView: View {
     }
 
     private func handle(_ phase: ScenePhase) async {
+        if phase == .active, screenIsCaptured {
+            await coordinator.lock()
+            return
+        }
+
         let event: AppLifecycleEvent
         switch phase {
         case .active: event = .active
@@ -119,7 +112,32 @@ private struct AuthenticatedRootView: View {
         @unknown default: event = .inactive
         }
         await coordinator.handleLifecycle(event)
-        if phase == .active { sceneIsObscured = false }
+        if phase == .active {
+            guard scenePhase == .active else {
+                await coordinator.lock()
+                return
+            }
+            if screenIsCaptured {
+                await coordinator.lock()
+            } else {
+                sceneIsObscured = false
+            }
+        }
+    }
+
+    private func updateCaptureState(_ isCaptured: Bool) {
+        let wasCaptured = screenIsCaptured
+        screenIsCaptured = isCaptured
+        lifecycleTask?.cancel()
+        if isCaptured {
+            lifecycleTask = Task { await coordinator.lock() }
+        } else if wasCaptured {
+            lifecycleTask = Task {
+                if scenePhase == .active {
+                    await handle(.active)
+                }
+            }
+        }
     }
 
     private var preferredColorScheme: ColorScheme? {
