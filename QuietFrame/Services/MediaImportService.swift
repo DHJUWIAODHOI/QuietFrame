@@ -88,162 +88,144 @@ actor MediaImportService: MediaImporting {
     ) async throws -> ImportSummary {
         let generation = operationGeneration
         return try await operationGate.withLock {
-            try await self.importMediaExclusively(
-                sources,
-                albumID: albumID,
-                preflightFailureCount: preflightFailureCount,
-                preflightThumbnailFailureCount: preflightThumbnailFailureCount,
-                progress: progress,
-                generation: generation
-            )
-        }
-    }
+            guard !sources.isEmpty else { throw VaultError.invalidInput("Choose at least one item to import.") }
+            let initialFailureCount = max(0, preflightFailureCount)
+            let requestedCount = sources.count + initialFailureCount
+            let recordID = try await repository.beginImport(requestedCount: requestedCount)
+            var summary = ImportSummary()
+            summary.failedCount = initialFailureCount
+            summary.thumbnailFailureCount = max(0, preflightThumbnailFailureCount)
+            defer { sources.forEach { IncomingMediaFileStore.remove($0.temporaryURL) } }
 
-    private func importMediaExclusively(
-        _ sources: [ImportSource],
-        albumID: UUID?,
-        preflightFailureCount: Int,
-        preflightThumbnailFailureCount: Int,
-        progress: (@Sendable (ImportProgress) async -> Void)?,
-        generation: UInt64
-    ) async throws -> ImportSummary {
-        guard !sources.isEmpty else { throw VaultError.invalidInput("Choose at least one item to import.") }
-        let initialFailureCount = max(0, preflightFailureCount)
-        let requestedCount = sources.count + initialFailureCount
-        let recordID = try await repository.beginImport(requestedCount: requestedCount)
-        var summary = ImportSummary()
-        summary.failedCount = initialFailureCount
-        summary.thumbnailFailureCount = max(0, preflightThumbnailFailureCount)
-        defer { sources.forEach { IncomingMediaFileStore.remove($0.temporaryURL) } }
-
-        for (index, source) in sources.enumerated() {
-            do {
-                try Task.checkCancellation()
-                guard generation == operationGeneration else { throw CancellationError() }
-                try ensureAvailableStorage(for: source.metadata.byteCount, at: source.temporaryURL)
-                if let progress {
-                    await progress(ImportProgress(
-                        completedItems: index,
-                        totalItems: sources.count,
-                        currentItemFraction: 0
-                    ))
-                }
-
-                let storedMedia = try await storage.store(
-                    plaintextURL: source.temporaryURL,
-                    location: .media
-                ) { fraction in
+            for (index, source) in sources.enumerated() {
+                do {
+                    try Task.checkCancellation()
+                    guard generation == operationGeneration else { throw CancellationError() }
+                    try ensureAvailableStorage(for: source.metadata.byteCount, at: source.temporaryURL)
                     if let progress {
                         await progress(ImportProgress(
                             completedItems: index,
                             totalItems: sources.count,
-                            currentItemFraction: fraction * 0.9
+                            currentItemFraction: 0
                         ))
                     }
-                }
 
-                if try await repository.containsFingerprint(storedMedia.result.fingerprint) {
-                    try await storage.delete(identifier: storedMedia.identifier, location: .media)
-                    summary.duplicateCount += 1
-                    continue
-                }
+                    let storedMedia = try await storage.store(
+                        plaintextURL: source.temporaryURL,
+                        location: .media
+                    ) { fraction in
+                        if let progress {
+                            await progress(ImportProgress(
+                                completedItems: index,
+                                totalItems: sources.count,
+                                currentItemFraction: fraction * 0.9
+                            ))
+                        }
+                    }
 
-                guard generation == operationGeneration else {
-                    try? await storage.delete(identifier: storedMedia.identifier, location: .media)
-                    throw CancellationError()
-                }
+                    if try await repository.containsFingerprint(storedMedia.result.fingerprint) {
+                        try await storage.delete(identifier: storedMedia.identifier, location: .media)
+                        summary.duplicateCount += 1
+                        continue
+                    }
 
-                var thumbnailIdentifier: String?
-                if let thumbnailData = source.thumbnailJPEGData {
-                    do {
-                        let thumbnailURL = try IncomingMediaFileStore.writeProtectedData(
-                            thumbnailData,
-                            fileExtension: "jpg"
-                        )
-                        defer { IncomingMediaFileStore.remove(thumbnailURL) }
-                        let storedThumbnail = try await storage.store(
-                            plaintextURL: thumbnailURL,
-                            location: .thumbnails,
-                            progress: nil
-                        )
-                        thumbnailIdentifier = storedThumbnail.identifier
-                    } catch is CancellationError {
+                    guard generation == operationGeneration else {
                         try? await storage.delete(identifier: storedMedia.identifier, location: .media)
                         throw CancellationError()
-                    } catch VaultError.importCancelled {
-                        try? await storage.delete(identifier: storedMedia.identifier, location: .media)
-                        throw VaultError.importCancelled
-                    } catch VaultError.authenticationRequired {
-                        try? await storage.delete(identifier: storedMedia.identifier, location: .media)
-                        throw VaultError.authenticationRequired
-                    } catch {
-                        summary.thumbnailFailureCount += 1
                     }
-                }
 
-                do {
-                    guard generation == operationGeneration else {
+                    var thumbnailIdentifier: String?
+                    if let thumbnailData = source.thumbnailJPEGData {
+                        do {
+                            let thumbnailURL = try IncomingMediaFileStore.writeProtectedData(
+                                thumbnailData,
+                                fileExtension: "jpg"
+                            )
+                            defer { IncomingMediaFileStore.remove(thumbnailURL) }
+                            let storedThumbnail = try await storage.store(
+                                plaintextURL: thumbnailURL,
+                                location: .thumbnails,
+                                progress: nil
+                            )
+                            thumbnailIdentifier = storedThumbnail.identifier
+                        } catch is CancellationError {
+                            try? await storage.delete(identifier: storedMedia.identifier, location: .media)
+                            throw CancellationError()
+                        } catch VaultError.importCancelled {
+                            try? await storage.delete(identifier: storedMedia.identifier, location: .media)
+                            throw VaultError.importCancelled
+                        } catch VaultError.authenticationRequired {
+                            try? await storage.delete(identifier: storedMedia.identifier, location: .media)
+                            throw VaultError.authenticationRequired
+                        } catch {
+                            summary.thumbnailFailureCount += 1
+                        }
+                    }
+
+                    do {
+                        guard generation == operationGeneration else {
+                            try? await storage.delete(identifier: storedMedia.identifier, location: .media)
+                            if let thumbnailIdentifier {
+                                try? await storage.delete(identifier: thumbnailIdentifier, location: .thumbnails)
+                            }
+                            throw CancellationError()
+                        }
+                        let mediaID = try await repository.insertImportedMedia(
+                            storageIdentifier: storedMedia.identifier,
+                            thumbnailIdentifier: thumbnailIdentifier,
+                            fingerprint: storedMedia.result.fingerprint,
+                            metadata: source.metadata,
+                            albumID: albumID
+                        )
+                        guard generation == operationGeneration else {
+                            try await repository.deleteImportedMedia(id: mediaID)
+                            throw CancellationError()
+                        }
+                        summary.importedCount += 1
+                        summary.importedMediaIDs.append(mediaID)
+                        if let identifier = source.sourceLocalIdentifier {
+                            summary.importedSourceLocalIdentifiers.append(identifier)
+                        }
+                    } catch {
                         try? await storage.delete(identifier: storedMedia.identifier, location: .media)
                         if let thumbnailIdentifier {
                             try? await storage.delete(identifier: thumbnailIdentifier, location: .thumbnails)
                         }
-                        throw CancellationError()
+                        throw error
                     }
-                    let mediaID = try await repository.insertImportedMedia(
-                        storageIdentifier: storedMedia.identifier,
-                        thumbnailIdentifier: thumbnailIdentifier,
-                        fingerprint: storedMedia.result.fingerprint,
-                        metadata: source.metadata,
-                        albumID: albumID
-                    )
-                    guard generation == operationGeneration else {
-                        try await repository.deleteImportedMedia(id: mediaID)
-                        throw CancellationError()
-                    }
-                    summary.importedCount += 1
-                    summary.importedMediaIDs.append(mediaID)
-                    if let identifier = source.sourceLocalIdentifier {
-                        summary.importedSourceLocalIdentifiers.append(identifier)
-                    }
+                } catch is CancellationError {
+                    summary.wasCancelled = true
+                    break
+                } catch VaultError.importCancelled {
+                    summary.wasCancelled = true
+                    break
+                } catch VaultError.authenticationRequired {
+                    summary.wasCancelled = true
+                    break
                 } catch {
-                    try? await storage.delete(identifier: storedMedia.identifier, location: .media)
-                    if let thumbnailIdentifier {
-                        try? await storage.delete(identifier: thumbnailIdentifier, location: .thumbnails)
-                    }
-                    throw error
+                    summary.failedCount += 1
                 }
-            } catch is CancellationError {
-                summary.wasCancelled = true
-                break
-            } catch VaultError.importCancelled {
-                summary.wasCancelled = true
-                break
-            } catch VaultError.authenticationRequired {
-                summary.wasCancelled = true
-                break
-            } catch {
-                summary.failedCount += 1
+
+                if let progress {
+                    await progress(ImportProgress(
+                        completedItems: index + 1,
+                        totalItems: sources.count,
+                        currentItemFraction: 0
+                    ))
+                }
             }
 
-            if let progress {
-                await progress(ImportProgress(
-                    completedItems: index + 1,
-                    totalItems: sources.count,
-                    currentItemFraction: 0
-                ))
+            let status: ImportStatus
+            if summary.wasCancelled {
+                status = .cancelled
+            } else if summary.failedCount == requestedCount {
+                status = .failed
+            } else {
+                status = .completed
             }
+            try await repository.finishImport(id: recordID, summary: summary, status: status)
+            return summary
         }
-
-        let status: ImportStatus
-        if summary.wasCancelled {
-            status = .cancelled
-        } else if summary.failedCount == requestedCount {
-            status = .failed
-        } else {
-            status = .completed
-        }
-        try await repository.finishImport(id: recordID, summary: summary, status: status)
-        return summary
     }
 
     func cleanupAbandonedIncomingFiles() {

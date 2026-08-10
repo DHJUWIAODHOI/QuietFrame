@@ -47,52 +47,48 @@ final class AlbumService: AlbumServicing {
 
     func deleteAlbum(id: UUID, mode: AlbumDeletionMode) async throws {
         try await operationGate.withLock {
-            try await self.deleteAlbumExclusively(id: id, mode: mode)
-        }
-    }
+            var descriptor = FetchDescriptor<VaultAlbum>(predicate: #Predicate { album in album.id == id })
+            descriptor.fetchLimit = 1
+            guard let album = try modelContext.fetch(descriptor).first else {
+                throw VaultError.persistenceFailure
+            }
+            let activeMedia = album.media.filter { !$0.isTrashed }
+            var physicallyMoved: [String] = []
 
-    private func deleteAlbumExclusively(id: UUID, mode: AlbumDeletionMode) async throws {
-        var descriptor = FetchDescriptor<VaultAlbum>(predicate: #Predicate { album in album.id == id })
-        descriptor.fetchLimit = 1
-        guard let album = try modelContext.fetch(descriptor).first else {
-            throw VaultError.persistenceFailure
-        }
-        let activeMedia = album.media.filter { !$0.isTrashed }
-        var physicallyMoved: [String] = []
-
-        if mode == .moveMediaToTrash {
-            do {
-                for media in activeMedia {
-                    try await storage.move(identifier: media.storageIdentifier, from: .media, to: .trash)
-                    physicallyMoved.append(media.storageIdentifier)
+            if mode == .moveMediaToTrash {
+                do {
+                    for media in activeMedia {
+                        try await storage.move(identifier: media.storageIdentifier, from: .media, to: .trash)
+                        physicallyMoved.append(media.storageIdentifier)
+                    }
+                } catch {
+                    for identifier in physicallyMoved.reversed() {
+                        try? await storage.move(identifier: identifier, from: .trash, to: .media)
+                    }
+                    throw error
                 }
+            }
+
+            let deletedAt = Date()
+            for media in activeMedia {
+                if mode == .moveMediaToTrash {
+                    media.previousAlbumID = album.id
+                    media.trashedAt = deletedAt
+                }
+                media.album = nil
+                media.modifiedAt = deletedAt
+            }
+            modelContext.delete(album)
+
+            do {
+                try modelContext.save()
             } catch {
+                modelContext.rollback()
                 for identifier in physicallyMoved.reversed() {
                     try? await storage.move(identifier: identifier, from: .trash, to: .media)
                 }
-                throw error
+                throw VaultError.persistenceFailure
             }
-        }
-
-        let deletedAt = Date()
-        for media in activeMedia {
-            if mode == .moveMediaToTrash {
-                media.previousAlbumID = album.id
-                media.trashedAt = deletedAt
-            }
-            media.album = nil
-            media.modifiedAt = deletedAt
-        }
-        modelContext.delete(album)
-
-        do {
-            try modelContext.save()
-        } catch {
-            modelContext.rollback()
-            for identifier in physicallyMoved.reversed() {
-                try? await storage.move(identifier: identifier, from: .trash, to: .media)
-            }
-            throw VaultError.persistenceFailure
         }
     }
 }

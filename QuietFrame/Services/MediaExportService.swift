@@ -80,33 +80,29 @@ actor MediaExportService: MediaExporting {
             throw VaultError.photosPermissionDenied
         }
         try await operationGate.withLock {
-            try await self.saveToPhotosExclusively(media: media)
-        }
-    }
+            let lease = try await prepareForSharingExclusively(media: media)
+            defer { lease.cleanup() }
+            let exportItems = zip(media, lease.urls).map { item, url in
+                PhotosExportItem(url: url, mediaType: item.mediaType, creationDate: item.originalCreationDate)
+            }
 
-    private func saveToPhotosExclusively(media: [VaultMedia]) async throws {
-        let lease = try await prepareForSharingExclusively(media: media)
-        defer { lease.cleanup() }
-        let exportItems = zip(media, lease.urls).map { item, url in
-            PhotosExportItem(url: url, mediaType: item.mediaType, creationDate: item.originalCreationDate)
-        }
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            PHPhotoLibrary.shared().performChanges {
-                for item in exportItems {
-                    let request = PHAssetCreationRequest.forAsset()
-                    request.creationDate = item.creationDate
-                    request.addResource(
-                        with: item.mediaType == .photo ? .photo : .video,
-                        fileURL: item.url,
-                        options: nil
-                    )
-                }
-            } completionHandler: { success, error in
-                if success {
-                    continuation.resume()
-                } else {
-                    continuation.resume(throwing: error ?? VaultError.exportFailed)
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                PHPhotoLibrary.shared().performChanges {
+                    for item in exportItems {
+                        let request = PHAssetCreationRequest.forAsset()
+                        request.creationDate = item.creationDate
+                        request.addResource(
+                            with: item.mediaType == .photo ? .photo : .video,
+                            fileURL: item.url,
+                            options: nil
+                        )
+                    }
+                } completionHandler: { success, error in
+                    if success {
+                        continuation.resume()
+                    } else {
+                        continuation.resume(throwing: error ?? VaultError.exportFailed)
+                    }
                 }
             }
         }

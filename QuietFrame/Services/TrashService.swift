@@ -28,83 +28,75 @@ final class TrashService: TrashServicing {
 
     func moveToTrash(ids: Set<UUID>) async throws {
         try await operationGate.withLock {
-            try await self.moveToTrashExclusively(ids: ids)
-        }
-    }
+            let media = try fetchMedia(ids: ids).filter { !$0.isTrashed }
+            guard media.count == ids.count else { throw VaultError.persistenceFailure }
+            var moved: [String] = []
 
-    private func moveToTrashExclusively(ids: Set<UUID>) async throws {
-        let media = try fetchMedia(ids: ids).filter { !$0.isTrashed }
-        guard media.count == ids.count else { throw VaultError.persistenceFailure }
-        var moved: [String] = []
+            do {
+                for item in media {
+                    try await storage.move(identifier: item.storageIdentifier, from: .media, to: .trash)
+                    moved.append(item.storageIdentifier)
+                }
+            } catch {
+                await restorePhysicalFiles(moved)
+                throw error
+            }
 
-        do {
+            let deletionDate = Date()
             for item in media {
-                try await storage.move(identifier: item.storageIdentifier, from: .media, to: .trash)
-                moved.append(item.storageIdentifier)
+                if item.album?.coverMediaID == item.id {
+                    item.album?.coverMediaID = nil
+                }
+                item.album?.modifiedAt = deletionDate
+                item.previousAlbumID = item.album?.id
+                item.album = nil
+                item.trashedAt = deletionDate
+                item.modifiedAt = deletionDate
             }
-        } catch {
-            await restorePhysicalFiles(moved)
-            throw error
-        }
-
-        let deletionDate = Date()
-        for item in media {
-            if item.album?.coverMediaID == item.id {
-                item.album?.coverMediaID = nil
+            do {
+                try modelContext.save()
+            } catch {
+                modelContext.rollback()
+                await restorePhysicalFiles(moved)
+                throw VaultError.persistenceFailure
             }
-            item.album?.modifiedAt = deletionDate
-            item.previousAlbumID = item.album?.id
-            item.album = nil
-            item.trashedAt = deletionDate
-            item.modifiedAt = deletionDate
-        }
-        do {
-            try modelContext.save()
-        } catch {
-            modelContext.rollback()
-            await restorePhysicalFiles(moved)
-            throw VaultError.persistenceFailure
         }
     }
 
     func restore(ids: Set<UUID>) async throws {
         try await operationGate.withLock {
-            try await self.restoreExclusively(ids: ids)
-        }
-    }
+            let media = try fetchMedia(ids: ids).filter(\.isTrashed)
+            guard media.count == ids.count else { throw VaultError.persistenceFailure }
+            var moved: [String] = []
 
-    private func restoreExclusively(ids: Set<UUID>) async throws {
-        let media = try fetchMedia(ids: ids).filter(\.isTrashed)
-        guard media.count == ids.count else { throw VaultError.persistenceFailure }
-        var moved: [String] = []
+            do {
+                for item in media {
+                    try await storage.move(identifier: item.storageIdentifier, from: .trash, to: .media)
+                    moved.append(item.storageIdentifier)
+                }
+            } catch {
+                await movePhysicalFilesBackToTrash(moved)
+                throw error
+            }
 
-        do {
+            let albums = try modelContext.fetch(FetchDescriptor<VaultAlbum>())
+            let restoredAt = Date()
             for item in media {
-                try await storage.move(identifier: item.storageIdentifier, from: .trash, to: .media)
-                moved.append(item.storageIdentifier)
+                item.album = item.previousAlbumID.flatMap { previousID in
+                    albums.first(where: { $0.id == previousID })
+                }
+                item.album?.modifiedAt = restoredAt
+                item.previousAlbumID = nil
+                item.trashedAt = nil
+                item.modifiedAt = restoredAt
             }
-        } catch {
-            await movePhysicalFilesBackToTrash(moved)
-            throw error
-        }
-
-        let albums = try modelContext.fetch(FetchDescriptor<VaultAlbum>())
-        let restoredAt = Date()
-        for item in media {
-            item.album = item.previousAlbumID.flatMap { previousID in
-                albums.first(where: { $0.id == previousID })
+            do {
+                try modelContext.save()
+            } catch {
+                modelContext.rollback()
+                await movePhysicalFilesBackToTrash(moved)
+                throw VaultError.persistenceFailure
             }
-            item.album?.modifiedAt = restoredAt
-            item.previousAlbumID = nil
-            item.trashedAt = nil
-            item.modifiedAt = restoredAt
-        }
-        do {
-            try modelContext.save()
-        } catch {
-            modelContext.rollback()
-            await movePhysicalFilesBackToTrash(moved)
-            throw VaultError.persistenceFailure
         }
     }
 
@@ -148,41 +140,33 @@ final class TrashService: TrashServicing {
 
     func emptyTrash() async throws {
         try await operationGate.withLock {
-            try await self.emptyTrashExclusively()
+            let descriptor = FetchDescriptor<VaultMedia>(
+                predicate: #Predicate { media in media.trashedAt != nil }
+            )
+            let ids = Set(try modelContext.fetch(descriptor).map(\.id))
+            guard !ids.isEmpty else { return }
+            try await permanentlyDeleteExclusively(ids: ids)
         }
-    }
-
-    private func emptyTrashExclusively() async throws {
-        let descriptor = FetchDescriptor<VaultMedia>(
-            predicate: #Predicate { media in media.trashedAt != nil }
-        )
-        let ids = Set(try modelContext.fetch(descriptor).map(\.id))
-        guard !ids.isEmpty else { return }
-        try await permanentlyDeleteExclusively(ids: ids)
     }
 
     func purgeExpiredItems() async throws -> Int {
         try await operationGate.withLock {
-            try await self.purgeExpiredItemsExclusively()
+            var settingsDescriptor = FetchDescriptor<AppSettings>()
+            settingsDescriptor.fetchLimit = 1
+            let retentionDays = try modelContext.fetch(settingsDescriptor).first?.trashRetentionDays ?? 30
+            let cutoff = Calendar.current.date(byAdding: .day, value: -retentionDays, to: Date()) ?? .distantPast
+            let descriptor = FetchDescriptor<VaultMedia>(
+                predicate: #Predicate { media in media.trashedAt != nil }
+            )
+            let expiredIDValues: [UUID] = try modelContext.fetch(descriptor).compactMap { media in
+                guard let trashedAt = media.trashedAt, trashedAt <= cutoff else { return nil }
+                return media.id
+            }
+            let expiredIDs = Set<UUID>(expiredIDValues)
+            guard !expiredIDs.isEmpty else { return 0 }
+            try await permanentlyDeleteExclusively(ids: expiredIDs)
+            return expiredIDs.count
         }
-    }
-
-    private func purgeExpiredItemsExclusively() async throws -> Int {
-        var settingsDescriptor = FetchDescriptor<AppSettings>()
-        settingsDescriptor.fetchLimit = 1
-        let retentionDays = try modelContext.fetch(settingsDescriptor).first?.trashRetentionDays ?? 30
-        let cutoff = Calendar.current.date(byAdding: .day, value: -retentionDays, to: Date()) ?? .distantPast
-        let descriptor = FetchDescriptor<VaultMedia>(
-            predicate: #Predicate { media in media.trashedAt != nil }
-        )
-        let expiredIDValues: [UUID] = try modelContext.fetch(descriptor).compactMap { media in
-            guard let trashedAt = media.trashedAt, trashedAt <= cutoff else { return nil }
-            return media.id
-        }
-        let expiredIDs = Set<UUID>(expiredIDValues)
-        guard !expiredIDs.isEmpty else { return 0 }
-        try await permanentlyDeleteExclusively(ids: expiredIDs)
-        return expiredIDs.count
     }
 
     private func fetchMedia(ids: Set<UUID>) throws -> [VaultMedia] {

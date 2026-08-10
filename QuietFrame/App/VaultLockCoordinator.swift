@@ -423,32 +423,28 @@ final class VaultLockCoordinator {
     private func eraseLocalVault() async throws {
         await cancelMediaOperations?()
         try await operationGate.withLock {
-            try await self.eraseLocalVaultExclusively()
+            try AppResetJournal.begin()
+            state = .locked
+            await authentication.lock()
+            try await authentication.resetCredentials()
+            try await secureStorage.removeAllEncryptedData()
+
+            let media = try modelContext.fetch(FetchDescriptor<VaultMedia>())
+            let albums = try modelContext.fetch(FetchDescriptor<VaultAlbum>())
+            let imports = try modelContext.fetch(FetchDescriptor<ImportRecord>())
+            let settings = try modelContext.fetch(FetchDescriptor<AppSettings>())
+            media.forEach { modelContext.delete($0) }
+            albums.forEach { modelContext.delete($0) }
+            imports.forEach { modelContext.delete($0) }
+            settings.forEach { modelContext.delete($0) }
+            modelContext.insert(AppSettings())
+            try modelContext.save()
+
+            try AppResetJournal.finish()
+            authenticationMode = .notConfigured
+            lockoutDate = nil
+            userMessage = nil
+            state = .needsOnboarding
         }
-    }
-
-    private func eraseLocalVaultExclusively() async throws {
-        try AppResetJournal.begin()
-        state = .locked
-        await authentication.lock()
-        try await authentication.resetCredentials()
-        try await secureStorage.removeAllEncryptedData()
-
-        let media = try modelContext.fetch(FetchDescriptor<VaultMedia>())
-        let albums = try modelContext.fetch(FetchDescriptor<VaultAlbum>())
-        let imports = try modelContext.fetch(FetchDescriptor<ImportRecord>())
-        let settings = try modelContext.fetch(FetchDescriptor<AppSettings>())
-        media.forEach { modelContext.delete($0) }
-        albums.forEach { modelContext.delete($0) }
-        imports.forEach { modelContext.delete($0) }
-        settings.forEach { modelContext.delete($0) }
-        modelContext.insert(AppSettings())
-        try modelContext.save()
-
-        try AppResetJournal.finish()
-        authenticationMode = .notConfigured
-        lockoutDate = nil
-        userMessage = nil
-        state = .needsOnboarding
     }
 }
