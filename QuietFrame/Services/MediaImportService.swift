@@ -102,25 +102,21 @@ actor MediaImportService: MediaImporting {
                     try Task.checkCancellation()
                     guard generation == operationGeneration else { throw CancellationError() }
                     try ensureAvailableStorage(for: source.metadata.byteCount, at: source.temporaryURL)
-                    if let progress {
-                        await progress(ImportProgress(
-                            completedItems: index,
-                            totalItems: sources.count,
-                            currentItemFraction: 0
-                        ))
-                    }
+                    await progress?(ImportProgress(
+                        completedItems: index,
+                        totalItems: sources.count,
+                        currentItemFraction: 0
+                    ))
 
                     let storedMedia = try await storage.store(
                         plaintextURL: source.temporaryURL,
                         location: .media
                     ) { fraction in
-                        if let progress {
-                            await progress(ImportProgress(
-                                completedItems: index,
-                                totalItems: sources.count,
-                                currentItemFraction: fraction * 0.9
-                            ))
-                        }
+                        await progress?(ImportProgress(
+                            completedItems: index,
+                            totalItems: sources.count,
+                            currentItemFraction: fraction * 0.9
+                        ))
                     }
 
                     if try await repository.containsFingerprint(storedMedia.result.fingerprint) {
@@ -206,13 +202,11 @@ actor MediaImportService: MediaImporting {
                     summary.failedCount += 1
                 }
 
-                if let progress {
-                    await progress(ImportProgress(
-                        completedItems: index + 1,
-                        totalItems: sources.count,
-                        currentItemFraction: 0
-                    ))
-                }
+                await progress?(ImportProgress(
+                    completedItems: index + 1,
+                    totalItems: sources.count,
+                    currentItemFraction: 0
+                ))
             }
 
             let status: ImportStatus

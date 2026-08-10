@@ -158,11 +158,10 @@ final class TrashService: TrashServicing {
             let descriptor = FetchDescriptor<VaultMedia>(
                 predicate: #Predicate { media in media.trashedAt != nil }
             )
-            let expiredIDValues: [UUID] = try modelContext.fetch(descriptor).compactMap { media in
+            let expiredIDs = Set<UUID>(try modelContext.fetch(descriptor).compactMap { media in
                 guard let trashedAt = media.trashedAt, trashedAt <= cutoff else { return nil }
                 return media.id
-            }
-            let expiredIDs = Set<UUID>(expiredIDValues)
+            })
             guard !expiredIDs.isEmpty else { return 0 }
             try await permanentlyDeleteExclusively(ids: expiredIDs)
             return expiredIDs.count

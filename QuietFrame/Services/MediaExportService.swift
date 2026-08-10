@@ -98,11 +98,7 @@ actor MediaExportService: MediaExporting {
                         )
                     }
                 } completionHandler: { success, error in
-                    if success {
-                        continuation.resume()
-                    } else {
-                        continuation.resume(throwing: error ?? VaultError.exportFailed)
-                    }
+                    continuation.resume(with: success ? .success(()) : .failure(error ?? VaultError.exportFailed))
                 }
             }
         }
