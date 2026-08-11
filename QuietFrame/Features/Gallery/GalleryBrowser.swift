@@ -21,7 +21,7 @@ struct GalleryBrowser: View {
 
 private struct GalleryBrowserContent: View {
     @Query private var settingsRecords: [AppSettings]
-    @Query(sort: \VaultAlbum.name) private var albums: [VaultAlbum]
+    @Query(sort: \VaultAlbum.position) private var albums: [VaultAlbum]
 
     let dependencies: AppDependencies
     let title: String

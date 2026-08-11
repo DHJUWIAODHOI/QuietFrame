@@ -54,6 +54,7 @@ enum ThumbnailSize: String, Codable, CaseIterable, Identifiable, Sendable {
 }
 
 enum AlbumSortOption: String, Codable, CaseIterable, Identifiable, Sendable {
+    case manual
     case name
     case creationDate
     case modifiedDate
@@ -62,6 +63,7 @@ enum AlbumSortOption: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
+        case .manual: "Manual"
         case .name: "Name"
         case .creationDate: "Date Created"
         case .modifiedDate: "Last Modified"

@@ -7,7 +7,7 @@ struct MediaViewer: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Query(sort: \VaultAlbum.name) private var albums: [VaultAlbum]
+    @Query(sort: \VaultAlbum.position) private var albums: [VaultAlbum]
     @State private var selectedMediaID: UUID
     @State private var controlsAreVisible = true
     @State private var selectedPhotoIsZoomed = false

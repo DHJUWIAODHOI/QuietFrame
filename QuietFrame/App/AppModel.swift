@@ -19,7 +19,7 @@ final class AppModel {
         didBootstrap = true
 
         do {
-            let schema = Schema(versionedSchema: VaultSchemaV1.self)
+            let schema = Schema(versionedSchema: VaultSchemaV2.self)
             let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
             try await AppResetJournal.completePendingReset(storeURL: configuration.url)
             try protectMetadataStoreDirectory(configuration.url.deletingLastPathComponent())
@@ -29,6 +29,7 @@ final class AppModel {
                 configurations: [configuration]
             )
             try protectMetadataStoreFiles(configuration.url)
+            try Self.initializeAlbumPositions(in: container.mainContext)
             try createSettingsIfNeeded(in: container.mainContext)
             let dependencies = try AppDependencies(modelContainer: container)
             bootstrapState = .ready(dependencies)
@@ -50,6 +51,20 @@ final class AppModel {
             context.insert(AppSettings())
             try context.save()
         }
+    }
+
+    static func initializeAlbumPositions(in context: ModelContext) throws {
+        let albums = try context.fetch(FetchDescriptor<VaultAlbum>())
+        guard Set(albums.map(\.position)).count != albums.count else { return }
+        let ordered = albums.sorted {
+            $0.createdAt == $1.createdAt
+                ? $0.id.uuidString < $1.id.uuidString
+                : $0.createdAt < $1.createdAt
+        }
+        for (position, album) in ordered.enumerated() {
+            album.position = position
+        }
+        try context.save()
     }
 
     private func protectMetadataStoreDirectory(_ directory: URL) throws {

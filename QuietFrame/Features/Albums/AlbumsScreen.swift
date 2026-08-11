@@ -4,7 +4,7 @@ import SwiftUI
 struct AlbumsScreen: View {
     @Environment(AppDependencies.self) private var dependencies
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \VaultAlbum.modifiedAt, order: .reverse) private var albums: [VaultAlbum]
+    @Query(sort: \VaultAlbum.position) private var albums: [VaultAlbum]
     @Query(filter: #Predicate<VaultMedia> { $0.trashedAt == nil }) private var activeMedia: [VaultMedia]
     @Query private var settingsRecords: [AppSettings]
 
@@ -13,12 +13,15 @@ struct AlbumsScreen: View {
     @State private var renameAlbum: VaultAlbum?
     @State private var renameValue = ""
     @State private var deleteAlbum: VaultAlbum?
+    @State private var showsAlbumReorder = false
     @State private var userMessage: String?
 
     private let columns = [GridItem(.adaptive(minimum: 156, maximum: 240), spacing: 14)]
 
     private var sortedAlbums: [VaultAlbum] {
         switch settingsRecords.first?.albumSort ?? .modifiedDate {
+        case .manual:
+            albums
         case .name:
             albums.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         case .creationDate:
@@ -49,6 +52,12 @@ struct AlbumsScreen: View {
                 } label: {
                     Label("Sort Albums", systemImage: "arrow.up.arrow.down")
                 }
+                Button {
+                    showsAlbumReorder = true
+                } label: {
+                    Label("Reorder Albums", systemImage: "list.bullet")
+                }
+                .disabled(albums.count < 2)
                 Button {
                     newAlbumName = ""
                     showsNewAlbum = true
@@ -89,6 +98,12 @@ struct AlbumsScreen: View {
             Button("OK", role: .cancel) { userMessage = nil }
         } message: {
             Text(userMessage ?? "The album could not be updated.")
+        }
+        .sheet(isPresented: $showsAlbumReorder) {
+            AlbumReorderSheet(albums: sortedAlbums) { ids in
+                try dependencies.albumService.reorderAlbums(ids: ids)
+                HapticFeedback.success()
+            }
         }
     }
 
@@ -247,6 +262,56 @@ struct AlbumsScreen: View {
             } catch {
                 userMessage = (error as? VaultError)?.localizedDescription
                     ?? VaultError.persistenceFailure.localizedDescription
+            }
+        }
+    }
+}
+
+private struct AlbumReorderSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var albums: [VaultAlbum]
+    @State private var userMessage: String?
+    let save: ([UUID]) throws -> Void
+
+    init(albums: [VaultAlbum], save: @escaping ([UUID]) throws -> Void) {
+        _albums = State(initialValue: albums)
+        self.save = save
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(albums) { album in
+                    Label(album.name, systemImage: "rectangle.stack")
+                }
+                .onMove { albums.move(fromOffsets: $0, toOffset: $1) }
+            }
+            .environment(\.editMode, .constant(.active))
+            .navigationTitle("Reorder Albums")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        do {
+                            try save(albums.map(\.id))
+                            dismiss()
+                        } catch {
+                            userMessage = (error as? VaultError)?.localizedDescription
+                                ?? VaultError.persistenceFailure.localizedDescription
+                        }
+                    }
+                }
+            }
+            .alert("QuietFrame", isPresented: Binding(
+                get: { userMessage != nil },
+                set: { if !$0 { userMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) { userMessage = nil }
+            } message: {
+                Text(userMessage ?? "The album order could not be saved.")
             }
         }
     }

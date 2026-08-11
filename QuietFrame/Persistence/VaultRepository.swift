@@ -17,6 +17,7 @@ protocol VaultRepositoryProtocol: AnyObject {
     func fetchMedia(query: GalleryQuery, offset: Int, limit: Int) throws -> (items: [VaultMedia], hasMore: Bool)
     func createAlbum(name: String) throws -> VaultAlbum
     func renameAlbum(id: UUID, name: String) throws
+    func reorderAlbums(ids: [UUID]) throws
     func moveMedia(ids: Set<UUID>, toAlbumID: UUID?) throws
     func setAlbumCover(albumID: UUID, mediaID: UUID?) throws
     func setFavorite(mediaID: UUID, isFavorite: Bool) throws
@@ -161,7 +162,8 @@ final class VaultRepository: VaultRepositoryProtocol {
         guard try !albumNameExists(validatedName, excluding: nil) else {
             throw VaultError.invalidInput("An album with this name already exists.")
         }
-        let album = VaultAlbum(name: validatedName)
+        let highestPosition = try modelContext.fetch(FetchDescriptor<VaultAlbum>()).map(\.position).max() ?? -1
+        let album = VaultAlbum(name: validatedName, position: highestPosition + 1)
         modelContext.insert(album)
         do {
             try modelContext.save()
@@ -180,6 +182,29 @@ final class VaultRepository: VaultRepositoryProtocol {
         }
         album.name = validatedName
         album.modifiedAt = Date()
+        try saveChanges()
+    }
+
+    func reorderAlbums(ids: [UUID]) throws {
+        let albums = try modelContext.fetch(FetchDescriptor<VaultAlbum>())
+        guard ids.count == albums.count,
+              Set(ids).count == ids.count else {
+            throw VaultError.invalidInput("The album order is invalid.")
+        }
+        let albumsByID = Dictionary(uniqueKeysWithValues: albums.map { ($0.id, $0) })
+        guard ids.allSatisfy({ albumsByID[$0] != nil }) else {
+            throw VaultError.invalidInput("The album order is invalid.")
+        }
+        guard !albums.isEmpty else { return }
+        var settingsDescriptor = FetchDescriptor<AppSettings>()
+        settingsDescriptor.fetchLimit = 1
+        guard let settings = try modelContext.fetch(settingsDescriptor).first else {
+            throw VaultError.persistenceFailure
+        }
+        settings.albumSort = .manual
+        for (position, id) in ids.enumerated() {
+            albumsByID[id]?.position = position
+        }
         try saveChanges()
     }
 
