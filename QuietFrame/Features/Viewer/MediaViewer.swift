@@ -1,16 +1,8 @@
 import SwiftData
 import SwiftUI
 
-struct MediaPageState: Equatable {
-    let isActive: Bool
-    let shouldPrepare: Bool
-}
-
-func mediaPageState(pageIndex: Int, selectedIndex: Int) -> MediaPageState {
-    MediaPageState(
-        isActive: pageIndex == selectedIndex,
-        shouldPrepare: abs(pageIndex - selectedIndex) <= 1
-    )
+func mediaPageState(pageIndex: Int, selectedIndex: Int) -> (isActive: Bool, shouldPrepare: Bool) {
+    (pageIndex == selectedIndex, abs(pageIndex - selectedIndex) <= 1)
 }
 
 struct MediaViewer: View {
