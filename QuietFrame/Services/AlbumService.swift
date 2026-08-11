@@ -5,7 +5,6 @@ import SwiftData
 protocol AlbumServicing: AnyObject {
     func createAlbum(name: String) throws -> VaultAlbum
     func renameAlbum(id: UUID, name: String) throws
-    func reorderAlbums(ids: [UUID]) throws
     func moveMedia(ids: Set<UUID>, toAlbumID: UUID?) throws
     func setCover(albumID: UUID, mediaID: UUID?) throws
     func deleteAlbum(id: UUID, mode: AlbumDeletionMode) async throws
