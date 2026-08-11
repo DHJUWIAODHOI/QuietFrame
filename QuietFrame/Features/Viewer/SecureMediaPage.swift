@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 struct SecureMediaPage: View {
     let media: VaultMedia
     let isActive: Bool
+    let shouldPrepare: Bool
     let storage: any SecureFileStoring
     let onPhotoTap: () -> Void
     let onPhotoZoomChanged: (Bool) -> Void
@@ -18,6 +19,7 @@ struct SecureMediaPage: View {
             SecurePhotoPage(
                 media: media,
                 isActive: isActive,
+                shouldPrepare: shouldPrepare,
                 storage: storage,
                 onTap: onPhotoTap,
                 onZoomChanged: onPhotoZoomChanged
@@ -26,6 +28,7 @@ struct SecureMediaPage: View {
             SecureVideoPage(
                 media: media,
                 isActive: isActive,
+                shouldPrepare: shouldPrepare,
                 storage: storage,
                 onPlaybackChanged: onVideoPlaybackChanged
             )
@@ -36,6 +39,7 @@ struct SecureMediaPage: View {
 private struct SecurePhotoPage: View {
     let media: VaultMedia
     let isActive: Bool
+    let shouldPrepare: Bool
     let storage: any SecureFileStoring
     let onTap: () -> Void
     let onZoomChanged: (Bool) -> Void
@@ -48,11 +52,18 @@ private struct SecurePhotoPage: View {
         ZStack {
             Color.black
             if let image {
-                ZoomablePhotoView(
-                    image: image,
-                    accessibilityLabel: media.accessibilitySummary,
-                    onZoomChanged: onZoomChanged
-                )
+                if isActive {
+                    ZoomablePhotoView(
+                        image: image,
+                        accessibilityLabel: media.accessibilitySummary,
+                        onZoomChanged: onZoomChanged
+                    )
+                } else {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .accessibilityLabel(media.accessibilitySummary)
+                }
             } else if let errorMessage {
                 ContentUnavailableView(
                     "Photo Unavailable",
@@ -67,9 +78,9 @@ private struct SecurePhotoPage: View {
             }
         }
         .contentShape(Rectangle())
-        .simultaneousGesture(TapGesture().onEnded { onTap() })
-        .task(id: isActive) {
-            if isActive {
+        .simultaneousGesture(TapGesture().onEnded { if isActive { onTap() } })
+        .task(id: shouldPrepare) {
+            if shouldPrepare {
                 await loadWhenReady()
             } else {
                 image = nil
@@ -117,13 +128,14 @@ private struct SecurePhotoPage: View {
                 return UIImage(cgImage: image)
             }.value
             guard let decoded else { throw VaultError.corruptedFile }
-            guard !Task.isCancelled, isActive else { return }
+            guard !Task.isCancelled, shouldPrepare else { return }
             image = decoded
         } catch is CancellationError {
             return
         } catch VaultError.importCancelled {
             return
         } catch {
+            guard !Task.isCancelled, shouldPrepare else { return }
             errorMessage = (error as? VaultError)?.localizedDescription
                 ?? VaultError.corruptedFile.localizedDescription
         }
@@ -133,6 +145,7 @@ private struct SecurePhotoPage: View {
 private struct SecureVideoPage: View {
     let media: VaultMedia
     let isActive: Bool
+    let shouldPrepare: Bool
     let storage: any SecureFileStoring
     let onPlaybackChanged: (Bool) -> Void
 
@@ -150,7 +163,13 @@ private struct SecureVideoPage: View {
         ZStack {
             Color.black
             if let player {
-                SecureVideoPlayerView(player: player, onContentTap: startPlayback)
+                SecureVideoPlayerView(
+                    player: player,
+                    showsPlaybackControls: isActive,
+                    onContentTap: startPlayback
+                )
+                    .allowsHitTesting(isActive)
+                    .accessibilityHidden(!isActive)
                     .accessibilityLabel(media.accessibilitySummary)
                     .onReceive(player.publisher(
                         for: \.timeControlStatus,
@@ -179,18 +198,23 @@ private struct SecureVideoPage: View {
                 Color.clear
                     .contentShape(Rectangle())
                     .onTapGesture(perform: startPlayback)
+                    .allowsHitTesting(isActive)
+                    .accessibilityHidden(!isActive)
                     .accessibilityLabel("Play video")
                     .accessibilityAddTraits(.isButton)
             }
         }
         .task(id: playbackLifecycleID) {
-            if isActive, scenePhase == .active {
-                await loadWhenReady()
-            } else if !isActive {
+            if !shouldPrepare {
                 cleanup()
+            } else if scenePhase == .active {
+                await loadWhenReady()
             } else {
                 pausePlayback()
             }
+        }
+        .onChange(of: isActive) { _, isActive in
+            if !isActive { pausePlayback() }
         }
         .onDisappear { cleanup() }
     }
@@ -219,7 +243,7 @@ private struct SecureVideoPage: View {
                 location: media.isTrashed ? .trash : .media,
                 preferredExtension: fileExtension
             )
-            guard !Task.isCancelled, isActive, scenePhase == .active else {
+            guard !Task.isCancelled, shouldPrepare, scenePhase == .active else {
                 newLease.cleanup()
                 return
             }
@@ -239,6 +263,7 @@ private struct SecureVideoPage: View {
         } catch VaultError.importCancelled {
             return
         } catch {
+            guard !Task.isCancelled, shouldPrepare else { return }
             shouldPlayWhenReady = false
             playbackStatus = .paused
             onPlaybackChanged(false)
@@ -261,7 +286,7 @@ private struct SecureVideoPage: View {
     }
 
     private var playbackLifecycleID: Int {
-        guard isActive else { return 0 }
+        guard shouldPrepare else { return 0 }
         switch scenePhase {
         case .active: return 1
         case .inactive: return 2
@@ -284,6 +309,7 @@ private struct SecureVideoPage: View {
 
 private struct SecureVideoPlayerView: UIViewControllerRepresentable {
     let player: AVPlayer
+    let showsPlaybackControls: Bool
     let onContentTap: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -293,7 +319,7 @@ private struct SecureVideoPlayerView: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let controller = AVPlayerViewController()
         controller.player = player
-        controller.showsPlaybackControls = true
+        controller.showsPlaybackControls = showsPlaybackControls
 
         let tapGesture = UITapGestureRecognizer(
             target: context.coordinator,
@@ -307,6 +333,7 @@ private struct SecureVideoPlayerView: UIViewControllerRepresentable {
 
     func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
         controller.player = player
+        controller.showsPlaybackControls = showsPlaybackControls
         context.coordinator.onContentTap = onContentTap
     }
 

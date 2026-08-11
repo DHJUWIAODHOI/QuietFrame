@@ -1,6 +1,18 @@
 import SwiftData
 import SwiftUI
 
+struct MediaPageState: Equatable {
+    let isActive: Bool
+    let shouldPrepare: Bool
+}
+
+func mediaPageState(pageIndex: Int, selectedIndex: Int) -> MediaPageState {
+    MediaPageState(
+        isActive: pageIndex == selectedIndex,
+        shouldPrepare: abs(pageIndex - selectedIndex) <= 1
+    )
+}
+
 struct MediaViewer: View {
     let items: [VaultMedia]
     let dependencies: AppDependencies
@@ -99,11 +111,14 @@ struct MediaViewer: View {
     }
 
     private var mediaPager: some View {
-        TabView(selection: $selectedMediaID) {
-            ForEach(items) { media in
+        let selectedIndex = items.firstIndex { $0.id == selectedMediaID } ?? items.startIndex
+        return TabView(selection: $selectedMediaID) {
+            ForEach(Array(items.enumerated()), id: \.element.id) { pageIndex, media in
+                let pageState = mediaPageState(pageIndex: pageIndex, selectedIndex: selectedIndex)
                 SecureMediaPage(
                     media: media,
-                    isActive: media.id == selectedMediaID,
+                    isActive: pageState.isActive,
+                    shouldPrepare: pageState.shouldPrepare,
                     storage: dependencies.secureStorage,
                     onPhotoTap: togglePhotoControls,
                     onPhotoZoomChanged: { updatePhotoZoom($0, mediaID: media.id) },
