@@ -47,14 +47,11 @@ final class VaultRepository: VaultRepositoryProtocol {
         metadata: MediaMetadata,
         albumID: UUID?
     ) throws -> UUID {
-        let album: VaultAlbum?
-        if let albumID {
-            guard let destination = try findAlbum(id: albumID) else {
+        let album = try albumID.map { id in
+            guard let album = try findAlbum(id: id) else {
                 throw VaultError.persistenceFailure
             }
-            album = destination
-        } else {
-            album = nil
+            return album
         }
         let importedAt = Date()
         let media = VaultMedia(
