@@ -1,10 +1,13 @@
+import SwiftData
 import SwiftUI
 
 struct ImportPreviewView: View {
+    @Query(sort: \VaultAlbum.position) private var albums: [VaultAlbum]
     @Bindable var viewModel: ImportViewModel
     let dismiss: () -> Void
 
     @State private var confirmsOriginalDeletion = false
+    @State private var destinationAlbumID: UUID?
 
     private let columns = [
         GridItem(.adaptive(minimum: 104, maximum: 160), spacing: 10)
@@ -190,8 +193,22 @@ struct ImportPreviewView: View {
                     .buttonStyle(.bordered)
                     .frame(maxWidth: .infinity)
                 } else if !viewModel.candidates.isEmpty {
+                    LabeledContent {
+                        Picker("Destination", selection: $destinationAlbumID) {
+                            Label("Vault / No Album", systemImage: "rectangle.stack.badge.minus")
+                                .tag(Optional<UUID>.none)
+                            ForEach(albums) { album in
+                                Label(album.name, systemImage: "rectangle.stack")
+                                    .tag(Optional(album.id))
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                    } label: {
+                        Label("Destination", systemImage: "folder")
+                    }
                     Button {
-                        viewModel.startImport()
+                        viewModel.startImport(albumID: destinationAlbumID)
                     } label: {
                         Label("Encrypt and Import", systemImage: "lock.badge.plus")
                             .frame(maxWidth: .infinity)

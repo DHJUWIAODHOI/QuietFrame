@@ -84,6 +84,155 @@ final class MediaImportServiceTests: XCTestCase {
         XCTAssertEqual(records.first?.pixelWidth, 640)
     }
 
+    func testImportAssignsEveryPhotoAndVideoToSelectedAlbum() async throws {
+        let environment = try await makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.root) }
+        let album = try environment.repository.createAlbum(name: "Selected")
+        let sources = try [
+            makeSource(
+                at: environment.cache.appendingPathComponent("photo.jpg"),
+                bytes: Data(repeating: 0x31, count: 70_000),
+                mediaType: .photo,
+                filename: "photo.jpg"
+            ),
+            makeSource(
+                at: environment.cache.appendingPathComponent("video.mov"),
+                bytes: Data(repeating: 0x72, count: 90_000),
+                mediaType: .video,
+                filename: "video.mov"
+            )
+        ]
+
+        let summary = try await environment.importer.importMedia(
+            sources,
+            albumID: album.id,
+            preflightFailureCount: 0,
+            preflightThumbnailFailureCount: 0,
+            progress: nil
+        )
+
+        let records = try environment.container.mainContext.fetch(FetchDescriptor<VaultMedia>())
+        XCTAssertEqual(summary.importedCount, 2)
+        XCTAssertEqual(records.count, 2)
+        XCTAssertTrue(records.allSatisfy { $0.album?.id == album.id })
+        XCTAssertEqual(records.map(\.mediaTypeRawValue).sorted(), ["photo", "video"])
+    }
+
+    func testImportWithNoAlbumKeepsMediaUnassigned() async throws {
+        let environment = try await makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.root) }
+        let source = try makeSource(
+            at: environment.cache.appendingPathComponent("unassigned.jpg"),
+            bytes: Data(repeating: 0x43, count: 70_000),
+            mediaType: .photo,
+            filename: "unassigned.jpg"
+        )
+
+        let summary = try await environment.importer.importMedia(
+            [source],
+            albumID: nil,
+            preflightFailureCount: 0,
+            preflightThumbnailFailureCount: 0,
+            progress: nil
+        )
+
+        let records = try environment.container.mainContext.fetch(FetchDescriptor<VaultMedia>())
+        XCTAssertEqual(summary.importedCount, 1)
+        XCTAssertEqual(records.count, 1)
+        XCTAssertNil(records.first?.album)
+    }
+
+    func testStaleAlbumIDRemovesEncryptedMediaAndThumbnail() async throws {
+        let environment = try await makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.root) }
+        let staleAlbumID = UUID()
+        let source = try makeSource(
+            at: environment.cache.appendingPathComponent("stale.jpg"),
+            bytes: Data(repeating: 0x54, count: 70_000),
+            mediaType: .photo,
+            filename: "stale.jpg",
+            thumbnailData: Data(repeating: 0x65, count: 2_048)
+        )
+
+        XCTAssertThrowsError(try environment.repository.insertImportedMedia(
+            storageIdentifier: "missing",
+            thumbnailIdentifier: "missing-thumbnail",
+            fingerprint: UUID().uuidString,
+            metadata: source.metadata,
+            albumID: staleAlbumID
+        )) { error in
+            XCTAssertEqual(error as? VaultError, .persistenceFailure)
+        }
+
+        let summary = try await environment.importer.importMedia(
+            [source],
+            albumID: staleAlbumID,
+            preflightFailureCount: 0,
+            preflightThumbnailFailureCount: 0,
+            progress: nil
+        )
+
+        XCTAssertEqual(summary.importedCount, 0)
+        XCTAssertEqual(summary.failedCount, 1)
+        XCTAssertEqual(try environment.container.mainContext.fetchCount(FetchDescriptor<VaultMedia>()), 0)
+        let mediaIdentifiers = try await environment.storage.allIdentifiers(location: .media)
+        let thumbnailIdentifiers = try await environment.storage.allIdentifiers(location: .thumbnails)
+        XCTAssertTrue(mediaIdentifiers.isEmpty)
+        XCTAssertTrue(thumbnailIdentifiers.isEmpty)
+    }
+
+    private func makeEnvironment() async throws -> (
+        root: URL,
+        cache: URL,
+        container: ModelContainer,
+        repository: VaultRepository,
+        storage: SecureFileStorageService,
+        importer: MediaImportService
+    ) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let storageRoot = root.appendingPathComponent("storage", isDirectory: true)
+        let cache = root.appendingPathComponent("cache", isDirectory: true)
+        try FileManager.default.createDirectory(at: storageRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        let container = try makeModelContainer()
+        let repository = VaultRepository(modelContext: container.mainContext)
+        let session = VaultSession()
+        try await session.unlock(with: Data(repeating: 0x4d, count: 32))
+        let storage = try SecureFileStorageService(
+            encryption: ChunkedEncryptionService(session: session, chunkByteCount: 65_536),
+            baseURL: storageRoot,
+            temporaryBaseURL: cache,
+            applyFileProtection: false
+        )
+        return (root, cache, container, repository, storage, MediaImportService(storage: storage, repository: repository))
+    }
+
+    private func makeSource(
+        at url: URL,
+        bytes: Data,
+        mediaType: MediaType,
+        filename: String,
+        thumbnailData: Data? = nil
+    ) throws -> ImportSource {
+        try bytes.write(to: url)
+        return ImportSource(
+            temporaryURL: url,
+            metadata: MediaMetadata(
+                mediaType: mediaType,
+                contentTypeIdentifier: mediaType == .photo ? "public.jpeg" : "com.apple.quicktime-movie",
+                originalFilename: filename,
+                originalCreationDate: nil,
+                pixelWidth: 640,
+                pixelHeight: 480,
+                duration: mediaType == .video ? 1 : nil,
+                byteCount: Int64(bytes.count)
+            ),
+            thumbnailJPEGData: thumbnailData,
+            sourceLocalIdentifier: nil
+        )
+    }
+
     private func makeModelContainer() throws -> ModelContainer {
         let schema = Schema([
             VaultMedia.self,
