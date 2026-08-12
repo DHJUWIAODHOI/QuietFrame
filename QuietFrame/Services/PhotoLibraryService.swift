@@ -5,6 +5,10 @@ enum PhotoLibraryImportAccess: Equatable, Sendable {
     case full
     case limited
     case denied
+
+    var allowsSourceDeletionInspection: Bool {
+        self != .denied
+    }
 }
 
 protocol PhotoLibraryServing: Sendable {
@@ -62,6 +66,22 @@ actor PhotoLibraryService: PhotoLibraryServing {
         @unknown default:
             return false
         }
+    }
+
+    static func eligibleSourceIdentifier(
+        _ identifier: String?,
+        allowsInspection: Bool,
+        assetIsAccessible: Bool,
+        providerHasLivePhoto: Bool,
+        resourceProfileIsSafe: Bool
+    ) -> String? {
+        guard allowsInspection,
+              let identifier,
+              !identifier.isEmpty,
+              assetIsAccessible,
+              !providerHasLivePhoto,
+              resourceProfileIsSafe else { return nil }
+        return identifier
     }
 
     func deleteOriginals(localIdentifiers: [String]) async throws {

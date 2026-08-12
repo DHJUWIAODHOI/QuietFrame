@@ -137,19 +137,24 @@ struct PhotoLibraryPicker: UIViewControllerRepresentable {
             for result: PHPickerResult,
             allowsOriginalDeletion: Bool
         ) -> String? {
-            guard allowsOriginalDeletion,
-                  let identifier = result.assetIdentifier,
-                  !identifier.isEmpty else { return nil }
+            guard allowsOriginalDeletion else { return nil }
+            let identifier = result.assetIdentifier
             let provider = result.itemProvider
-            guard !provider.hasItemConformingToTypeIdentifier(UTType.livePhoto.identifier) else {
-                return nil
+            let providerHasLivePhoto = provider.hasItemConformingToTypeIdentifier(UTType.livePhoto.identifier)
+            var asset: PHAsset?
+            if let identifier, !identifier.isEmpty, !providerHasLivePhoto {
+                let assets = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil)
+                if assets.count == 1 {
+                    asset = assets.object(at: 0)
+                }
             }
-
-            let assets = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil)
-            guard assets.count == 1 else { return nil }
-            let asset = assets.object(at: 0)
-            guard PhotoLibraryService.isSafeToDeleteAfterRepresentationImport(asset) else { return nil }
-            return identifier
+            return PhotoLibraryService.eligibleSourceIdentifier(
+                identifier,
+                allowsInspection: allowsOriginalDeletion,
+                assetIsAccessible: asset != nil,
+                providerHasLivePhoto: providerHasLivePhoto,
+                resourceProfileIsSafe: asset.map(PhotoLibraryService.isSafeToDeleteAfterRepresentationImport) ?? false
+            )
         }
     }
 }

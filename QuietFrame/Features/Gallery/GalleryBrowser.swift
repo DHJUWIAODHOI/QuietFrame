@@ -150,7 +150,9 @@ private struct GalleryBrowserContent: View {
             titleVisibility: .visible
         ) {
             Button("Open Settings") { openSystemSettings() }
-            Button("Continue Without Automatic Deletion") { showsPicker = true }
+            Button(allowsOriginalDeletionForImport ? "Continue with Limited Access" : "Continue Without Automatic Deletion") {
+                showsPicker = true
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(photosAccessWarningMessage)
@@ -329,16 +331,14 @@ private struct GalleryBrowserContent: View {
     private func beginImportSelection() {
         Task {
             let access = await dependencies.photoLibraryService.requestImportAccess()
+            allowsOriginalDeletionForImport = access.allowsSourceDeletionInspection
             switch access {
             case .full:
-                allowsOriginalDeletionForImport = true
                 showsPicker = true
             case .limited:
-                allowsOriginalDeletionForImport = false
-                photosAccessWarningMessage = "QuietFrame needs Full Photos Access to inspect and revalidate every selected original before safe deletion. Choose Full Access in Settings, or continue knowing you may need to delete originals manually."
+                photosAccessWarningMessage = "With Limited Photos Access, QuietFrame can offer deletion only for selected items it can access and revalidate safely. Other originals must be deleted manually."
                 showsPhotosAccessWarning = true
             case .denied:
-                allowsOriginalDeletionForImport = false
                 photosAccessWarningMessage = "Photos access is disabled. QuietFrame can still import through the system picker, but automatic deletion remains off because QuietFrame cannot inspect and revalidate the selected originals through PhotoKit. Enable Full Access in Settings to use deletion prompts."
                 showsPhotosAccessWarning = true
             }
