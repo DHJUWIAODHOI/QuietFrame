@@ -5,10 +5,6 @@ enum PhotoLibraryImportAccess: Equatable, Sendable {
     case full
     case limited
     case denied
-
-    var allowsSourceDeletionInspection: Bool {
-        self != .denied
-    }
 }
 
 protocol PhotoLibraryServing: Sendable {

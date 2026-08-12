@@ -331,7 +331,7 @@ private struct GalleryBrowserContent: View {
     private func beginImportSelection() {
         Task {
             let access = await dependencies.photoLibraryService.requestImportAccess()
-            allowsOriginalDeletionForImport = access.allowsSourceDeletionInspection
+            allowsOriginalDeletionForImport = access != .denied
             switch access {
             case .full:
                 showsPicker = true

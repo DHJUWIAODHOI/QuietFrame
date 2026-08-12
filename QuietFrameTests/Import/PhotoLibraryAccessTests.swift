@@ -13,52 +13,47 @@ final class PhotoLibraryAccessTests: XCTestCase {
         XCTAssertEqual(denied, .denied)
         XCTAssertEqual(restricted, .denied)
         XCTAssertEqual(PhotoLibraryService.importAccess(for: .notDetermined), .denied)
-        XCTAssertTrue(authorized.allowsSourceDeletionInspection)
-        XCTAssertTrue(limited.allowsSourceDeletionInspection)
-        XCTAssertFalse(denied.allowsSourceDeletionInspection)
-        XCTAssertFalse(restricted.allowsSourceDeletionInspection)
     }
 
     func testLimitedAccessAllowsOnlyIdentifiableAccessibleSafeAssets() {
-        let allowsInspection = PhotoLibraryImportAccess.limited.allowsSourceDeletionInspection
         XCTAssertEqual(PhotoLibraryService.eligibleSourceIdentifier(
             "asset-id",
-            allowsInspection: allowsInspection,
+            allowsInspection: true,
             assetIsAccessible: true,
             providerHasLivePhoto: false,
             resourceProfileIsSafe: true
         ), "asset-id")
         XCTAssertNil(PhotoLibraryService.eligibleSourceIdentifier(
             nil,
-            allowsInspection: allowsInspection,
+            allowsInspection: true,
             assetIsAccessible: true,
             providerHasLivePhoto: false,
             resourceProfileIsSafe: true
         ))
         XCTAssertNil(PhotoLibraryService.eligibleSourceIdentifier(
             "",
-            allowsInspection: allowsInspection,
+            allowsInspection: true,
             assetIsAccessible: true,
             providerHasLivePhoto: false,
             resourceProfileIsSafe: true
         ))
         XCTAssertNil(PhotoLibraryService.eligibleSourceIdentifier(
             "asset-id",
-            allowsInspection: allowsInspection,
+            allowsInspection: true,
             assetIsAccessible: false,
             providerHasLivePhoto: false,
             resourceProfileIsSafe: true
         ))
         XCTAssertNil(PhotoLibraryService.eligibleSourceIdentifier(
             "asset-id",
-            allowsInspection: allowsInspection,
+            allowsInspection: true,
             assetIsAccessible: true,
             providerHasLivePhoto: true,
             resourceProfileIsSafe: true
         ))
         XCTAssertNil(PhotoLibraryService.eligibleSourceIdentifier(
             "asset-id",
-            allowsInspection: allowsInspection,
+            allowsInspection: true,
             assetIsAccessible: true,
             providerHasLivePhoto: false,
             resourceProfileIsSafe: false
@@ -113,7 +108,7 @@ final class PhotoLibraryAccessTests: XCTestCase {
     func testDeniedAccessNeverAllowsSourceDeletionIdentifier() {
         XCTAssertNil(PhotoLibraryService.eligibleSourceIdentifier(
             "asset-id",
-            allowsInspection: PhotoLibraryImportAccess.denied.allowsSourceDeletionInspection,
+            allowsInspection: false,
             assetIsAccessible: true,
             providerHasLivePhoto: false,
             resourceProfileIsSafe: true
