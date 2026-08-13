@@ -371,22 +371,22 @@ final class VaultRepository: VaultRepositoryProtocol {
         let dateOrder: SortOrder = dateDirection == .newestFirst ? .reverse : .forward
         switch option {
         case .importedAt:
-            [SortDescriptor(\VaultMedia.importedAt, order: dateOrder),
-             SortDescriptor(\VaultMedia.storageIdentifier, order: .forward)]
+            return [SortDescriptor(\VaultMedia.importedAt, order: dateOrder),
+                    SortDescriptor(\VaultMedia.storageIdentifier, order: .forward)]
         case .createdAt:
-            [SortDescriptor(\VaultMedia.originalCreationDate, order: dateOrder),
-             SortDescriptor(\VaultMedia.importedAt, order: dateOrder),
-             SortDescriptor(\VaultMedia.storageIdentifier, order: .forward)]
+            return [SortDescriptor(\VaultMedia.originalCreationDate, order: dateOrder),
+                    SortDescriptor(\VaultMedia.importedAt, order: dateOrder),
+                    SortDescriptor(\VaultMedia.storageIdentifier, order: .forward)]
         case .name:
-            [SortDescriptor(\VaultMedia.originalFilename, order: .forward),
-             SortDescriptor(\VaultMedia.storageIdentifier, order: .forward)]
+            return [SortDescriptor(\VaultMedia.originalFilename, order: .forward),
+                    SortDescriptor(\VaultMedia.storageIdentifier, order: .forward)]
         case .size:
-            [SortDescriptor(\VaultMedia.byteCount, order: .reverse),
-             SortDescriptor(\VaultMedia.storageIdentifier, order: .forward)]
+            return [SortDescriptor(\VaultMedia.byteCount, order: .reverse),
+                    SortDescriptor(\VaultMedia.storageIdentifier, order: .forward)]
         case .type:
-            [SortDescriptor(\VaultMedia.mediaTypeRawValue, order: .forward),
-             SortDescriptor(\VaultMedia.importedAt, order: .reverse),
-             SortDescriptor(\VaultMedia.storageIdentifier, order: .forward)]
+            return [SortDescriptor(\VaultMedia.mediaTypeRawValue, order: .forward),
+                    SortDescriptor(\VaultMedia.importedAt, order: .reverse),
+                    SortDescriptor(\VaultMedia.storageIdentifier, order: .forward)]
         }
     }
 
