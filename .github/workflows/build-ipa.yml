@@ -37,6 +37,7 @@ jobs:
             -only-testing:QuietFrameTests/ImportSummaryTests \
             -only-testing:QuietFrameTests/MediaImportServiceTests \
             -only-testing:QuietFrameTests/PhotoLibraryAccessTests \
+            -only-testing:QuietFrameTests/GallerySortingTests \
             -only-testing:QuietFrameTests/VaultLockCoordinatorTests \
             -only-testing:QuietFrameTests/StorageReconciliationServiceTests \
             -only-testing:QuietFrameTests/TrashServiceTests \

@@ -71,6 +71,11 @@ final class GalleryViewModel {
         Task { await loadInitial() }
     }
 
+    func updateDateSortDirection(_ direction: MediaDateSortDirection) async {
+        query.dateSortDirection = direction
+        await loadInitial()
+    }
+
     func updateSearch(_ text: String) {
         query.searchText = text
         searchTask?.cancel()

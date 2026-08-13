@@ -10,6 +10,7 @@ final class AppSettings {
     var appearanceRawValue: String
     var thumbnailSizeRawValue: String
     var albumSortRawValue: String
+    var albumMediaDateSortDirectionRawValue: String = "newestFirst"
     var createdAt: Date
     var modifiedAt: Date
 
@@ -20,7 +21,8 @@ final class AppSettings {
         trashRetentionPeriod: TrashRetentionPeriod = .thirtyDays,
         appearance: AppAppearance = .system,
         thumbnailSize: ThumbnailSize = .comfortable,
-        albumSort: AlbumSortOption = .modifiedDate
+        albumSort: AlbumSortOption = .modifiedDate,
+        albumMediaDateSortDirection: MediaDateSortDirection = .newestFirst
     ) {
         self.singletonKey = singletonKey
         self.biometricsEnabled = biometricsEnabled
@@ -29,6 +31,7 @@ final class AppSettings {
         self.appearanceRawValue = appearance.rawValue
         self.thumbnailSizeRawValue = thumbnailSize.rawValue
         self.albumSortRawValue = albumSort.rawValue
+        self.albumMediaDateSortDirectionRawValue = albumMediaDateSortDirection.rawValue
         self.createdAt = Date()
         self.modifiedAt = Date()
     }
@@ -56,5 +59,10 @@ final class AppSettings {
     var albumSort: AlbumSortOption {
         get { AlbumSortOption(rawValue: albumSortRawValue) ?? .modifiedDate }
         set { albumSortRawValue = newValue.rawValue; modifiedAt = Date() }
+    }
+
+    var albumMediaDateSortDirection: MediaDateSortDirection {
+        get { MediaDateSortDirection(rawValue: albumMediaDateSortDirectionRawValue) ?? .newestFirst }
+        set { albumMediaDateSortDirectionRawValue = newValue.rawValue; modifiedAt = Date() }
     }
 }

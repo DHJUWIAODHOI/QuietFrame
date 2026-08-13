@@ -19,7 +19,7 @@ final class AppModel {
         didBootstrap = true
 
         do {
-            let schema = Schema(versionedSchema: VaultSchemaV2.self)
+            let schema = Schema(versionedSchema: VaultSchemaV3.self)
             let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
             try await AppResetJournal.completePendingReset(storeURL: configuration.url)
             try protectMetadataStoreDirectory(configuration.url.deletingLastPathComponent())

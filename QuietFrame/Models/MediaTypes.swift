@@ -59,6 +59,20 @@ enum MediaSortOption: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+enum MediaDateSortDirection: String, CaseIterable, Identifiable, Sendable {
+    case newestFirst
+    case oldestFirst
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .newestFirst: "Newest First"
+        case .oldestFirst: "Oldest First"
+        }
+    }
+}
+
 enum VaultCollection: String, CaseIterable, Identifiable, Sendable {
     case allMedia
     case recentlyAdded

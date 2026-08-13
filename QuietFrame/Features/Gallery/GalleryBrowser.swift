@@ -20,6 +20,7 @@ struct GalleryBrowser: View {
 }
 
 private struct GalleryBrowserContent: View {
+    @Environment(\.modelContext) private var modelContext
     @Query private var settingsRecords: [AppSettings]
     @Query(sort: \VaultAlbum.position) private var albums: [VaultAlbum]
 
@@ -88,7 +89,7 @@ private struct GalleryBrowserContent: View {
         .searchable(text: searchBinding, prompt: "Filename, album, date, or tag")
         .toolbar { galleryToolbar }
         .safeAreaInset(edge: .bottom) { selectionBar }
-        .task { await galleryViewModel.loadInitial() }
+        .task { await loadInitialMedia() }
         .sheet(isPresented: $showsPicker, onDismiss: finishImportSelection) {
             PhotoLibraryPicker(
                 allowsOriginalDeletion: allowsOriginalDeletionForImport
@@ -199,6 +200,16 @@ private struct GalleryBrowserContent: View {
                             Text(sort.title).tag(sort)
                         }
                     }
+                    if initialQuery.albumID != nil,
+                       galleryViewModel.query.sort == .importedAt
+                        || galleryViewModel.query.sort == .createdAt {
+                        Divider()
+                        Picker("Sort Order", selection: dateSortDirectionBinding) {
+                            ForEach(MediaDateSortDirection.allCases) { direction in
+                                Text(direction.title).tag(direction)
+                            }
+                        }
+                    }
                 } label: {
                     Label("Filter and Sort", systemImage: "line.3.horizontal.decrease.circle")
                 }
@@ -257,8 +268,33 @@ private struct GalleryBrowserContent: View {
         Binding(get: { galleryViewModel.query.sort }, set: { galleryViewModel.updateSort($0) })
     }
 
+    private var dateSortDirectionBinding: Binding<MediaDateSortDirection> {
+        Binding(
+            get: { galleryViewModel.query.dateSortDirection },
+            set: { direction in
+                guard let settings = settingsRecords.first else { return }
+                settings.albumMediaDateSortDirection = direction
+                do {
+                    try modelContext.save()
+                    Task { await galleryViewModel.updateDateSortDirection(direction) }
+                } catch {
+                    modelContext.rollback()
+                    actionMessage = VaultError.persistenceFailure.localizedDescription
+                }
+            }
+        )
+    }
+
     private var selectedItems: [VaultMedia] {
         galleryViewModel.items.filter { galleryViewModel.selectedIDs.contains($0.id) }
+    }
+
+    private func loadInitialMedia() async {
+        if initialQuery.albumID != nil {
+            galleryViewModel.query.dateSortDirection = settingsRecords.first?.albumMediaDateSortDirection
+                ?? .newestFirst
+        }
+        await galleryViewModel.loadInitial()
     }
 
     private func moveSelection(to albumID: UUID?) {

@@ -139,7 +139,7 @@ final class AlbumServiceTests: XCTestCase {
         let storeURL = directory.appendingPathComponent("Vault.store")
 
         let expectedIDs = try autoreleasepool { () throws -> [UUID] in
-            let container = try makeV2Container(at: storeURL)
+            let container = try makeLatestContainer(at: storeURL)
             container.mainContext.insert(AppSettings())
             try container.mainContext.save()
             let repository = VaultRepository(modelContext: container.mainContext)
@@ -152,7 +152,7 @@ final class AlbumServiceTests: XCTestCase {
         }
 
         try autoreleasepool {
-            let container = try makeV2Container(at: storeURL)
+            let container = try makeLatestContainer(at: storeURL)
             XCTAssertEqual(try orderedAlbumIDs(in: container.mainContext), expectedIDs)
             let settings = try XCTUnwrap(container.mainContext.fetch(FetchDescriptor<AppSettings>()).first)
             XCTAssertEqual(settings.albumSort, .manual)
@@ -274,7 +274,7 @@ final class AlbumServiceTests: XCTestCase {
         }
 
         try autoreleasepool {
-            let container = try makeV2Container(at: storeURL, configurationName: "MigrationTest")
+            let container = try makeLatestContainer(at: storeURL, configurationName: "MigrationTest")
             let migratedBeforeBackfill = try container.mainContext.fetch(FetchDescriptor<VaultAlbum>())
             XCTAssertEqual(Set(migratedBeforeBackfill.map(\.position)), Set([0]))
 
@@ -319,6 +319,7 @@ final class AlbumServiceTests: XCTestCase {
             XCTAssertEqual(settings.appearanceRawValue, "dark")
             XCTAssertEqual(settings.thumbnailSizeRawValue, "large")
             XCTAssertEqual(settings.albumSort, .name)
+            XCTAssertEqual(settings.albumMediaDateSortDirection, .newestFirst)
             XCTAssertEqual(settings.createdAt, settingsCreatedAt)
             XCTAssertEqual(settings.modifiedAt, settingsModifiedAt)
             let importRecord = try XCTUnwrap(container.mainContext.fetch(FetchDescriptor<ImportRecord>()).first)
@@ -333,11 +334,102 @@ final class AlbumServiceTests: XCTestCase {
         }
 
         try autoreleasepool {
-            let container = try makeV2Container(at: storeURL, configurationName: "MigrationTest")
+            let container = try makeLatestContainer(at: storeURL, configurationName: "MigrationTest")
             XCTAssertEqual(try orderedAlbumIDs(in: container.mainContext), [firstID, secondID, thirdID])
             XCTAssertEqual(try container.mainContext.fetchCount(FetchDescriptor<VaultMedia>()), 1)
             XCTAssertEqual(try container.mainContext.fetchCount(FetchDescriptor<AppSettings>()), 1)
             XCTAssertEqual(try container.mainContext.fetchCount(FetchDescriptor<ImportRecord>()), 1)
+        }
+    }
+
+    func testMigratesDiskBackedV2StoreToV3WithNewestFirstDefault() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storeURL = directory.appendingPathComponent("Vault.store")
+        let albumID = UUID()
+        let mediaID = UUID()
+        let importID = UUID()
+        let createdAt = Date(timeIntervalSince1970: 100)
+        let importedAt = Date(timeIntervalSince1970: 200)
+
+        try autoreleasepool {
+            let schema = Schema(versionedSchema: VaultSchemaV2.self)
+            let configuration = ModelConfiguration("V2MigrationTest", schema: schema, url: storeURL)
+            let container = try ModelContainer(for: schema, configurations: [configuration])
+            let album = VaultSchemaV2.VaultAlbum(
+                id: albumID,
+                name: "Existing Album",
+                createdAt: createdAt,
+                position: 7,
+                coverMediaID: mediaID
+            )
+            let media = VaultSchemaV2.VaultMedia(
+                id: mediaID,
+                storageIdentifier: "existing-storage",
+                contentFingerprint: "existing-fingerprint",
+                originalFilename: "existing.jpg",
+                importedAt: importedAt,
+                originalCreationDate: createdAt,
+                byteCount: 1_024,
+                isFavorite: true,
+                tags: ["existing"],
+                album: album
+            )
+            let settings = VaultSchemaV2.AppSettings(
+                biometricsEnabled: true,
+                autoLockSeconds: 60,
+                trashRetentionDays: 15,
+                appearanceRawValue: "dark",
+                thumbnailSizeRawValue: "large",
+                albumSortRawValue: "manual",
+                createdAt: createdAt
+            )
+            let importRecord = VaultSchemaV2.ImportRecord(
+                id: importID,
+                requestedCount: 1,
+                startedAt: importedAt
+            )
+            importRecord.importedCount = 1
+            importRecord.statusRawValue = "completed"
+            container.mainContext.insert(album)
+            container.mainContext.insert(media)
+            container.mainContext.insert(settings)
+            container.mainContext.insert(importRecord)
+            try container.mainContext.save()
+        }
+
+        try autoreleasepool {
+            let container = try makeLatestContainer(at: storeURL, configurationName: "V2MigrationTest")
+            let album = try XCTUnwrap(container.mainContext.fetch(FetchDescriptor<VaultAlbum>()).first)
+            let media = try XCTUnwrap(container.mainContext.fetch(FetchDescriptor<VaultMedia>()).first)
+            let settings = try XCTUnwrap(container.mainContext.fetch(FetchDescriptor<AppSettings>()).first)
+            let importRecord = try XCTUnwrap(container.mainContext.fetch(FetchDescriptor<ImportRecord>()).first)
+
+            XCTAssertEqual(album.id, albumID)
+            XCTAssertEqual(album.name, "Existing Album")
+            XCTAssertEqual(album.position, 7)
+            XCTAssertEqual(album.coverMediaID, mediaID)
+            XCTAssertEqual(album.media.map(\.id), [mediaID])
+            XCTAssertEqual(media.id, mediaID)
+            XCTAssertEqual(media.storageIdentifier, "existing-storage")
+            XCTAssertEqual(media.contentFingerprint, "existing-fingerprint")
+            XCTAssertEqual(media.album?.id, albumID)
+            XCTAssertEqual(media.importedAt, importedAt)
+            XCTAssertEqual(media.originalCreationDate, createdAt)
+            XCTAssertEqual(media.tags, ["existing"])
+            XCTAssertTrue(media.isFavorite)
+            XCTAssertTrue(settings.biometricsEnabled)
+            XCTAssertEqual(settings.autoLockSeconds, 60)
+            XCTAssertEqual(settings.trashRetentionDays, 15)
+            XCTAssertEqual(settings.appearanceRawValue, "dark")
+            XCTAssertEqual(settings.thumbnailSizeRawValue, "large")
+            XCTAssertEqual(settings.albumSort, .manual)
+            XCTAssertEqual(settings.albumMediaDateSortDirection, .newestFirst)
+            XCTAssertEqual(importRecord.id, importID)
+            XCTAssertEqual(importRecord.importedCount, 1)
+            XCTAssertEqual(importRecord.status, .completed)
         }
     }
 
@@ -355,11 +447,11 @@ final class AlbumServiceTests: XCTestCase {
         return container
     }
 
-    private func makeV2Container(
+    private func makeLatestContainer(
         at storeURL: URL,
         configurationName: String = "OrderingTest"
     ) throws -> ModelContainer {
-        let schema = Schema(versionedSchema: VaultSchemaV2.self)
+        let schema = Schema(versionedSchema: VaultSchemaV3.self)
         let configuration = ModelConfiguration(configurationName, schema: schema, url: storeURL)
         return try ModelContainer(
             for: schema,
