@@ -89,7 +89,13 @@ private struct GalleryBrowserContent: View {
         .searchable(text: searchBinding, prompt: "Filename, album, date, or tag")
         .toolbar { galleryToolbar }
         .safeAreaInset(edge: .bottom) { selectionBar }
-        .task { await loadInitialMedia() }
+        .task {
+            if initialQuery.albumID != nil {
+                galleryViewModel.query.dateSortDirection = settingsRecords.first?.albumMediaDateSortDirection
+                    ?? .newestFirst
+            }
+            await galleryViewModel.loadInitial()
+        }
         .sheet(isPresented: $showsPicker, onDismiss: finishImportSelection) {
             PhotoLibraryPicker(
                 allowsOriginalDeletion: allowsOriginalDeletionForImport
@@ -287,14 +293,6 @@ private struct GalleryBrowserContent: View {
 
     private var selectedItems: [VaultMedia] {
         galleryViewModel.items.filter { galleryViewModel.selectedIDs.contains($0.id) }
-    }
-
-    private func loadInitialMedia() async {
-        if initialQuery.albumID != nil {
-            galleryViewModel.query.dateSortDirection = settingsRecords.first?.albumMediaDateSortDirection
-                ?? .newestFirst
-        }
-        await galleryViewModel.loadInitial()
     }
 
     private func moveSelection(to albumID: UUID?) {

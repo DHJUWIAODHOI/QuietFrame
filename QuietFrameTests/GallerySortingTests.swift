@@ -198,9 +198,8 @@ final class GallerySortingTests: XCTestCase {
         )
 
         await viewModel.loadInitial()
-        let itemsPassedToViewer = viewModel.items
 
-        XCTAssertEqual(itemsPassedToViewer.map(\.storageIdentifier), ["old", "middle", "new"])
+        XCTAssertEqual(viewModel.items.map(\.storageIdentifier), ["old", "middle", "new"])
     }
 
     func testNewSettingsDefaultToNewestFirst() {

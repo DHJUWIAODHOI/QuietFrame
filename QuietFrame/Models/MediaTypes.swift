@@ -66,10 +66,7 @@ enum MediaDateSortDirection: String, CaseIterable, Identifiable, Sendable {
     var id: String { rawValue }
 
     var title: String {
-        switch self {
-        case .newestFirst: "Newest First"
-        case .oldestFirst: "Oldest First"
-        }
+        self == .newestFirst ? "Newest First" : "Oldest First"
     }
 }
 
