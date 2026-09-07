@@ -6,11 +6,17 @@ struct SettingsScreen: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var settingsRecords: [AppSettings]
 
-    @State private var showsChangePasscode = false
-    @State private var showsSetPasscode = false
-    @State private var showsRemovePasscode = false
+    private enum Sheet: String, Identifiable {
+        case changePasscode
+        case setPasscode
+        case removePasscode
+        case reset
+
+        var id: String { rawValue }
+    }
+
+    @State private var activeSheet: Sheet?
     @State private var confirmsReset = false
-    @State private var showsReset = false
     @State private var userMessage: String?
 
     private var settings: AppSettings? { settingsRecords.first }
@@ -24,23 +30,28 @@ struct SettingsScreen: View {
             privacySection
             destructiveSection
         }
+        .listStyle(.insetGrouped)
+        .listSectionSpacing(QuietFrameTheme.sectionSpacing)
+        .labelStyle(QuietSettingsLabelStyle())
+        .labeledContentStyle(SettingsValueStyle())
+        .quietFormStyle()
         .navigationTitle("Settings")
-        .sheet(isPresented: $showsChangePasscode) {
-            ChangePasscodeView(coordinator: dependencies.lockCoordinator)
-        }
-        .sheet(isPresented: $showsSetPasscode) {
-            SetPasscodeView(coordinator: dependencies.lockCoordinator)
-        }
-        .sheet(isPresented: $showsRemovePasscode) {
-            RemovePasscodeView(coordinator: dependencies.lockCoordinator)
-        }
-        .sheet(isPresented: $showsReset) {
-            if dependencies.lockCoordinator.authenticationMode == .passcode {
-                ResetApplicationView(coordinator: dependencies.lockCoordinator)
-                    .interactiveDismissDisabled(dependencies.lockCoordinator.isWorking)
-            } else {
-                RecoveryResetView(coordinator: dependencies.lockCoordinator)
-                    .interactiveDismissDisabled(dependencies.lockCoordinator.isWorking)
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .changePasscode:
+                ChangePasscodeView(coordinator: dependencies.lockCoordinator)
+            case .setPasscode:
+                SetPasscodeView(coordinator: dependencies.lockCoordinator)
+            case .removePasscode:
+                RemovePasscodeView(coordinator: dependencies.lockCoordinator)
+            case .reset:
+                if dependencies.lockCoordinator.authenticationMode == .passcode {
+                    ResetApplicationView(coordinator: dependencies.lockCoordinator)
+                        .interactiveDismissDisabled(dependencies.lockCoordinator.isWorking)
+                } else {
+                    RecoveryResetView(coordinator: dependencies.lockCoordinator)
+                        .interactiveDismissDisabled(dependencies.lockCoordinator.isWorking)
+                }
             }
         }
         .confirmationDialog(
@@ -48,7 +59,7 @@ struct SettingsScreen: View {
             isPresented: $confirmsReset,
             titleVisibility: .visible
         ) {
-            Button("Continue to Reset", role: .destructive) { showsReset = true }
+            Button("Continue to Reset", role: .destructive) { activeSheet = .reset }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(resetConfirmationMessage)
@@ -76,13 +87,13 @@ struct SettingsScreen: View {
                 .accessibilityHint("Uses biometrics currently enrolled on this device")
 
                 Button {
-                    showsChangePasscode = true
+                    activeSheet = .changePasscode
                 } label: {
                     Label("Change Passcode", systemImage: "ellipsis.rectangle")
                 }
 
                 Button("Turn Off App Passcode", systemImage: "lock.open", role: .destructive) {
-                    showsRemovePasscode = true
+                    activeSheet = .removePasscode
                 }
 
                 Button {
@@ -99,7 +110,7 @@ struct SettingsScreen: View {
                 }
 
                 Button {
-                    showsSetPasscode = true
+                    activeSheet = .setPasscode
                 } label: {
                     Label("Set a Passcode", systemImage: "lock.badge.plus")
                 }

@@ -11,20 +11,33 @@ struct SetPasscodeView: View {
         NavigationStack {
             Form {
                 Section {
+                    QuietIntroduction(
+                        title: "Set Passcode",
+                        message: "The existing vault key will be wrapped by this passcode. Media files do not need to be re-encrypted.",
+                        systemImage: "lock.badge.plus"
+                    )
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, QuietFrameTheme.contentSpacing)
+                    .listRowBackground(Color.clear)
+                }
+
+                Section {
                     SecureField("New six-digit passcode", text: $passcode)
                         .keyboardType(.numberPad)
                         .onChange(of: passcode) { _, value in passcode = digits(value) }
+                        .frame(minHeight: QuietFrameTheme.controlHeight)
                     SecureField("Confirm passcode", text: $confirmation)
                         .keyboardType(.numberPad)
                         .onChange(of: confirmation) { _, value in confirmation = digits(value) }
-                } footer: {
-                    Text("The existing vault key will be wrapped by this passcode. Media files do not need to be re-encrypted.")
+                        .frame(minHeight: QuietFrameTheme.controlHeight)
                 }
 
                 if let message {
-                    Section { Text(message).foregroundStyle(.red) }
+                    Section { AuthenticationErrorMessage(message: message) }
                 }
             }
+            .listSectionSpacing(QuietFrameTheme.sectionSpacing)
+            .quietFormStyle()
             .navigationTitle("Set Passcode")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

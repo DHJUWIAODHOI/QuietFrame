@@ -4,6 +4,7 @@ import SwiftUI
 struct AlbumsScreen: View {
     @Environment(AppDependencies.self) private var dependencies
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Query(sort: \VaultAlbum.position) private var albums: [VaultAlbum]
     @Query(filter: #Predicate<VaultMedia> { $0.trashedAt == nil }) private var activeMedia: [VaultMedia]
     @Query private var settingsRecords: [AppSettings]
@@ -16,7 +17,16 @@ struct AlbumsScreen: View {
     @State private var showsAlbumReorder = false
     @State private var userMessage: String?
 
-    private let columns = [GridItem(.adaptive(minimum: 156, maximum: 240), spacing: 14)]
+    private var columns: [GridItem] {
+        [GridItem(
+            .adaptive(
+                minimum: dynamicTypeSize.isAccessibilitySize ? 280 : 156,
+                maximum: dynamicTypeSize.isAccessibilitySize ? QuietFrameTheme.readableWidth : 240
+            ),
+            spacing: QuietFrameTheme.contentSpacing,
+            alignment: .top
+        )]
+    }
 
     private var sortedAlbums: [VaultAlbum] {
         switch settingsRecords.first?.albumSort ?? .modifiedDate {
@@ -33,7 +43,7 @@ struct AlbumsScreen: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: QuietFrameTheme.sectionSpacing) {
                 smartCollections
                 userAlbums
             }
@@ -108,10 +118,11 @@ struct AlbumsScreen: View {
     }
 
     private var smartCollections: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: QuietFrameTheme.contentSpacing) {
             Text("Collections")
-                .font(.title3.bold())
-            LazyVGrid(columns: columns, spacing: 14) {
+                .font(.title2.weight(.semibold))
+                .accessibilityAddTraits(.isHeader)
+            LazyVGrid(columns: columns, spacing: QuietFrameTheme.contentSpacing) {
                 smartCollectionCard(.allMedia, count: activeMedia.count)
                 smartCollectionCard(.recentlyAdded, count: recentCount)
                 smartCollectionCard(.favorites, count: activeMedia.lazy.filter(\.isFavorite).count)
@@ -120,14 +131,21 @@ struct AlbumsScreen: View {
     }
 
     private var userAlbums: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
+        VStack(alignment: .leading, spacing: QuietFrameTheme.contentSpacing) {
+            HStack(alignment: .firstTextBaseline, spacing: QuietFrameTheme.compactSpacing) {
                 Text("Your Albums")
-                    .font(.title3.bold())
+                    .font(.title2.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
                 Text(sortedAlbums.count, format: .number)
-                    .font(.subheadline.monospacedDigit())
+                    .font(.subheadline.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, QuietFrameTheme.compactSpacing)
+                    .padding(.vertical, QuietFrameTheme.compactSpacing / 2)
+                    .background(QuietFrameTheme.elevated, in: Capsule())
+                    .fixedSize()
+                    .accessibilityLabel("\(sortedAlbums.count) albums")
             }
 
             if sortedAlbums.isEmpty {
@@ -135,13 +153,17 @@ struct AlbumsScreen: View {
                     showsNewAlbum = true
                 } label: {
                     Label("Create an album to organize private media", systemImage: "rectangle.stack.badge.plus")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
+                        .labelStyle(QuietSettingsLabelStyle())
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(QuietFrameTheme.accent)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, minHeight: QuietFrameTheme.controlHeight, alignment: .leading)
+                        .padding(QuietFrameTheme.contentSpacing)
                 }
                 .buttonStyle(.plain)
                 .quietCard()
             } else {
-                LazyVGrid(columns: columns, spacing: 14) {
+                LazyVGrid(columns: columns, spacing: QuietFrameTheme.contentSpacing) {
                     ForEach(sortedAlbums) { album in
                         NavigationLink {
                             GalleryBrowser(
@@ -177,22 +199,21 @@ struct AlbumsScreen: View {
                 initialQuery: GalleryQuery(collection: collection)
             )
         } label: {
-            VStack(alignment: .leading, spacing: 20) {
-                Image(systemName: collection.symbolName)
-                    .font(.title2)
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(.white)
-                Spacer(minLength: 4)
-                Text(collection.title)
-                    .font(.headline)
-                Text(count, format: .number)
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.68))
+            VStack(alignment: .leading, spacing: QuietFrameTheme.contentSpacing) {
+                QuietSymbol(systemName: collection.symbolName)
+                VStack(alignment: .leading, spacing: QuietFrameTheme.compactSpacing) {
+                    Text(collection.title)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Text(count, format: .number)
+                        .font(.title2.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .fixedSize(horizontal: false, vertical: true)
             }
-            .foregroundStyle(.white)
             .frame(maxWidth: .infinity, minHeight: 126, alignment: .leading)
-            .padding()
-            .background(QuietFrameTheme.vaultGradient, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .padding(QuietFrameTheme.contentSpacing)
+            .quietCard()
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
@@ -283,9 +304,14 @@ private struct AlbumReorderSheet: View {
             List {
                 ForEach(albums) { album in
                     Label(album.name, systemImage: "rectangle.stack")
+                        .labelStyle(QuietSettingsLabelStyle())
+                        .fixedSize(horizontal: false, vertical: true)
+                        .listRowBackground(QuietFrameTheme.elevated)
                 }
                 .onMove { albums.move(fromOffsets: $0, toOffset: $1) }
             }
+            .listStyle(.insetGrouped)
+            .quietFormStyle()
             .environment(\.editMode, .constant(.active))
             .navigationTitle("Reorder Albums")
             .navigationBarTitleDisplayMode(.inline)
@@ -330,7 +356,7 @@ private struct AlbumCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: QuietFrameTheme.contentSpacing) {
             Group {
                 if let cover {
                     MediaThumbnailView(
@@ -339,26 +365,30 @@ private struct AlbumCard: View {
                         thumbnailAspectRatio: 1.35
                     )
                 } else {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(.quaternary)
+                    RoundedRectangle(cornerRadius: QuietFrameTheme.compactCornerRadius, style: .continuous)
+                        .fill(QuietFrameTheme.inset)
                         .aspectRatio(1.35, contentMode: .fit)
                         .overlay {
-                            Image(systemName: "rectangle.stack")
-                                .font(.largeTitle)
-                                .foregroundStyle(.secondary)
+                            QuietSymbol(systemName: "rectangle.stack")
                         }
                 }
             }
             .frame(maxWidth: .infinity)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
-            Text(album.name)
-                .font(.headline)
-                .lineLimit(1)
-            Text("\(album.activeMediaCount) item\(album.activeMediaCount == 1 ? "" : "s")")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: QuietFrameTheme.compactSpacing) {
+                Text(album.name)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                Text("\(album.activeMediaCount) item\(album.activeMediaCount == 1 ? "" : "s")")
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, QuietFrameTheme.compactSpacing)
+            .padding(.bottom, QuietFrameTheme.compactSpacing)
         }
+        .padding(QuietFrameTheme.compactSpacing)
+        .quietCard()
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(album.name), \(album.activeMediaCount) items")
     }

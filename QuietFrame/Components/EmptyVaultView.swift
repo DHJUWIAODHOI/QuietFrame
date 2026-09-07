@@ -1,40 +1,32 @@
 import SwiftUI
 
 struct EmptyVaultView: View {
+    let title: String
+    let message: String
+    let actionTitle: String
     let action: () -> Void
 
     var body: some View {
-        VStack(spacing: 20) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .fill(QuietFrameTheme.vaultGradient)
-                    .frame(width: 116, height: 116)
-                Image(systemName: "photo.stack.fill")
-                    .font(.system(size: 42, weight: .medium))
-                    .foregroundStyle(.white)
-            }
-            .accessibilityHidden(true)
-
-            VStack(spacing: 8) {
-                Text("A quieter camera roll")
-                    .font(.title2.weight(.semibold))
-                Text("Choose photos and videos to protect. Your media stays encrypted on this device.")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 340)
-            }
+        VStack(spacing: QuietFrameTheme.sectionSpacing) {
+            QuietIntroduction(
+                title: title,
+                message: message,
+                systemImage: "photo.on.rectangle.angled"
+            )
 
             Button(action: action) {
-                Label("Choose Media", systemImage: "plus")
+                Label(actionTitle, systemImage: "plus")
                     .font(.headline)
-                    .frame(maxWidth: 280)
-                    .padding(.vertical, 12)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, minHeight: QuietFrameTheme.controlHeight)
             }
             .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.roundedRectangle(radius: QuietFrameTheme.compactCornerRadius))
             .controlSize(.large)
             .accessibilityIdentifier("choose-media")
         }
+        .frame(maxWidth: QuietFrameTheme.readableWidth)
         .padding(QuietFrameTheme.pagePadding)
+        .frame(maxWidth: .infinity)
     }
 }

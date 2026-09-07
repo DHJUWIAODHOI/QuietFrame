@@ -14,7 +14,7 @@ struct RootView: View {
                 .modelContainer(dependencies.modelContainer)
                 .environment(dependencies)
         case .failed(let message):
-            VStack(spacing: 18) {
+            VStack(spacing: QuietFrameTheme.contentSpacing) {
                 ContentUnavailableView(
                     "Vault Unavailable",
                     systemImage: "externaldrive.badge.exclamationmark",
@@ -22,8 +22,12 @@ struct RootView: View {
                 )
                 Button("Try Again") { Task { await appModel.retryBootstrap() } }
                     .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
             }
-            .padding()
+            .frame(maxWidth: QuietFrameTheme.readableWidth)
+            .padding(QuietFrameTheme.pagePadding)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(QuietFrameTheme.background)
             .accessibilityIdentifier("migration-error")
         }
     }
@@ -148,7 +152,7 @@ private struct RetryRequiredView: View {
     let coordinator: VaultLockCoordinator
 
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: QuietFrameTheme.contentSpacing) {
             ContentUnavailableView(
                 "QuietFrame Couldn't Open",
                 systemImage: "arrow.clockwise.circle",
@@ -156,7 +160,12 @@ private struct RetryRequiredView: View {
             )
             Button("Try Again") { Task { await coordinator.retryOpeningVault() } }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.large)
         }
+        .frame(maxWidth: QuietFrameTheme.readableWidth)
+        .padding(QuietFrameTheme.pagePadding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(QuietFrameTheme.background)
         .accessibilityIdentifier("vault-retry-required")
     }
 }
@@ -164,8 +173,9 @@ private struct RetryRequiredView: View {
 struct LaunchView: View {
     var body: some View {
         ZStack {
+            // Opaque launch cover; must stay opaque for privacy.
             QuietFrameTheme.vaultGradient.ignoresSafeArea()
-            VStack(spacing: 16) {
+            VStack(spacing: QuietFrameTheme.contentSpacing) {
                 Image(systemName: "viewfinder.circle.fill")
                     .font(.system(size: 54, weight: .medium))
                     .symbolRenderingMode(.hierarchical)
@@ -185,7 +195,7 @@ private struct RecoveryRequiredView: View {
     @State private var showsReset = false
 
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: QuietFrameTheme.contentSpacing) {
             ContentUnavailableView(
                 "Encryption Key Unavailable",
                 systemImage: "key.slash",
@@ -193,7 +203,12 @@ private struct RecoveryRequiredView: View {
             )
             Button("Erase Unrecoverable Vault", role: .destructive) { showsReset = true }
                 .buttonStyle(.bordered)
+                .controlSize(.large)
         }
+        .frame(maxWidth: QuietFrameTheme.readableWidth)
+        .padding(QuietFrameTheme.pagePadding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(QuietFrameTheme.background)
         .sheet(isPresented: $showsReset) {
             RecoveryResetView(coordinator: coordinator)
         }

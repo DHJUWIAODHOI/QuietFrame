@@ -114,7 +114,7 @@ private struct GalleryBrowserContent: View {
             }
         }
         .sheet(isPresented: $showsAlbumDestinations) {
-            AlbumDestinationSheet(
+            AlbumDestinationPicker(
                 albums: albums,
                 currentAlbumID: initialQuery.albumID
             ) { albumID in
@@ -233,37 +233,69 @@ private struct GalleryBrowserContent: View {
     @ViewBuilder
     private var selectionBar: some View {
         if galleryViewModel.isSelecting {
-            HStack {
-                Text("\(galleryViewModel.selectedIDs.count) Selected")
-                    .font(.subheadline.weight(.semibold).monospacedDigit())
-                Spacer()
-                Button("Favorite", systemImage: "heart") {
-                    selectedItems.forEach {
-                        galleryViewModel.setFavorite(mediaID: $0.id, isFavorite: true)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: QuietFrameTheme.contentSpacing) {
+                    selectionCount.fixedSize()
+                    Spacer(minLength: QuietFrameTheme.contentSpacing)
+                    selectionActions
+                }
+                .padding(.horizontal, QuietFrameTheme.pagePadding)
+
+                VStack(alignment: .leading, spacing: QuietFrameTheme.compactSpacing) {
+                    selectionCount
+                        .padding(.horizontal, QuietFrameTheme.pagePadding)
+                    ScrollView(.horizontal) {
+                        selectionActions
+                            .padding(.horizontal, QuietFrameTheme.pagePadding)
                     }
-                }
-                .disabled(galleryViewModel.selectedIDs.isEmpty)
-                Button("Move", systemImage: "folder") { showsAlbumDestinations = true }
-                    .disabled(galleryViewModel.selectedIDs.isEmpty)
-                Menu {
-                    Button("Share", systemImage: "square.and.arrow.up") { shareSelection() }
-                    Button("Save to Photos", systemImage: "photo.badge.arrow.down") { saveSelectionToPhotos() }
-                } label: {
-                    Label("Export", systemImage: "square.and.arrow.up")
-                }
-                .disabled(galleryViewModel.selectedIDs.isEmpty || isExporting)
-                Button("Trash", systemImage: "trash", role: .destructive) {
-                    confirmsMoveToTrash = true
-                }
-                .disabled(galleryViewModel.selectedIDs.isEmpty)
-                if let albumID = initialQuery.albumID, galleryViewModel.selectedIDs.count == 1 {
-                    Button("Cover", systemImage: "photo") { setCover(albumID: albumID) }
+                    .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
                 }
             }
-            .padding(.horizontal, 16)
-            .frame(minHeight: 52)
-            .background(.bar)
+            .padding(.vertical, QuietFrameTheme.compactSpacing)
+            .background(QuietFrameTheme.elevated)
+            .overlay(alignment: .top) {
+                Rectangle().fill(QuietFrameTheme.separator).frame(height: 0.5)
+            }
         }
+    }
+
+    private var selectionCount: some View {
+        Text("\(galleryViewModel.selectedIDs.count) Selected")
+            .font(.subheadline.weight(.semibold).monospacedDigit())
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var selectionActions: some View {
+        HStack(spacing: QuietFrameTheme.compactSpacing) {
+            Button("Favorite", systemImage: "heart") {
+                selectedItems.forEach {
+                    galleryViewModel.setFavorite(mediaID: $0.id, isFavorite: true)
+                }
+            }
+            .disabled(galleryViewModel.selectedIDs.isEmpty)
+            Button("Move", systemImage: "folder") { showsAlbumDestinations = true }
+                .disabled(galleryViewModel.selectedIDs.isEmpty)
+            Menu {
+                Button("Share", systemImage: "square.and.arrow.up") { shareSelection() }
+                Button("Save to Photos", systemImage: "photo.badge.arrow.down") { saveSelectionToPhotos() }
+            } label: {
+                Label("Export", systemImage: "square.and.arrow.up")
+            }
+            .disabled(galleryViewModel.selectedIDs.isEmpty || isExporting)
+            Button("Trash", systemImage: "trash", role: .destructive) {
+                confirmsMoveToTrash = true
+            }
+            .disabled(galleryViewModel.selectedIDs.isEmpty)
+            if let albumID = initialQuery.albumID, galleryViewModel.selectedIDs.count == 1 {
+                Button("Cover", systemImage: "photo") { setCover(albumID: albumID) }
+            }
+        }
+        .font(.subheadline.weight(.semibold))
+        .labelStyle(.titleAndIcon)
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.roundedRectangle(radius: QuietFrameTheme.compactCornerRadius))
+        .controlSize(.large)
+        .fixedSize()
     }
 
     private var filterBinding: Binding<MediaFilter> {
@@ -400,40 +432,4 @@ private struct GalleryBrowserContent: View {
 struct MediaViewerRequest: Identifiable {
     let mediaID: UUID
     var id: UUID { mediaID }
-}
-
-private struct AlbumDestinationSheet: View {
-    let albums: [VaultAlbum]
-    let currentAlbumID: UUID?
-    let choose: (UUID?) -> Void
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Button {
-                    choose(nil)
-                } label: {
-                    Label("No Album", systemImage: "rectangle.stack.badge.minus")
-                }
-                .disabled(currentAlbumID == nil)
-
-                ForEach(albums) { album in
-                    Button {
-                        choose(album.id)
-                    } label: {
-                        HStack {
-                            Label(album.name, systemImage: "rectangle.stack")
-                            Spacer()
-                            if album.id == currentAlbumID {
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                    .disabled(album.id == currentAlbumID)
-                }
-            }
-            .navigationTitle("Move to Album")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-    }
 }

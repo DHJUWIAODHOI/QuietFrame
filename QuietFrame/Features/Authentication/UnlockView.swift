@@ -10,73 +10,83 @@ struct UnlockView: View {
     @State private var showsRecoveryReset = false
 
     var body: some View {
-        ZStack {
-            QuietFrameTheme.vaultGradient.ignoresSafeArea()
-            GeometryReader { proxy in
-                ScrollView {
-                    VStack(spacing: 30) {
-                        Spacer(minLength: 24)
-                        Image(systemName: "viewfinder.circle.fill")
-                            .font(.system(size: 58, weight: .medium))
-                            .symbolRenderingMode(.hierarchical)
-                            .accessibilityHidden(true)
-                        VStack(spacing: 8) {
-                            Text("QuietFrame")
-                                .font(.largeTitle.weight(.bold))
-                            Text("Enter your passcode to continue")
-                                .foregroundStyle(.white.opacity(0.72))
-                        }
-                        SixDigitPasscodeField(
-                            label: "Six-digit QuietFrame passcode",
-                            passcode: $passcode,
-                            isDisabled: coordinator.isWorking || isLockedOut
-                        ) {
-                            Task {
-                                await coordinator.unlock(passcode: passcode)
-                                if coordinator.state != .unlocked { passcode = "" }
-                            }
-                        }
-
-                        if coordinator.biometricsEnabled, coordinator.biometricKind != .none {
-                            Button {
-                                Task { await coordinator.unlockWithBiometrics() }
-                            } label: {
-                                Label(coordinator.biometricButtonTitle, systemImage: biometricSymbol)
-                            }
-                            .buttonStyle(.bordered)
-                            .tint(.white)
-                            .disabled(coordinator.isWorking)
-                            .accessibilityIdentifier("biometric-unlock")
-                        }
-
-                        if let lockoutDate = coordinator.lockoutDate, lockoutDate > Date() {
-                            TimelineView(.periodic(from: Date(), by: 1)) { context in
-                                Text(lockoutText(at: context.date, until: lockoutDate))
-                                    .font(.footnote.monospacedDigit())
-                                    .foregroundStyle(.orange)
-                            }
-                        } else if let message = coordinator.userMessage {
-                            Text(message)
-                                .font(.footnote)
-                                .foregroundStyle(.red.opacity(0.92))
-                                .multilineTextAlignment(.center)
-                                .accessibilityLabel("Error: \(message)")
-                        }
-                        Spacer(minLength: 24)
-                        Button("Forgot Passcode?") {
-                            confirmsForgottenPasscode = true
-                        }
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.8))
-                        Text("Media remains encrypted on this device")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.56))
+        AuthenticationLayout {
+            Spacer(minLength: QuietFrameTheme.contentSpacing)
+            QuietIntroduction(
+                title: "QuietFrame",
+                message: "Enter your passcode to continue",
+                systemImage: "viewfinder.circle.fill"
+            )
+            VStack(spacing: QuietFrameTheme.contentSpacing) {
+                SixDigitPasscodeField(
+                    label: "Six-digit QuietFrame passcode",
+                    passcode: $passcode,
+                    isDisabled: coordinator.isWorking || isLockedOut
+                ) {
+                    Task {
+                        await coordinator.unlock(passcode: passcode)
+                        if coordinator.state != .unlocked { passcode = "" }
                     }
-                    .frame(minHeight: proxy.size.height)
-                    .padding(28)
-                    .foregroundStyle(.white)
+                }
+
+                if coordinator.biometricsEnabled, coordinator.biometricKind != .none {
+                    Button {
+                        Task { await coordinator.unlockWithBiometrics() }
+                    } label: {
+                        Label(coordinator.biometricButtonTitle, systemImage: biometricSymbol)
+                            .frame(maxWidth: .infinity, minHeight: QuietFrameTheme.controlHeight)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(coordinator.isWorking)
+                    .accessibilityIdentifier("biometric-unlock")
                 }
             }
+            .padding(QuietFrameTheme.contentSpacing)
+            .quietCard()
+
+            if let lockoutDate = coordinator.lockoutDate, lockoutDate > Date() {
+                TimelineView(.periodic(from: Date(), by: 1)) { context in
+                    Label {
+                        Text(lockoutText(at: context.date, until: lockoutDate))
+                            .foregroundStyle(.primary)
+                    } icon: {
+                        Image(systemName: "clock")
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                    }
+                    .font(.callout.monospacedDigit())
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(QuietFrameTheme.contentSpacing)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .quietCard()
+                }
+            } else if let message = coordinator.userMessage {
+                AuthenticationErrorMessage(message: message)
+                    .padding(QuietFrameTheme.contentSpacing)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .quietCard()
+                    .accessibilityLabel("Error: \(message)")
+            }
+            Spacer(minLength: QuietFrameTheme.contentSpacing)
+            VStack(spacing: QuietFrameTheme.compactSpacing) {
+                Button {
+                    confirmsForgottenPasscode = true
+                } label: {
+                    Text("Forgot Passcode?")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: QuietFrameTheme.controlHeight)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(QuietFrameTheme.accent)
+                Text("Media remains encrypted on this device")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
         }
         .task {
             guard !attemptedBiometrics,

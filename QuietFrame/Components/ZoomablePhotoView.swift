@@ -75,8 +75,10 @@ struct ZoomablePhotoView: UIViewRepresentable {
 
         @objc func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
             guard let scrollView else { return }
+            // Respect Reduce Motion without changing zoom targets.
+            let animated = !UIAccessibility.isReduceMotionEnabled
             if scrollView.zoomScale > scrollView.minimumZoomScale {
-                scrollView.setZoomScale(scrollView.minimumZoomScale, animated: true)
+                scrollView.setZoomScale(scrollView.minimumZoomScale, animated: animated)
                 return
             }
 
@@ -90,7 +92,7 @@ struct ZoomablePhotoView: UIViewRepresentable {
                 width: width,
                 height: height
             )
-            scrollView.zoom(to: rect, animated: true)
+            scrollView.zoom(to: rect, animated: animated)
         }
     }
 }

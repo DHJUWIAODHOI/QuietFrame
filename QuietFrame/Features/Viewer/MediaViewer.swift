@@ -11,6 +11,8 @@ struct MediaViewer: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Query(sort: \VaultAlbum.position) private var albums: [VaultAlbum]
     @State private var selectedMediaID: UUID
     @State private var controlsAreVisible = true
@@ -46,7 +48,7 @@ struct MediaViewer: View {
                 .presentationDetents([.medium, .large])
         }
         .sheet(item: $movingMedia) { media in
-            ViewerAlbumPicker(albums: albums, currentAlbumID: media.album?.id) { albumID in
+            AlbumDestinationPicker(albums: albums, currentAlbumID: media.album?.id) { albumID in
                 move(media: media, to: albumID)
                 movingMedia = nil
             }
@@ -125,38 +127,51 @@ struct MediaViewer: View {
 
     private var controls: some View {
         VStack {
-            HStack(spacing: 14) {
+            HStack(spacing: QuietFrameTheme.compactSpacing) {
                 Button {
                     dismiss()
                 } label: {
                     Image(systemName: "xmark")
-                        .frame(width: 44, height: 44)
-                        .background(.black.opacity(0.48), in: Circle())
+                        .font(.body.weight(.medium))
+                        .frame(minWidth: QuietFrameTheme.controlHeight, minHeight: QuietFrameTheme.controlHeight)
+                        .background(.regularMaterial, in: Circle())
+                        .contentShape(Rectangle())
                 }
                 .accessibilityLabel("Close viewer")
                 Spacer()
                 if let selectedMedia {
                     Text(selectedMedia.displayName)
                         .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+                        .multilineTextAlignment(.center)
+                        .shadow(color: .black.opacity(0.8), radius: 4)
                 }
                 Spacer()
                 Button {
                     informationMedia = selectedMedia
                 } label: {
                     Image(systemName: "info.circle")
-                        .frame(width: 44, height: 44)
-                        .background(.black.opacity(0.48), in: Circle())
+                        .font(.body.weight(.medium))
+                        .frame(minWidth: QuietFrameTheme.controlHeight, minHeight: QuietFrameTheme.controlHeight)
+                        .background(.regularMaterial, in: Circle())
+                        .contentShape(Rectangle())
                 }
                 .accessibilityLabel("Media information")
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
+            .padding(.horizontal, QuietFrameTheme.pagePadding)
+            .padding(.top, QuietFrameTheme.compactSpacing)
 
             Spacer()
 
             if let selectedMedia {
-                HStack(spacing: 12) {
+                LazyVGrid(
+                    columns: Array(
+                        repeating: GridItem(.flexible(), spacing: QuietFrameTheme.compactSpacing),
+                        count: dynamicTypeSize.isAccessibilitySize && verticalSizeClass != .compact
+                            ? 2 : (selectedMedia.isTrashed ? 3 : 4)
+                    ),
+                    spacing: QuietFrameTheme.compactSpacing
+                ) {
                     if selectedMedia.isTrashed {
                         viewerButton(title: "Restore", symbol: "arrow.uturn.backward") {
                             restoreSelectedMedia()
@@ -179,13 +194,7 @@ struct MediaViewer: View {
                         Button("Share", systemImage: "square.and.arrow.up") { share(selectedMedia) }
                         Button("Save to Photos", systemImage: "photo.badge.arrow.down") { saveToPhotos(selectedMedia) }
                     } label: {
-                        VStack(spacing: 5) {
-                            Image(systemName: "square.and.arrow.up")
-                                .font(.title3)
-                            Text("Export")
-                                .font(.caption)
-                        }
-                        .frame(minWidth: 64, minHeight: 44)
+                        viewerActionLabel(title: "Export", symbol: "square.and.arrow.up")
                     }
                     .disabled(isWorking)
                     if !selectedMedia.isTrashed {
@@ -194,13 +203,16 @@ struct MediaViewer: View {
                         }
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 14)
-                .background(.ultraThinMaterial, in: Capsule())
-                .padding(.bottom, 18)
+                .padding(QuietFrameTheme.compactSpacing)
+                .frame(maxWidth: QuietFrameTheme.readableWidth)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: QuietFrameTheme.cornerRadius))
+                .padding(.horizontal, QuietFrameTheme.pagePadding)
+                .padding(.bottom, QuietFrameTheme.contentSpacing)
             }
         }
         .foregroundStyle(.white)
+        .tint(.white)
+        .environment(\.colorScheme, .dark)
     }
 
     private func viewerButton(
@@ -209,14 +221,22 @@ struct MediaViewer: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            VStack(spacing: 5) {
-                Image(systemName: symbol)
-                    .font(.title3)
-                Text(title)
-                    .font(.caption)
-            }
-            .frame(minWidth: 64, minHeight: 44)
+            viewerActionLabel(title: title, symbol: symbol)
         }
+    }
+
+    private func viewerActionLabel(title: String, symbol: String) -> some View {
+        VStack(spacing: QuietFrameTheme.compactSpacing) {
+            Image(systemName: symbol)
+                .font(.title3)
+            Text(title)
+                .font(.caption)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, QuietFrameTheme.compactSpacing)
+        .frame(minWidth: QuietFrameTheme.controlHeight, maxWidth: .infinity, minHeight: QuietFrameTheme.controlHeight)
+        .contentShape(Rectangle())
     }
 
     private var messageIsPresented: Binding<Bool> {
@@ -343,35 +363,6 @@ struct MediaViewer: View {
                     ?? VaultError.fileOperationFailed.localizedDescription
                 isWorking = false
             }
-        }
-    }
-}
-
-private struct ViewerAlbumPicker: View {
-    let albums: [VaultAlbum]
-    let currentAlbumID: UUID?
-    let choose: (UUID?) -> Void
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Button("No Album", systemImage: "rectangle.stack.badge.minus") { choose(nil) }
-                    .disabled(currentAlbumID == nil)
-                ForEach(albums) { album in
-                    Button {
-                        choose(album.id)
-                    } label: {
-                        HStack {
-                            Label(album.name, systemImage: "rectangle.stack")
-                            Spacer()
-                            if currentAlbumID == album.id { Image(systemName: "checkmark") }
-                        }
-                    }
-                    .disabled(currentAlbumID == album.id)
-                }
-            }
-            .navigationTitle("Move to Album")
-            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }

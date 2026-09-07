@@ -22,7 +22,7 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
-      - name: Run import unit tests
+      - name: Run full tests
         run: |
           set -o pipefail
           xcodebuild \
@@ -34,16 +34,6 @@ jobs:
             -destination-timeout 120 \
             CODE_SIGNING_ALLOWED=NO \
             test \
-            -only-testing:QuietFrameTests/ImportSummaryTests \
-            -only-testing:QuietFrameTests/MediaImportServiceTests \
-            -only-testing:QuietFrameTests/PhotoLibraryAccessTests \
-            -only-testing:QuietFrameTests/GallerySortingTests \
-            -only-testing:QuietFrameTests/VaultLockCoordinatorTests \
-            -only-testing:QuietFrameTests/StorageReconciliationServiceTests \
-            -only-testing:QuietFrameTests/TrashServiceTests \
-            -only-testing:QuietFrameTests/AlbumServiceTests \
-            -only-testing:QuietFrameTests/MediaExportServiceTests \
-            -only-testing:QuietFrameTests/MediaViewerPagingTests \
             | tee "$RUNNER_TEMP/xctest.log"
 
       - name: Archive without signing

@@ -18,14 +18,22 @@ struct SixDigitPasscodeField: View {
             .tint(.clear)
             .frame(height: 64)
             .overlay {
-                HStack(spacing: 12) {
+                HStack(spacing: QuietFrameTheme.compactSpacing) {
                     ForEach(0..<6, id: \.self) { index in
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(index < passcode.count ? Color.accentColor : Color.secondary.opacity(0.12))
+                        let isCurrentDigit = isFocused && !isDisabled && index == passcode.count
+                        RoundedRectangle(cornerRadius: QuietFrameTheme.compactCornerRadius, style: .continuous)
+                            .fill(index < passcode.count ? QuietFrameTheme.accent.opacity(0.14) : QuietFrameTheme.inset)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: QuietFrameTheme.compactCornerRadius, style: .continuous)
+                                    .strokeBorder(
+                                        isCurrentDigit || index < passcode.count ? QuietFrameTheme.accent : Color.secondary,
+                                        lineWidth: isCurrentDigit ? 2 : 1
+                                    )
+                            }
                             .overlay {
                                 if index < passcode.count {
                                     Circle()
-                                        .fill(.white)
+                                        .fill(.primary)
                                         .frame(width: 9, height: 9)
                                 }
                             }
@@ -33,7 +41,9 @@ struct SixDigitPasscodeField: View {
                     }
                 }
                 .frame(maxWidth: 312)
+                .opacity(isDisabled ? 0.5 : 1)
                 .allowsHitTesting(false)
+                .accessibilityHidden(true)
             }
             .onChange(of: passcode) { oldValue, newValue in
                 let filtered = newValue.filter { character in

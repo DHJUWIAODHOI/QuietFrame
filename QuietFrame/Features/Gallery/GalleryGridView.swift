@@ -11,9 +11,17 @@ struct GalleryGridView: View {
     let open: (VaultMedia) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: minimumCellWidth, maximum: minimumCellWidth * 1.45), spacing: 3)]
+        [GridItem(
+            .adaptive(
+                minimum: dynamicTypeSize.isAccessibilitySize ? 280 : minimumCellWidth,
+                maximum: dynamicTypeSize.isAccessibilitySize ? QuietFrameTheme.readableWidth : minimumCellWidth * 1.45
+            ),
+            spacing: QuietFrameTheme.compactSpacing / 2,
+            alignment: .top
+        )]
     }
 
     var body: some View {
@@ -24,7 +32,7 @@ struct GalleryGridView: View {
                 emptyView
             } else {
                 ScrollView {
-                    LazyVGrid(columns: columns, spacing: 3) {
+                    LazyVGrid(columns: columns, spacing: QuietFrameTheme.compactSpacing / 2) {
                         ForEach(viewModel.items) { media in
                             Button {
                                 if viewModel.isSelecting {
@@ -63,7 +71,7 @@ struct GalleryGridView: View {
                             }
                         }
                     }
-                    .padding(.horizontal, 3)
+                    .padding(QuietFrameTheme.compactSpacing / 2)
 
                     if viewModel.isLoading {
                         ProgressView()
@@ -74,40 +82,57 @@ struct GalleryGridView: View {
                 .refreshable { await viewModel.loadInitial() }
             }
         }
+        .background(QuietFrameTheme.background)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: viewModel.items.count)
     }
 
     private var loadingGrid: some View {
         ScrollView {
-            LazyVGrid(columns: columns, spacing: 3) {
+            LazyVGrid(columns: columns, spacing: QuietFrameTheme.compactSpacing / 2) {
                 ForEach(0..<18, id: \.self) { _ in
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(.quaternary)
+                    RoundedRectangle(cornerRadius: QuietFrameTheme.compactCornerRadius, style: .continuous)
+                        .fill(QuietFrameTheme.inset)
                         .aspectRatio(1, contentMode: .fit)
                         .accessibilityHidden(true)
                 }
             }
-            .padding(3)
+            .padding(QuietFrameTheme.compactSpacing / 2)
         }
         .overlay { ProgressView().accessibilityLabel("Loading vault") }
     }
 
     @ViewBuilder
     private var emptyView: some View {
-        VStack(spacing: 18) {
-            ContentUnavailableView(
-                emptyTitle,
-                systemImage: "photo.on.rectangle.angled",
-                description: Text(viewModel.errorMessage ?? emptyDescription)
-            )
-            if let emptyActionTitle, let emptyAction {
-                Button(emptyActionTitle, action: emptyAction)
-                    .buttonStyle(.borderedProminent)
-            } else if viewModel.errorMessage != nil {
-                Button("Try Again") { Task { await viewModel.loadInitial() } }
-                    .buttonStyle(.bordered)
+        GeometryReader { geometry in
+            ScrollView {
+                Group {
+                    if let emptyActionTitle, let emptyAction {
+                        EmptyVaultView(
+                            title: emptyTitle,
+                            message: viewModel.errorMessage ?? emptyDescription,
+                            actionTitle: emptyActionTitle,
+                            action: emptyAction
+                        )
+                    } else {
+                        VStack(spacing: QuietFrameTheme.contentSpacing) {
+                            ContentUnavailableView(
+                                emptyTitle,
+                                systemImage: "photo.on.rectangle.angled",
+                                description: Text(viewModel.errorMessage ?? emptyDescription)
+                            )
+                            if viewModel.errorMessage != nil {
+                                Button("Try Again") { Task { await viewModel.loadInitial() } }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.large)
+                            }
+                        }
+                        .padding(QuietFrameTheme.pagePadding)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: geometry.size.height)
             }
+            .scrollBounceBehavior(.basedOnSize)
         }
-        .padding()
     }
 }

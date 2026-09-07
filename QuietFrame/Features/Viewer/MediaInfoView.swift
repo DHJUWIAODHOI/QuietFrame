@@ -38,6 +38,8 @@ struct MediaInfoView: View {
                     }
                 }
             }
+            .labeledContentStyle(MediaInfoRowStyle())
+            .quietFormStyle()
             .navigationTitle("Media Information")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -64,5 +66,26 @@ struct MediaInfoView: View {
             return String(format: "%d:%02d:%02d", seconds / 3_600, (seconds % 3_600) / 60, seconds % 60)
         }
         return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+}
+
+private struct MediaInfoRowStyle: LabeledContentStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        let label = configuration.label.foregroundStyle(.secondary)
+        let value = configuration.content.foregroundStyle(.primary)
+
+        return ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: QuietFrameTheme.contentSpacing) {
+                label.fixedSize()
+                Spacer(minLength: QuietFrameTheme.compactSpacing)
+                value.fixedSize()
+            }
+            VStack(alignment: .leading, spacing: QuietFrameTheme.compactSpacing) {
+                label
+                value
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 }

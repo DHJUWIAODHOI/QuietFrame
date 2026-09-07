@@ -4,17 +4,14 @@ struct PrivacyInformationView: View {
     var body: some View {
         List {
             Section {
-                VStack(alignment: .leading, spacing: 14) {
-                    Image(systemName: "hand.raised.square.fill")
-                        .font(.system(size: 44))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(.tint)
-                    Text("Private by construction")
-                        .font(.title2.bold())
-                    Text("QuietFrame has no account system, analytics SDK, advertising SDK, cloud service, or external media server. Your vault remains in this app's sandbox on this device.")
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 8)
+                QuietIntroduction(
+                    title: "Private by construction",
+                    message: "QuietFrame has no account system, analytics SDK, advertising SDK, cloud service, or external media server. Your vault remains in this app's sandbox on this device.",
+                    systemImage: "hand.raised.square.fill"
+                )
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, QuietFrameTheme.contentSpacing)
+                .listRowBackground(Color.clear)
             }
 
             privacyRow(
@@ -43,26 +40,32 @@ struct PrivacyInformationView: View {
                 text: "Exported media is decrypted into protected random temporary files, then deleted when the native activity completes, is cancelled, or the app locks."
             )
         }
+        .listStyle(.insetGrouped)
+        .listSectionSpacing(QuietFrameTheme.sectionSpacing)
+        .labelStyle(QuietSettingsLabelStyle())
+        .quietFormStyle()
+        .frame(maxWidth: QuietFrameTheme.readableWidth + 2 * QuietFrameTheme.pagePadding)
+        .frame(maxWidth: .infinity)
+        .background(QuietFrameTheme.background)
         .navigationTitle("Privacy")
         .navigationBarTitleDisplayMode(.inline)
     }
 
     private func privacyRow(_ title: String, symbol: String, text: String) -> some View {
-        HStack(alignment: .top, spacing: 14) {
-            Image(systemName: symbol)
-                .font(.title3)
-                .frame(width: 32)
-                .foregroundStyle(.tint)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: QuietFrameTheme.compactSpacing) {
+            Label {
                 Text(title)
                     .font(.headline)
-                Text(text)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+            } icon: {
+                Image(systemName: symbol)
+                    .foregroundStyle(.tint)
             }
+            Text(text)
+                .font(.body)
+                .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 5)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.vertical, QuietFrameTheme.contentSpacing)
         .accessibilityElement(children: .combine)
     }
 }

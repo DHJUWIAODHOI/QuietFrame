@@ -11,25 +11,42 @@ struct RemovePasscodeView: View {
         NavigationStack {
             Form {
                 Section {
-                    Text("QuietFrame will open without asking for a passcode whenever this iPhone is unlocked. Media remains encrypted with a random key in the iOS Keychain.")
-                        .foregroundStyle(.secondary)
+                    QuietIntroduction(
+                        title: "Turn Off Passcode",
+                        message: "QuietFrame will open without asking for a passcode whenever this iPhone is unlocked. Media remains encrypted with a random key in the iOS Keychain.",
+                        systemImage: "lock.open"
+                    )
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, QuietFrameTheme.contentSpacing)
+                    .listRowBackground(Color.clear)
+                }
+
+                Section {
                     Toggle("I understand anyone using my unlocked iPhone can open the vault", isOn: $understandsRisk)
+                        .fixedSize(horizontal: false, vertical: true)
                     SecureField("Current six-digit passcode", text: $currentPasscode)
                         .keyboardType(.numberPad)
                         .onChange(of: currentPasscode) { _, value in
                             currentPasscode = String(value.filter { $0 >= "0" && $0 <= "9" }.prefix(6))
                         }
+                        .frame(minHeight: QuietFrameTheme.controlHeight)
                 }
 
                 if let message {
-                    Section { Text(message).foregroundStyle(.red) }
+                    Section { AuthenticationErrorMessage(message: message) }
                 }
 
                 Section {
-                    Button("Turn Off App Passcode", role: .destructive) { removePasscode() }
-                        .disabled(!understandsRisk || currentPasscode.count != 6)
+                    Button(role: .destructive) { removePasscode() } label: {
+                        Text("Turn Off App Passcode")
+                            .frame(maxWidth: .infinity, minHeight: QuietFrameTheme.controlHeight, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .disabled(!understandsRisk || currentPasscode.count != 6)
                 }
             }
+            .listSectionSpacing(QuietFrameTheme.sectionSpacing)
+            .quietFormStyle()
             .navigationTitle("Turn Off Passcode")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

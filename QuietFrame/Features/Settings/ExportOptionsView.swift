@@ -16,10 +16,19 @@ struct ExportOptionsView: View {
 
             Section {
                 Text("QuietFrame does not alter media during export. Native share destinations may process a file according to their own policies after you hand it off.")
-                    .font(.subheadline)
+                    .font(.body)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, QuietFrameTheme.compactSpacing)
             }
         }
+        .listStyle(.insetGrouped)
+        .listSectionSpacing(QuietFrameTheme.sectionSpacing)
+        .labeledContentStyle(SettingsValueStyle())
+        .quietFormStyle()
+        .frame(maxWidth: QuietFrameTheme.readableWidth + 2 * QuietFrameTheme.pagePadding)
+        .frame(maxWidth: .infinity)
+        .background(QuietFrameTheme.background)
         .navigationTitle("Export Behavior")
         .navigationBarTitleDisplayMode(.inline)
     }

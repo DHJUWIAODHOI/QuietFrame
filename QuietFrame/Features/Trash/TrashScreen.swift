@@ -35,13 +35,21 @@ private struct TrashScreenContent: View {
     var body: some View {
         VStack(spacing: 0) {
             if !viewModel.items.isEmpty {
-                Text("Items are permanently deleted after \(settingsRecords.first?.trashRetentionDays ?? 30) days.")
+                Label {
+                    Text("Items are permanently deleted after \(settingsRecords.first?.trashRetentionDays ?? 30) days.")
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "clock")
+                        .foregroundStyle(QuietFrameTheme.accent)
+                        .accessibilityHidden(true)
+                }
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(.bar)
+                    .padding(QuietFrameTheme.contentSpacing)
+                    .quietCard()
+                    .padding(.horizontal, QuietFrameTheme.pagePadding)
+                    .padding(.vertical, QuietFrameTheme.compactSpacing)
             }
             GalleryGridView(
                 viewModel: viewModel,
@@ -52,6 +60,7 @@ private struct TrashScreenContent: View {
                 open: { media in viewerRequest = MediaViewerRequest(mediaID: media.id) }
             )
         }
+        .background(QuietFrameTheme.background)
         .navigationTitle("Trash")
         .searchable(text: searchBinding, prompt: "Search Trash")
         .toolbar { trashToolbar }
@@ -137,21 +146,53 @@ private struct TrashScreenContent: View {
     @ViewBuilder
     private var selectionBar: some View {
         if viewModel.isSelecting {
-            HStack {
-                Text("\(viewModel.selectedIDs.count) Selected")
-                    .font(.subheadline.bold().monospacedDigit())
-                Spacer()
-                Button("Restore", systemImage: "arrow.uturn.backward") { restoreSelection() }
-                    .disabled(viewModel.selectedIDs.isEmpty || isWorking)
-                Button("Delete", systemImage: "trash", role: .destructive) {
-                    confirmsPermanentDeletion = true
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: QuietFrameTheme.contentSpacing) {
+                    selectionCount.fixedSize()
+                    Spacer(minLength: QuietFrameTheme.contentSpacing)
+                    selectionActions
                 }
-                .disabled(viewModel.selectedIDs.isEmpty || isWorking)
+                .padding(.horizontal, QuietFrameTheme.pagePadding)
+
+                VStack(alignment: .leading, spacing: QuietFrameTheme.compactSpacing) {
+                    selectionCount
+                        .padding(.horizontal, QuietFrameTheme.pagePadding)
+                    ScrollView(.horizontal) {
+                        selectionActions
+                            .padding(.horizontal, QuietFrameTheme.pagePadding)
+                    }
+                    .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+                }
             }
-            .padding(.horizontal, 16)
-            .frame(minHeight: 52)
-            .background(.bar)
+            .padding(.vertical, QuietFrameTheme.compactSpacing)
+            .background(QuietFrameTheme.elevated)
+            .overlay(alignment: .top) {
+                Rectangle().fill(QuietFrameTheme.separator).frame(height: 0.5)
+            }
         }
+    }
+
+    private var selectionCount: some View {
+        Text("\(viewModel.selectedIDs.count) Selected")
+            .font(.subheadline.weight(.semibold).monospacedDigit())
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var selectionActions: some View {
+        HStack(spacing: QuietFrameTheme.compactSpacing) {
+            Button("Restore", systemImage: "arrow.uturn.backward") { restoreSelection() }
+                .disabled(viewModel.selectedIDs.isEmpty || isWorking)
+            Button("Delete", systemImage: "trash", role: .destructive) {
+                confirmsPermanentDeletion = true
+            }
+            .disabled(viewModel.selectedIDs.isEmpty || isWorking)
+        }
+        .font(.subheadline.weight(.semibold))
+        .labelStyle(.titleAndIcon)
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.roundedRectangle(radius: QuietFrameTheme.compactCornerRadius))
+        .controlSize(.large)
+        .fixedSize()
     }
 
     private var searchBinding: Binding<String> {

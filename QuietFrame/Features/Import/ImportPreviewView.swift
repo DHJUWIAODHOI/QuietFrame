@@ -2,6 +2,7 @@ import SwiftData
 import SwiftUI
 
 struct ImportPreviewView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Query(sort: \VaultAlbum.position) private var albums: [VaultAlbum]
     @Bindable var viewModel: ImportViewModel
     let dismiss: () -> Void
@@ -9,9 +10,15 @@ struct ImportPreviewView: View {
     @State private var confirmsOriginalDeletion = false
     @State private var destinationAlbumID: UUID?
 
-    private let columns = [
-        GridItem(.adaptive(minimum: 104, maximum: 160), spacing: 10)
-    ]
+    private var columns: [GridItem] {
+        [GridItem(
+            .adaptive(
+                minimum: dynamicTypeSize.isAccessibilitySize ? 160 : 104,
+                maximum: dynamicTypeSize.isAccessibilitySize ? 240 : 160
+            ),
+            spacing: QuietFrameTheme.compactSpacing
+        )]
+    }
 
     var body: some View {
         NavigationStack {
@@ -32,6 +39,8 @@ struct ImportPreviewView: View {
                     previewGrid
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(QuietFrameTheme.background)
             .navigationTitle(navigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
@@ -61,46 +70,69 @@ struct ImportPreviewView: View {
     }
 
     private var preparingView: some View {
-        VStack(spacing: 18) {
-            ProgressView()
-                .controlSize(.large)
-            Text("Preparing your selection")
-                .font(.headline)
-            Text("Reading metadata and creating private previews without changing the originals.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+        ScrollView {
+            VStack(spacing: QuietFrameTheme.sectionSpacing) {
+                ProgressView()
+                    .controlSize(.large)
+                    .tint(QuietFrameTheme.accent)
+                VStack(spacing: QuietFrameTheme.compactSpacing) {
+                    Text("Preparing your selection")
+                        .font(.title2.weight(.semibold))
+                    Text("Reading metadata and creating private previews without changing the originals.")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                }
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: QuietFrameTheme.readableWidth)
+            .padding(QuietFrameTheme.pagePadding)
+            .padding(.vertical, QuietFrameTheme.sectionSpacing)
+            .frame(maxWidth: .infinity)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Preparing selected media")
         }
-        .padding()
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Preparing selected media")
     }
 
     private var importingView: some View {
-        VStack(spacing: 22) {
-            ProgressView(value: viewModel.progress.overallFraction)
-                .progressViewStyle(.linear)
-                .tint(.accentColor)
-                .accessibilityLabel("Import progress")
-                .accessibilityValue(Text(viewModel.progress.overallFraction, format: .percent))
-            Text("Encrypting \(min(viewModel.progress.completedItems + 1, viewModel.progress.totalItems)) of \(viewModel.progress.totalItems)")
-                .font(.headline.monospacedDigit())
-            Text("You can cancel safely. A partially encrypted item is removed before the import stops.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+        ScrollView {
+            VStack(spacing: QuietFrameTheme.sectionSpacing) {
+                QuietSymbol(systemName: "lock.fill")
+                VStack(spacing: QuietFrameTheme.contentSpacing) {
+                    Text("Encrypting \(min(viewModel.progress.completedItems + 1, viewModel.progress.totalItems)) of \(viewModel.progress.totalItems)")
+                        .font(.title2.weight(.semibold).monospacedDigit())
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ProgressView(value: viewModel.progress.overallFraction)
+                        .progressViewStyle(.linear)
+                        .tint(QuietFrameTheme.accent)
+                        .accessibilityLabel("Import progress")
+                        .accessibilityValue(Text(viewModel.progress.overallFraction, format: .percent))
+                }
+                .padding(QuietFrameTheme.pagePadding)
+                .quietCard()
+                Text("You can cancel safely. A partially encrypted item is removed before the import stops.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: QuietFrameTheme.readableWidth)
+            .padding(QuietFrameTheme.pagePadding)
+            .padding(.vertical, QuietFrameTheme.sectionSpacing)
+            .frame(maxWidth: .infinity)
         }
-        .padding(QuietFrameTheme.pagePadding)
     }
 
     private var previewGrid: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: QuietFrameTheme.contentSpacing) {
                 Text("Review \(viewModel.candidates.count) item\(viewModel.candidates.count == 1 ? "" : "s") before encryption.")
-                    .font(.subheadline)
+                    .font(.body)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
-                LazyVGrid(columns: columns, spacing: 10) {
+                LazyVGrid(columns: columns, spacing: QuietFrameTheme.compactSpacing) {
                     ForEach(viewModel.candidates) { candidate in
                         ImportPreviewCell(candidate: candidate) {
                             viewModel.removeCandidate(id: candidate.id)
@@ -109,32 +141,52 @@ struct ImportPreviewView: View {
                 }
 
                 if let message = viewModel.userMessage {
-                    Label(message, systemImage: "exclamationmark.triangle")
-                        .font(.footnote)
-                        .foregroundStyle(.orange)
-                        .accessibilityLabel("Warning: \(message)")
+                    Label {
+                        Text(message)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                    }
+                    .labelStyle(QuietSettingsLabelStyle())
+                    .font(.subheadline)
+                    .padding(QuietFrameTheme.contentSpacing)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .quietCard()
+                    .accessibilityLabel("Warning: \(message)")
                 }
             }
+            .frame(maxWidth: QuietFrameTheme.readableWidth)
             .padding(QuietFrameTheme.pagePadding)
+            .frame(maxWidth: .infinity)
         }
     }
 
     private func resultView(_ summary: ImportSummary) -> some View {
-        ScrollView {
-            VStack(spacing: 24) {
+        let metricsLayout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(spacing: QuietFrameTheme.compactSpacing))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: QuietFrameTheme.compactSpacing))
+
+        return ScrollView {
+            VStack(spacing: QuietFrameTheme.sectionSpacing) {
                 Image(systemName: summary.importedCount > 0 ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                    .font(.system(size: 58))
+                    .font(.system(size: 28, weight: .medium))
                     .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(summary.importedCount > 0 ? Color.accentColor : .orange)
+                    .foregroundStyle(summary.importedCount > 0 ? QuietFrameTheme.accent : .orange)
+                    .frame(width: 64, height: 64)
+                    .quietCard()
                     .accessibilityHidden(true)
-                VStack(spacing: 8) {
+                VStack(spacing: QuietFrameTheme.compactSpacing) {
                     Text(summary.wasCancelled ? "Import Cancelled" : "Import Complete")
-                        .font(.title.bold())
+                        .font(.title2.weight(.semibold))
+                        .accessibilityAddTraits(.isHeader)
                     Text(resultDescription(summary))
+                        .font(.body)
                         .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
                 }
-                HStack(spacing: 10) {
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                metricsLayout {
                     resultMetric("Imported", value: summary.importedCount)
                     resultMetric("Duplicates", value: summary.duplicateCount)
                     resultMetric("Failed", value: summary.failedCount)
@@ -144,30 +196,42 @@ struct ImportPreviewView: View {
                         "\(summary.thumbnailFailureCount) preview\(summary.thumbnailFailureCount == 1 ? "" : "s") could not be created; the encrypted originals remain available.",
                         systemImage: "photo.badge.exclamationmark"
                     )
-                    .font(.footnote)
+                    .labelStyle(QuietSettingsLabelStyle())
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(QuietFrameTheme.contentSpacing)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .quietCard()
                 }
                 if let message = viewModel.userMessage {
                     Text(message)
-                        .font(.footnote)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(QuietFrameTheme.contentSpacing)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .quietCard()
                 }
             }
+            .frame(maxWidth: QuietFrameTheme.readableWidth)
             .padding(QuietFrameTheme.pagePadding)
+            .frame(maxWidth: .infinity)
         }
     }
 
     private func resultMetric(_ title: String, value: Int) -> some View {
-        VStack(spacing: 5) {
+        VStack(spacing: QuietFrameTheme.compactSpacing) {
             Text(value, format: .number)
-                .font(.title2.bold().monospacedDigit())
+                .font(.title2.weight(.semibold).monospacedDigit())
             Text(title)
-                .font(.caption)
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(QuietFrameTheme.contentSpacing)
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 14)
         .quietCard()
         .accessibilityElement(children: .combine)
     }
@@ -175,22 +239,31 @@ struct ImportPreviewView: View {
     @ViewBuilder
     private var bottomAction: some View {
         if !viewModel.isPreparing {
-            VStack(spacing: 10) {
+            VStack(spacing: QuietFrameTheme.contentSpacing) {
                 if let summary = viewModel.summary {
                     if summary.shouldOfferOriginalDeletion {
-                        Button("Delete Imported Originals from Photos", role: .destructive) {
+                        Button(role: .destructive) {
                             confirmsOriginalDeletion = true
+                        } label: {
+                            Text("Delete Imported Originals from Photos")
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, minHeight: QuietFrameTheme.controlHeight)
                         }
                         .disabled(viewModel.isDeletingOriginals)
                     }
-                    Button("Done", action: dismiss)
-                        .buttonStyle(.borderedProminent)
-                        .frame(maxWidth: .infinity)
+                    Button(action: dismiss) {
+                        Text("Done")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                 } else if viewModel.isImporting {
                     Button("Cancel Import", role: .destructive) {
                         viewModel.cancelImport()
                     }
                     .buttonStyle(.bordered)
+                    .controlSize(.large)
                     .frame(maxWidth: .infinity)
                 } else if !viewModel.candidates.isEmpty {
                     LabeledContent {
@@ -206,11 +279,14 @@ struct ImportPreviewView: View {
                         .pickerStyle(.menu)
                     } label: {
                         Label("Destination", systemImage: "folder")
+                            .labelStyle(QuietSettingsLabelStyle())
                     }
                     Button {
                         viewModel.startImport(albumID: destinationAlbumID)
                     } label: {
                         Label("Encrypt and Import", systemImage: "lock.badge.plus")
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -218,8 +294,10 @@ struct ImportPreviewView: View {
                     .accessibilityIdentifier("begin-import")
                 }
             }
+            .frame(maxWidth: QuietFrameTheme.readableWidth)
             .padding(.horizontal, QuietFrameTheme.pagePadding)
-            .padding(.vertical, 12)
+            .padding(.vertical, QuietFrameTheme.compactSpacing)
+            .frame(maxWidth: .infinity)
             .background(.bar)
         }
     }
@@ -255,32 +333,29 @@ private struct ImportPreviewCell: View {
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            Group {
-                if let image = candidate.previewImage {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    Rectangle()
-                        .fill(.quaternary)
-                        .overlay {
-                            Image(systemName: candidate.source.metadata.mediaType.symbolName)
-                                .font(.title)
-                                .foregroundStyle(.secondary)
-                        }
+            Rectangle()
+                .fill(QuietFrameTheme.inset)
+                .aspectRatio(1, contentMode: .fit)
+                .overlay {
+                    if let image = candidate.previewImage {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        Image(systemName: candidate.source.metadata.mediaType.symbolName)
+                            .font(.title)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-            }
-            .frame(height: 132)
-            .frame(maxWidth: .infinity)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: QuietFrameTheme.compactCornerRadius, style: .continuous))
 
             Button(action: remove) {
                 Image(systemName: "xmark.circle.fill")
                     .font(.title3)
                     .symbolRenderingMode(.palette)
                     .foregroundStyle(.white, .black.opacity(0.65))
-                    .padding(6)
-                    .frame(width: 44, height: 44)
+                    .frame(minWidth: QuietFrameTheme.controlHeight, minHeight: QuietFrameTheme.controlHeight)
+                    .contentShape(Rectangle())
             }
             .accessibilityLabel("Remove \(candidate.source.metadata.originalFilename ?? "item")")
 
@@ -288,12 +363,13 @@ private struct ImportPreviewCell: View {
                let duration = candidate.source.metadata.duration {
                 Text(formattedDuration(duration))
                     .font(.caption2.bold().monospacedDigit())
-                    .padding(.horizontal, 6)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, QuietFrameTheme.compactSpacing)
                     .padding(.vertical, 4)
                     .background(.black.opacity(0.64), in: Capsule())
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                    .padding(6)
+                    .padding(QuietFrameTheme.compactSpacing)
                     .accessibilityLabel("Video duration \(formattedDuration(duration))")
             }
         }
