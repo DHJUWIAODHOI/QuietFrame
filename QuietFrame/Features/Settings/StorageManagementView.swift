@@ -3,6 +3,8 @@ import SwiftUI
 struct StorageManagementView: View {
     let service: any StorageAnalyzing
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.displayScale) private var displayScale
+    @ScaledMetric(relativeTo: .largeTitle) private var totalFontSize: CGFloat = 44
 
     @State private var summary: StorageSummary?
     @State private var isLoading = true
@@ -12,11 +14,15 @@ struct StorageManagementView: View {
         Group {
             if let summary {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: QuietFrameTheme.contentSpacing) {
-                        totalCard(summary)
+                    VStack(alignment: .leading, spacing: QuietFrameTheme.sectionSpacing) {
+                        totalSummary(summary)
                         breakdown(summary)
                         counts(summary)
                         largestFiles(summary)
+                        Text("Actual encrypted files and private previews stored in the app sandbox.")
+                            .font(.subheadline)
+                            .foregroundStyle(QuietFrameTheme.quietInk)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .frame(maxWidth: QuietFrameTheme.readableWidth)
                     .padding(QuietFrameTheme.pagePadding)
@@ -26,84 +32,97 @@ struct StorageManagementView: View {
             } else if isLoading {
                 ProgressView("Analyzing encrypted storage")
                     .controlSize(.large)
+                    .tint(QuietFrameTheme.quietInk)
+                    .foregroundStyle(QuietFrameTheme.quietInk)
                     .padding(QuietFrameTheme.pagePadding)
             } else {
-                ContentUnavailableView(
-                    "Storage Unavailable",
-                    systemImage: "internaldrive.badge.exclamationmark",
-                    description: Text(errorMessage ?? VaultError.fileOperationFailed.localizedDescription)
-                )
+                ContentUnavailableView {
+                    Label {
+                        Text("Storage unavailable")
+                            .font(QuietFrameTheme.titleFont)
+                            .foregroundStyle(QuietFrameTheme.ink)
+                    } icon: {
+                        Image(systemName: "internaldrive.badge.exclamationmark")
+                            .foregroundStyle(QuietFrameTheme.quietInk)
+                    }
+                } description: {
+                    Text(errorMessage ?? VaultError.fileOperationFailed.localizedDescription)
+                        .foregroundStyle(QuietFrameTheme.quietInk)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(QuietFrameTheme.background)
         .tint(QuietFrameTheme.accent)
-        .labelStyle(QuietSettingsLabelStyle())
-        .labeledContentStyle(SettingsValueStyle())
-        .navigationTitle("Storage Usage")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("Storage usage")
+        .navigationBarTitleDisplayMode(.large)
         .task { await load() }
     }
 
-    private func totalCard(_ summary: StorageSummary) -> some View {
-        VStack(alignment: .leading, spacing: QuietFrameTheme.contentSpacing) {
-            Label("Encrypted Vault", systemImage: "lock.shield.fill")
-                .font(.headline)
-                .foregroundStyle(QuietFrameTheme.accent)
+    private func totalSummary(_ summary: StorageSummary) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
             Text(formatted(summary.totalEncryptedBytes))
-                .font(.system(.largeTitle, design: .rounded, weight: .semibold))
+                .font(.system(size: totalFontSize, weight: .medium))
                 .monospacedDigit()
+                .foregroundStyle(QuietFrameTheme.ink)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Actual encrypted files and private previews stored in the app sandbox.")
+            Text("Encrypted vault")
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(QuietFrameTheme.quietInk)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(QuietFrameTheme.pagePadding)
-        .quietCard()
-        .overlay {
-            RoundedRectangle(cornerRadius: QuietFrameTheme.cornerRadius)
-                .strokeBorder(QuietFrameTheme.accent.opacity(0.2), lineWidth: 1)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-        }
         .accessibilityElement(children: .combine)
     }
 
     private func breakdown(_ summary: StorageSummary) -> some View {
-        VStack(alignment: .leading, spacing: QuietFrameTheme.contentSpacing) {
-            Text("Breakdown")
-                .font(.headline)
-                .accessibilityAddTraits(.isHeader)
-            storageRow("Photos", symbol: "photo", bytes: summary.photoBytes, total: summary.totalEncryptedBytes)
-            storageRow("Videos", symbol: "video", bytes: summary.videoBytes, total: summary.totalEncryptedBytes)
-            storageRow("Private Previews", symbol: "square.grid.3x3", bytes: summary.thumbnailBytes, total: summary.totalEncryptedBytes)
-            storageRow("Trash", symbol: "trash", bytes: summary.trashBytes, total: summary.totalEncryptedBytes)
+        VStack(alignment: .leading, spacing: QuietFrameTheme.compactSpacing) {
+            sectionHeader("Breakdown")
+            VStack(spacing: 0) {
+                storageRow("Photos", bytes: summary.photoBytes, total: summary.totalEncryptedBytes)
+                rowDivider(leading: QuietFrameTheme.contentSpacing)
+                storageRow("Videos", bytes: summary.videoBytes, total: summary.totalEncryptedBytes)
+                rowDivider(leading: QuietFrameTheme.contentSpacing)
+                storageRow("Private previews", bytes: summary.thumbnailBytes, total: summary.totalEncryptedBytes)
+                rowDivider(leading: QuietFrameTheme.contentSpacing)
+                storageRow("Trash", bytes: summary.trashBytes, total: summary.totalEncryptedBytes)
+            }
+            .quietCard()
         }
-        .padding(QuietFrameTheme.pagePadding)
-        .quietCard()
     }
 
-    private func storageRow(_ title: String, symbol: String, bytes: Int64, total: Int64) -> some View {
-        VStack(spacing: QuietFrameTheme.compactSpacing) {
-            LabeledContent {
+    private func storageRow(_ title: String, bytes: Int64, total: Int64) -> some View {
+        let fraction = total > 0 ? min(max(Double(bytes) / Double(total), 0), 1) : 0
+        let share = fraction.formatted(.percent.precision(.fractionLength(0)))
+        let layout = rowLayout
+        return VStack(alignment: .leading, spacing: QuietFrameTheme.compactSpacing) {
+            layout {
+                Text(title)
+                    .fontWeight(.medium)
+                    .foregroundStyle(QuietFrameTheme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !dynamicTypeSize.isAccessibilitySize {
+                    Spacer(minLength: QuietFrameTheme.compactSpacing)
+                }
                 Text(formatted(bytes))
                     .monospacedDigit()
-            } label: {
-                Label(title, systemImage: symbol)
+                    .foregroundStyle(QuietFrameTheme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .font(.subheadline)
-            ProgressView(value: total > 0 ? Double(bytes) / Double(total) : 0)
-                .accessibilityLabel("\(title) storage")
-                .accessibilityValue(formatted(bytes))
+            StorageShareBar(fraction: fraction)
         }
+        .padding(.horizontal, QuietFrameTheme.contentSpacing)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, minHeight: QuietFrameTheme.controlHeight, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title) storage")
+        .accessibilityValue("\(formatted(bytes)), \(share) of the vault")
     }
 
     private func counts(_ summary: StorageSummary) -> some View {
         let layout = dynamicTypeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(spacing: QuietFrameTheme.contentSpacing))
-            : AnyLayout(HStackLayout(alignment: .top, spacing: QuietFrameTheme.contentSpacing))
+            ? AnyLayout(VStackLayout(spacing: QuietFrameTheme.compactSpacing))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: QuietFrameTheme.compactSpacing))
 
         return layout {
             metricCard("Media", value: summary.mediaCount, symbol: "photo.stack")
@@ -112,62 +131,101 @@ struct StorageManagementView: View {
     }
 
     private func metricCard(_ title: String, value: Int, symbol: String) -> some View {
-        VStack(alignment: .leading, spacing: QuietFrameTheme.compactSpacing) {
+        VStack(alignment: .leading, spacing: 4) {
             Image(systemName: symbol)
-                .font(.title3)
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.tint)
+                .font(.body)
+                .foregroundStyle(QuietFrameTheme.quietInk)
                 .accessibilityHidden(true)
             Text(value, format: .number)
-                .font(.title2.weight(.semibold).monospacedDigit())
+                .font(QuietFrameTheme.titleFont)
+                .monospacedDigit()
+                .foregroundStyle(QuietFrameTheme.ink)
                 .fixedSize(horizontal: false, vertical: true)
             Text(title)
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(QuietFrameTheme.quietInk)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(QuietFrameTheme.pagePadding)
+        .padding(QuietFrameTheme.contentSpacing)
         .quietCard()
         .accessibilityElement(children: .combine)
     }
 
     private func largestFiles(_ summary: StorageSummary) -> some View {
-        VStack(alignment: .leading, spacing: QuietFrameTheme.contentSpacing) {
-            Text("Largest Files")
-                .font(.headline)
-                .accessibilityAddTraits(.isHeader)
-            if summary.largestItems.isEmpty {
-                Text("No active media")
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(summary.largestItems) { item in
-                    HStack(alignment: .top, spacing: QuietFrameTheme.contentSpacing) {
-                        Image(systemName: item.mediaType.symbolName)
-                            .font(.body.weight(.medium))
-                            .frame(width: QuietFrameTheme.controlHeight, height: QuietFrameTheme.controlHeight)
-                            .background(QuietFrameTheme.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: QuietFrameTheme.compactCornerRadius))
-                            .foregroundStyle(.tint)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: QuietFrameTheme.compactSpacing) {
-                            Text(item.name)
-                                .font(.body.weight(.medium))
-                                .fixedSize(horizontal: false, vertical: true)
-                            LabeledContent(item.mediaType == .photo ? "Photo" : "Video") {
-                                Text(formatted(item.byteCount))
-                                    .monospacedDigit()
-                            }
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: QuietFrameTheme.compactSpacing) {
+            sectionHeader("Largest files")
+            VStack(spacing: 0) {
+                if summary.largestItems.isEmpty {
+                    Text("No active media")
+                        .foregroundStyle(QuietFrameTheme.quietInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, QuietFrameTheme.contentSpacing)
+                        .padding(.vertical, 12)
+                        .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+                } else {
+                    ForEach(summary.largestItems) { item in
+                        if item.id != summary.largestItems.first?.id {
+                            rowDivider(leading: QuietFrameTheme.contentSpacing + 36 + 12)
                         }
+                        largeFileRow(item)
                     }
-                    .padding(.vertical, QuietFrameTheme.compactSpacing)
-                    .accessibilityElement(children: .combine)
                 }
             }
+            .quietCard()
         }
-        .padding(QuietFrameTheme.pagePadding)
-        .quietCard()
+    }
+
+    private func largeFileRow(_ item: LargeMediaItem) -> some View {
+        let typeTitle = item.mediaType == .photo ? "Photo" : "Video"
+        let layout = rowLayout
+        return HStack(spacing: 12) {
+            Image(systemName: item.mediaType.symbolName)
+                .font(.subheadline)
+                .foregroundStyle(QuietFrameTheme.quietInk)
+                .frame(width: 36, height: 36)
+                .background(QuietFrameTheme.inset, in: RoundedRectangle(cornerRadius: QuietFrameTheme.tileCornerRadius, style: .continuous))
+                .accessibilityHidden(true)
+            layout {
+                Text(item.name)
+                    .foregroundStyle(QuietFrameTheme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !dynamicTypeSize.isAccessibilitySize {
+                    Spacer(minLength: QuietFrameTheme.compactSpacing)
+                }
+                Text(formatted(item.byteCount))
+                    .monospacedDigit()
+                    .foregroundStyle(QuietFrameTheme.quietInk)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, QuietFrameTheme.contentSpacing)
+        .padding(.vertical, QuietFrameTheme.compactSpacing)
+        .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(item.name)
+        .accessibilityValue("\(typeTitle), \(formatted(item.byteCount))")
+    }
+
+    private var rowLayout: AnyLayout {
+        dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: QuietFrameTheme.compactSpacing))
+    }
+
+    private func rowDivider(leading: CGFloat) -> some View {
+        Rectangle()
+            .fill(QuietFrameTheme.separator)
+            .frame(height: 1 / max(displayScale, 1))
+            .padding(.leading, leading)
+            .accessibilityHidden(true)
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(QuietFrameTheme.sectionTitleFont)
+            .foregroundStyle(QuietFrameTheme.ink)
+            .accessibilityAddTraits(.isHeader)
     }
 
     private func load() async {
@@ -185,5 +243,28 @@ struct StorageManagementView: View {
 
     private func formatted(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+}
+
+private struct StorageShareBar: View {
+    let fraction: Double
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(QuietFrameTheme.inset)
+                Capsule()
+                    .fill(QuietFrameTheme.quietInk)
+                    .frame(width: fillWidth(in: proxy.size.width))
+            }
+        }
+        .frame(height: 6)
+        .accessibilityHidden(true)
+    }
+
+    private func fillWidth(in width: CGFloat) -> CGFloat {
+        guard fraction > 0 else { return 0 }
+        return min(width, max(width * CGFloat(fraction), 6))
     }
 }

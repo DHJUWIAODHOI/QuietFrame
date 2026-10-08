@@ -59,7 +59,7 @@ private struct SecurePhotoPage: View {
 
     var body: some View {
         ZStack {
-            Color.black
+            QuietFrameTheme.background
             if let image = photoLoader.image(for: media.id) {
                 if isActive {
                     ZoomablePhotoView(
@@ -75,14 +75,14 @@ private struct SecurePhotoPage: View {
                 }
             } else if let errorMessage = photoLoader.failureMessage(for: media.id) {
                 ContentUnavailableView(
-                    "Photo Unavailable",
+                    "Photo unavailable",
                     systemImage: "photo.badge.exclamationmark",
                     description: Text(errorMessage)
                 )
-                .foregroundStyle(.white)
+                .foregroundStyle(QuietFrameTheme.ink, QuietFrameTheme.quietInk)
             } else {
                 ProgressView()
-                    .tint(.white)
+                    .tint(QuietFrameTheme.ink)
                     .accessibilityLabel("Decrypting photo")
             }
         }
@@ -110,7 +110,7 @@ private struct SecureVideoPage: View {
 
     var body: some View {
         ZStack {
-            Color.black
+            QuietFrameTheme.background
             if let player {
                 SecureVideoPlayerView(
                     player: player,
@@ -130,14 +130,14 @@ private struct SecureVideoPage: View {
                     }
             } else if let errorMessage {
                 ContentUnavailableView(
-                    "Video Unavailable",
+                    "Video unavailable",
                     systemImage: "video.slash",
                     description: Text(errorMessage)
                 )
-                .foregroundStyle(.white)
+                .foregroundStyle(QuietFrameTheme.ink, QuietFrameTheme.quietInk)
             } else if isLoading {
                 ProgressView()
-                    .tint(.white)
+                    .tint(QuietFrameTheme.ink)
                     .accessibilityLabel("Preparing encrypted video")
             }
         }
@@ -291,6 +291,7 @@ private struct SecureVideoPlayerView: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let controller = AVPlayerViewController()
+        controller.view.backgroundColor = QuietFrameTheme.nightUI
         controller.player = player
         controller.showsPlaybackControls = showsPlaybackControls
 

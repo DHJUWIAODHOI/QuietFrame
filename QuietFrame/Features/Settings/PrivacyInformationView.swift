@@ -12,33 +12,37 @@ struct PrivacyInformationView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, QuietFrameTheme.contentSpacing)
                 .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             }
 
-            privacyRow(
-                "On-Device Encryption",
-                symbol: "lock.shield",
-                text: "Every original and thumbnail is protected by authenticated AES-GCM encryption. The random master key is protected in the iOS Keychain."
-            )
-            privacyRow(
-                "Photos Access",
-                symbol: "photo.badge.plus",
-                text: "The system picker opens only after you choose Import. QuietFrame requests Photos access at that point so it can inspect, revalidate, and optionally delete the exact originals after encryption."
-            )
-            privacyRow(
-                "Backups and Device Lock",
-                symbol: "iphone.gen3.radiowaves.left.and.right",
-                text: "Vault files are excluded from iCloud backup and use complete file protection so iOS blocks file access while the device is locked."
-            )
-            privacyRow(
-                "Screenshots and Recording",
-                symbol: "rectangle.slash",
-                text: "QuietFrame covers content in app-switcher snapshots and while iOS reports active screen capture. iOS does not provide a public API that can fully prevent screenshots; screenshot notification occurs only after capture."
-            )
-            privacyRow(
-                "Exports",
-                symbol: "square.and.arrow.up",
-                text: "Exported media is decrypted into protected random temporary files, then deleted when the native activity completes, is cancelled, or the app locks."
-            )
+            Section {
+                privacyRow(
+                    "On-device encryption",
+                    symbol: "lock.shield",
+                    text: "Every original and thumbnail is protected by authenticated AES-GCM encryption. The random master key is protected in the iOS Keychain."
+                )
+                privacyRow(
+                    "Photos access",
+                    symbol: "photo.badge.plus",
+                    text: "The system picker opens only after you choose Import. QuietFrame requests Photos access at that point so it can inspect, revalidate, and optionally delete the exact originals after encryption."
+                )
+                privacyRow(
+                    "Backups and device lock",
+                    symbol: "iphone.gen3.radiowaves.left.and.right",
+                    text: "Vault files are excluded from iCloud backup and use complete file protection so iOS blocks file access while the device is locked."
+                )
+                privacyRow(
+                    "Screenshots and recording",
+                    symbol: "rectangle.slash",
+                    text: "QuietFrame covers content in app-switcher snapshots and while iOS reports active screen capture. iOS does not provide a public API that can fully prevent screenshots; screenshot notification occurs only after capture."
+                )
+                privacyRow(
+                    "Exports",
+                    symbol: "square.and.arrow.up",
+                    text: "Exported media is decrypted into protected random temporary files, then deleted when the native activity completes, is cancelled, or the app locks."
+                )
+            }
+            .quietRows()
         }
         .listStyle(.insetGrouped)
         .listSectionSpacing(QuietFrameTheme.sectionSpacing)
@@ -48,7 +52,7 @@ struct PrivacyInformationView: View {
         .frame(maxWidth: .infinity)
         .background(QuietFrameTheme.background)
         .navigationTitle("Privacy")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(.large)
     }
 
     private func privacyRow(_ title: String, symbol: String, text: String) -> some View {
@@ -58,11 +62,10 @@ struct PrivacyInformationView: View {
                     .font(.headline)
             } icon: {
                 Image(systemName: symbol)
-                    .foregroundStyle(.tint)
             }
             Text(text)
                 .font(.body)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(QuietFrameTheme.quietInk)
         }
         .fixedSize(horizontal: false, vertical: true)
         .padding(.vertical, QuietFrameTheme.contentSpacing)

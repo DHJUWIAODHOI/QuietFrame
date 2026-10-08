@@ -13,13 +13,21 @@ struct GalleryGridView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
+    // Fits the default thumbnail size to three columns on iPhone inside the page margins.
+    private static let tileWidthScale: CGFloat = 0.85
+
+    private var tileShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: QuietFrameTheme.tileCornerRadius, style: .continuous)
+    }
+
     private var columns: [GridItem] {
-        [GridItem(
+        let isAccessibilitySize = dynamicTypeSize.isAccessibilitySize
+        return [GridItem(
             .adaptive(
-                minimum: dynamicTypeSize.isAccessibilitySize ? 280 : minimumCellWidth,
-                maximum: dynamicTypeSize.isAccessibilitySize ? QuietFrameTheme.readableWidth : minimumCellWidth * 1.45
+                minimum: isAccessibilitySize ? 280 : minimumCellWidth * Self.tileWidthScale,
+                maximum: isAccessibilitySize ? QuietFrameTheme.readableWidth : minimumCellWidth * 1.45
             ),
-            spacing: QuietFrameTheme.compactSpacing / 2,
+            spacing: QuietFrameTheme.gridSpacing,
             alignment: .top
         )]
     }
@@ -32,7 +40,7 @@ struct GalleryGridView: View {
                 emptyView
             } else {
                 ScrollView {
-                    LazyVGrid(columns: columns, spacing: QuietFrameTheme.compactSpacing / 2) {
+                    LazyVGrid(columns: columns, spacing: QuietFrameTheme.gridSpacing) {
                         ForEach(viewModel.items) { media in
                             Button {
                                 if viewModel.isSelecting {
@@ -49,18 +57,19 @@ struct GalleryGridView: View {
                                 )
                             }
                             .buttonStyle(.plain)
+                            .contentShape(.contextMenuPreview, tileShape)
                             .onLongPressGesture(minimumDuration: 0.35) {
                                 viewModel.beginSelection(with: media.id)
                             }
                             .contextMenu {
-                                Button(media.isFavorite ? "Remove Favorite" : "Favorite", systemImage: media.isFavorite ? "heart.slash" : "heart") {
+                                Button(media.isFavorite ? "Remove favorite" : "Favorite", systemImage: media.isFavorite ? "heart.slash" : "heart") {
                                     viewModel.setFavorite(mediaID: media.id, isFavorite: !media.isFavorite)
                                 }
                                 Button("Select", systemImage: "checkmark.circle") {
                                     viewModel.beginSelection(with: media.id)
                                 }
                             }
-                            .accessibilityAction(named: media.isFavorite ? "Remove Favorite" : "Favorite") {
+                            .accessibilityAction(named: media.isFavorite ? "Remove favorite" : "Favorite") {
                                 viewModel.setFavorite(mediaID: media.id, isFavorite: !media.isFavorite)
                             }
                             .accessibilityAction(named: "Select") {
@@ -71,10 +80,12 @@ struct GalleryGridView: View {
                             }
                         }
                     }
-                    .padding(QuietFrameTheme.compactSpacing / 2)
+                    .padding(.horizontal, QuietFrameTheme.pagePadding)
+                    .padding(.vertical, QuietFrameTheme.compactSpacing)
 
                     if viewModel.isLoading {
                         ProgressView()
+                            .tint(QuietFrameTheme.quietInk)
                             .padding()
                             .accessibilityLabel("Loading more media")
                     }
@@ -88,17 +99,22 @@ struct GalleryGridView: View {
 
     private var loadingGrid: some View {
         ScrollView {
-            LazyVGrid(columns: columns, spacing: QuietFrameTheme.compactSpacing / 2) {
+            LazyVGrid(columns: columns, spacing: QuietFrameTheme.gridSpacing) {
                 ForEach(0..<18, id: \.self) { _ in
-                    RoundedRectangle(cornerRadius: QuietFrameTheme.compactCornerRadius, style: .continuous)
-                        .fill(QuietFrameTheme.inset)
+                    tileShape
+                        .fill(QuietFrameTheme.elevated)
                         .aspectRatio(1, contentMode: .fit)
                         .accessibilityHidden(true)
                 }
             }
-            .padding(QuietFrameTheme.compactSpacing / 2)
+            .padding(.horizontal, QuietFrameTheme.pagePadding)
+            .padding(.vertical, QuietFrameTheme.compactSpacing)
         }
-        .overlay { ProgressView().accessibilityLabel("Loading vault") }
+        .overlay {
+            ProgressView()
+                .tint(QuietFrameTheme.quietInk)
+                .accessibilityLabel("Loading vault")
+        }
     }
 
     @ViewBuilder
@@ -114,18 +130,18 @@ struct GalleryGridView: View {
                             action: emptyAction
                         )
                     } else {
-                        VStack(spacing: QuietFrameTheme.contentSpacing) {
-                            ContentUnavailableView(
-                                emptyTitle,
-                                systemImage: "photo.on.rectangle.angled",
-                                description: Text(viewModel.errorMessage ?? emptyDescription)
+                        VStack(spacing: QuietFrameTheme.sectionSpacing) {
+                            QuietIntroduction(
+                                title: emptyTitle,
+                                message: viewModel.errorMessage ?? emptyDescription,
+                                systemImage: "photo.on.rectangle.angled"
                             )
                             if viewModel.errorMessage != nil {
-                                Button("Try Again") { Task { await viewModel.loadInitial() } }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.large)
+                                Button("Try again") { Task { await viewModel.loadInitial() } }
+                                    .buttonStyle(.apertureSecondary)
                             }
                         }
+                        .frame(maxWidth: QuietFrameTheme.readableWidth)
                         .padding(QuietFrameTheme.pagePadding)
                     }
                 }

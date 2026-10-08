@@ -1,10 +1,10 @@
 import SwiftData
 import SwiftUI
+import UIKit
 
 struct AlbumsScreen: View {
     @Environment(AppDependencies.self) private var dependencies
     @Environment(\.modelContext) private var modelContext
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Query(sort: \VaultAlbum.position) private var albums: [VaultAlbum]
     @Query(filter: #Predicate<VaultMedia> { $0.trashedAt == nil }) private var activeMedia: [VaultMedia]
     @Query private var settingsRecords: [AppSettings]
@@ -16,17 +16,6 @@ struct AlbumsScreen: View {
     @State private var deleteAlbum: VaultAlbum?
     @State private var showsAlbumReorder = false
     @State private var userMessage: String?
-
-    private var columns: [GridItem] {
-        [GridItem(
-            .adaptive(
-                minimum: dynamicTypeSize.isAccessibilitySize ? 280 : 156,
-                maximum: dynamicTypeSize.isAccessibilitySize ? QuietFrameTheme.readableWidth : 240
-            ),
-            spacing: QuietFrameTheme.contentSpacing,
-            alignment: .top
-        )]
-    }
 
     private var sortedAlbums: [VaultAlbum] {
         switch settingsRecords.first?.albumSort ?? .modifiedDate {
@@ -42,62 +31,61 @@ struct AlbumsScreen: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: QuietFrameTheme.sectionSpacing) {
-                smartCollections
-                userAlbums
-            }
-            .padding(QuietFrameTheme.pagePadding)
+        List {
+            collectionsSection
+            userAlbumsSection
         }
-        .background(QuietFrameTheme.background)
+        .listStyle(.insetGrouped)
+        .quietFormStyle()
         .navigationTitle("Albums")
+        .navigationBarTitleDisplayMode(.large)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Menu {
-                    Picker("Sort Albums", selection: albumSortBinding) {
+                    Picker("Sort albums", selection: albumSortBinding) {
                         ForEach(AlbumSortOption.allCases) { option in
-                            Text(option.title).tag(option)
+                            Text(sortTitle(option)).tag(option)
                         }
                     }
                 } label: {
-                    Label("Sort Albums", systemImage: "arrow.up.arrow.down")
+                    Label("Sort albums", systemImage: "arrow.up.arrow.down")
                 }
                 Button {
                     showsAlbumReorder = true
                 } label: {
-                    Label("Reorder Albums", systemImage: "list.bullet")
+                    Label("Reorder albums", systemImage: "line.3.horizontal")
                 }
                 .disabled(albums.count < 2)
                 Button {
                     newAlbumName = ""
                     showsNewAlbum = true
                 } label: {
-                    Label("New Album", systemImage: "plus")
+                    Label("New album", systemImage: "plus")
                 }
                 .accessibilityIdentifier("new-album")
             }
         }
-        .alert("New Album", isPresented: $showsNewAlbum) {
-            TextField("Album Name", text: $newAlbumName)
+        .alert("New album", isPresented: $showsNewAlbum) {
+            TextField("Album name", text: $newAlbumName)
             Button("Cancel", role: .cancel) {}
             Button("Create") { createAlbum() }
         } message: {
             Text("Albums organize encrypted media without making extra copies.")
         }
-        .alert("Rename Album", isPresented: renameIsPresented) {
-            TextField("Album Name", text: $renameValue)
+        .alert("Rename album", isPresented: renameIsPresented) {
+            TextField("Album name", text: $renameValue)
             Button("Cancel", role: .cancel) { renameAlbum = nil }
             Button("Rename") { commitRename() }
         }
         .confirmationDialog(
-            deleteAlbum.map { "Delete \($0.name)?" } ?? "Delete Album?",
+            deleteAlbum.map { "Delete \($0.name)?" } ?? "Delete album?",
             isPresented: deleteIsPresented,
             titleVisibility: .visible
         ) {
-            Button("Delete Album, Keep Media") {
+            Button("Delete album, keep media") {
                 performDelete(mode: .keepMedia)
             }
-            Button("Delete Album and Move Media to Trash", role: .destructive) {
+            Button("Delete album and move media to Trash", role: .destructive) {
                 performDelete(mode: .moveMediaToTrash)
             }
             Button("Cancel", role: .cancel) { deleteAlbum = nil }
@@ -117,107 +105,129 @@ struct AlbumsScreen: View {
         }
     }
 
-    private var smartCollections: some View {
-        VStack(alignment: .leading, spacing: QuietFrameTheme.contentSpacing) {
+    private var collectionsSection: some View {
+        Section {
+            collectionRow(.allMedia, count: activeMedia.count)
+            collectionRow(.recentlyAdded, count: recentCount)
+            collectionRow(.favorites, count: activeMedia.lazy.filter(\.isFavorite).count)
+        } header: {
             Text("Collections")
-                .font(.title2.weight(.semibold))
+                .font(QuietFrameTheme.sectionTitleFont)
+                .foregroundStyle(QuietFrameTheme.ink)
+                .textCase(nil)
                 .accessibilityAddTraits(.isHeader)
-            LazyVGrid(columns: columns, spacing: QuietFrameTheme.contentSpacing) {
-                smartCollectionCard(.allMedia, count: activeMedia.count)
-                smartCollectionCard(.recentlyAdded, count: recentCount)
-                smartCollectionCard(.favorites, count: activeMedia.lazy.filter(\.isFavorite).count)
-            }
         }
+        .quietRows()
     }
 
-    private var userAlbums: some View {
-        VStack(alignment: .leading, spacing: QuietFrameTheme.contentSpacing) {
+    private var userAlbumsSection: some View {
+        Section {
+            if sortedAlbums.isEmpty {
+                Button {
+                    showsNewAlbum = true
+                } label: {
+                    AlbumsListRow(
+                        title: "Create an album to organize private media",
+                        titleColor: QuietFrameTheme.accent
+                    ) {
+                        AlbumsGlyph(systemName: "rectangle.stack.badge.plus", tint: QuietFrameTheme.accent)
+                    }
+                }
+            } else {
+                ForEach(sortedAlbums) { album in
+                    albumRow(album)
+                }
+            }
+        } header: {
             HStack(alignment: .firstTextBaseline, spacing: QuietFrameTheme.compactSpacing) {
-                Text("Your Albums")
-                    .font(.title2.weight(.semibold))
+                Text("Your albums")
+                    .font(QuietFrameTheme.sectionTitleFont)
+                    .foregroundStyle(QuietFrameTheme.ink)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
                 Text(sortedAlbums.count, format: .number)
                     .font(.subheadline.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(QuietFrameTheme.quietInk)
                     .padding(.horizontal, QuietFrameTheme.compactSpacing)
                     .padding(.vertical, QuietFrameTheme.compactSpacing / 2)
                     .background(QuietFrameTheme.elevated, in: Capsule())
                     .fixedSize()
                     .accessibilityLabel("\(sortedAlbums.count) albums")
             }
+            .textCase(nil)
+        } footer: {
+            Text("Albums organize encrypted media without making extra copies.")
+                .font(.subheadline)
+                .foregroundStyle(QuietFrameTheme.quietInk)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .quietRows()
+    }
 
-            if sortedAlbums.isEmpty {
-                Button {
-                    showsNewAlbum = true
-                } label: {
-                    Label("Create an album to organize private media", systemImage: "rectangle.stack.badge.plus")
-                        .labelStyle(QuietSettingsLabelStyle())
-                        .font(.body.weight(.medium))
-                        .foregroundStyle(QuietFrameTheme.accent)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, minHeight: QuietFrameTheme.controlHeight, alignment: .leading)
-                        .padding(QuietFrameTheme.contentSpacing)
-                }
-                .buttonStyle(.plain)
-                .quietCard()
-            } else {
-                LazyVGrid(columns: columns, spacing: QuietFrameTheme.contentSpacing) {
-                    ForEach(sortedAlbums) { album in
-                        NavigationLink {
-                            GalleryBrowser(
-                                title: album.name,
-                                initialQuery: GalleryQuery(collection: nil, albumID: album.id)
-                            )
-                        } label: {
-                            AlbumCard(
-                                album: album,
-                                thumbnailService: dependencies.thumbnailService
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .contextMenu {
-                            Button("Rename", systemImage: "pencil") {
-                                renameAlbum = album
-                                renameValue = album.name
-                            }
-                            Button("Delete", systemImage: "trash", role: .destructive) {
-                                deleteAlbum = album
-                            }
-                        }
-                    }
-                }
+    private func albumRow(_ album: VaultAlbum) -> some View {
+        let detail = itemCountText(album.activeMediaCount)
+        return NavigationLink {
+            GalleryBrowser(
+                title: album.name,
+                initialQuery: GalleryQuery(collection: nil, albumID: album.id)
+            )
+        } label: {
+            AlbumsListRow(title: album.name, detail: detail, detailIsTrailing: true) {
+                AlbumCover(album: album, thumbnailService: dependencies.thumbnailService)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(album.name), \(detail)")
+        }
+        .contextMenu {
+            Button("Rename", systemImage: "pencil") {
+                startRename(album)
+            }
+            Button("Delete", systemImage: "trash", role: .destructive) {
+                deleteAlbum = album
+            }
+        }
+        .accessibilityAction(named: "Rename") {
+            startRename(album)
+        }
+        .accessibilityAction(named: "Delete") {
+            deleteAlbum = album
         }
     }
 
-    private func smartCollectionCard(_ collection: VaultCollection, count: Int) -> some View {
-        NavigationLink {
+    private func collectionRow(_ collection: VaultCollection, count: Int) -> some View {
+        let detail = collection == .recentlyAdded
+            ? "\(itemCountText(count)) from the last 30 days"
+            : itemCountText(count)
+        return NavigationLink {
             GalleryBrowser(
                 title: collection.title,
                 initialQuery: GalleryQuery(collection: collection)
             )
         } label: {
-            VStack(alignment: .leading, spacing: QuietFrameTheme.contentSpacing) {
-                QuietSymbol(systemName: collection.symbolName)
-                VStack(alignment: .leading, spacing: QuietFrameTheme.compactSpacing) {
-                    Text(collection.title)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                    Text(count, format: .number)
-                        .font(.title2.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
-                .fixedSize(horizontal: false, vertical: true)
+            AlbumsListRow(title: collection.title, detail: detail) {
+                AlbumsGlyph(systemName: collectionSymbol(collection))
             }
-            .frame(maxWidth: .infinity, minHeight: 126, alignment: .leading)
-            .padding(QuietFrameTheme.contentSpacing)
-            .quietCard()
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(collection.title), \(detail)")
         }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(collection.title), \(count) items")
+    }
+
+    private func collectionSymbol(_ collection: VaultCollection) -> String {
+        switch collection {
+        case .allMedia: "photo.on.rectangle"
+        case .recentlyAdded: "clock"
+        case .favorites: "heart"
+        }
+    }
+
+    private func sortTitle(_ option: AlbumSortOption) -> String {
+        switch option {
+        case .manual: "Manual"
+        case .name: "Name"
+        case .creationDate: "Date created"
+        case .modifiedDate: "Last modified"
+        }
     }
 
     private var recentCount: Int {
@@ -250,6 +260,11 @@ struct AlbumsScreen: View {
 
     private var messageIsPresented: Binding<Bool> {
         Binding(get: { userMessage != nil }, set: { if !$0 { userMessage = nil } })
+    }
+
+    private func startRename(_ album: VaultAlbum) {
+        renameAlbum = album
+        renameValue = album.name
     }
 
     private func createAlbum() {
@@ -288,6 +303,10 @@ struct AlbumsScreen: View {
     }
 }
 
+private func itemCountText(_ count: Int) -> String {
+    "\(count.formatted()) item\(count == 1 ? "" : "s")"
+}
+
 private struct AlbumReorderSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var albums: [VaultAlbum]
@@ -302,18 +321,20 @@ private struct AlbumReorderSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                ForEach(albums) { album in
-                    Label(album.name, systemImage: "rectangle.stack")
-                        .labelStyle(QuietSettingsLabelStyle())
-                        .fixedSize(horizontal: false, vertical: true)
-                        .listRowBackground(QuietFrameTheme.elevated)
+                Section {
+                    ForEach(albums) { album in
+                        Label(album.name, systemImage: "rectangle.stack")
+                            .labelStyle(QuietSettingsLabelStyle())
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .onMove { albums.move(fromOffsets: $0, toOffset: $1) }
                 }
-                .onMove { albums.move(fromOffsets: $0, toOffset: $1) }
+                .quietRows()
             }
             .listStyle(.insetGrouped)
             .quietFormStyle()
             .environment(\.editMode, .constant(.active))
-            .navigationTitle("Reorder Albums")
+            .navigationTitle("Reorder albums")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -340,12 +361,109 @@ private struct AlbumReorderSheet: View {
                 Text(userMessage ?? "The album order could not be saved.")
             }
         }
+        .presentationBackground(QuietFrameTheme.elevated)
+        .presentationCornerRadius(QuietFrameTheme.sheetCornerRadius)
     }
 }
 
-private struct AlbumCard: View {
+private struct AlbumsListRow<Leading: View>: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    let title: String
+    let detail: String?
+    let detailIsTrailing: Bool
+    let titleColor: Color
+    let leading: Leading
+
+    init(
+        title: String,
+        detail: String? = nil,
+        detailIsTrailing: Bool = false,
+        titleColor: Color = QuietFrameTheme.ink,
+        @ViewBuilder leading: () -> Leading
+    ) {
+        self.title = title
+        self.detail = detail
+        self.detailIsTrailing = detailIsTrailing
+        self.titleColor = titleColor
+        self.leading = leading()
+    }
+
+    var body: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: QuietFrameTheme.compactSpacing) {
+                leading
+                    .frame(width: 56, height: 56)
+                stackedText
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, QuietFrameTheme.compactSpacing / 2)
+        } else {
+            HStack(spacing: 14) {
+                leading
+                    .frame(width: 40, height: 40)
+                if detailIsTrailing, let detail {
+                    titleText
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
+                    detailText(detail)
+                        .layoutPriority(1)
+                } else {
+                    stackedText
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .frame(minHeight: QuietFrameTheme.controlHeight)
+        }
+    }
+
+    private var stackedText: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            titleText
+            if let detail {
+                detailText(detail)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
+    }
+
+    private var titleText: some View {
+        Text(title)
+            .font(.body.weight(.medium))
+            .foregroundStyle(titleColor)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func detailText(_ detail: String) -> some View {
+        Text(detail)
+            .font(.subheadline.monospacedDigit())
+            .foregroundStyle(QuietFrameTheme.quietInk)
+    }
+}
+
+private struct AlbumsGlyph: View {
+    let systemName: String
+    var tint = QuietFrameTheme.ink
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: QuietFrameTheme.tileCornerRadius, style: .continuous)
+            .fill(QuietFrameTheme.inset)
+            .overlay {
+                Image(systemName: systemName)
+                    .font(.system(size: 19, weight: .regular))
+                    .symbolRenderingMode(.monochrome)
+                    .foregroundStyle(tint)
+            }
+            .accessibilityHidden(true)
+    }
+}
+
+private struct AlbumCover: View {
     let album: VaultAlbum
     let thumbnailService: ThumbnailService
+
+    @State private var image: UIImage?
 
     private var cover: VaultMedia? {
         if let coverMediaID = album.coverMediaID,
@@ -355,41 +473,33 @@ private struct AlbumCard: View {
         return album.media.first(where: { !$0.isTrashed })
     }
 
+    private var coverKey: String {
+        guard let cover else { return "" }
+        return "\(cover.id.uuidString)-\(cover.thumbnailIdentifier ?? "")"
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: QuietFrameTheme.contentSpacing) {
-            Group {
-                if let cover {
-                    MediaThumbnailView(
-                        media: cover,
-                        thumbnailService: thumbnailService,
-                        thumbnailAspectRatio: 1.35
-                    )
+        RoundedRectangle(cornerRadius: QuietFrameTheme.tileCornerRadius, style: .continuous)
+            .fill(QuietFrameTheme.inset)
+            .overlay {
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
                 } else {
-                    RoundedRectangle(cornerRadius: QuietFrameTheme.compactCornerRadius, style: .continuous)
-                        .fill(QuietFrameTheme.inset)
-                        .aspectRatio(1.35, contentMode: .fit)
-                        .overlay {
-                            QuietSymbol(systemName: "rectangle.stack")
-                        }
+                    Image(systemName: cover?.mediaType.symbolName ?? "rectangle.stack")
+                        .font(.system(size: 17, weight: .regular))
+                        .foregroundStyle(QuietFrameTheme.quietInk)
                 }
             }
-            .frame(maxWidth: .infinity)
-
-            VStack(alignment: .leading, spacing: QuietFrameTheme.compactSpacing) {
-                Text(album.name)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-                Text("\(album.activeMediaCount) item\(album.activeMediaCount == 1 ? "" : "s")")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
+            .clipShape(RoundedRectangle(cornerRadius: QuietFrameTheme.tileCornerRadius, style: .continuous))
+            .task(id: coverKey) {
+                guard let cover else {
+                    image = nil
+                    return
+                }
+                image = await thumbnailService.image(for: cover)
             }
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, QuietFrameTheme.compactSpacing)
-            .padding(.bottom, QuietFrameTheme.compactSpacing)
-        }
-        .padding(QuietFrameTheme.compactSpacing)
-        .quietCard()
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(album.name), \(album.activeMediaCount) items")
+            .accessibilityHidden(true)
     }
 }

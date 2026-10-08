@@ -11,12 +11,14 @@ struct SettingsValueStyle: LabeledContentStyle {
 
         return layout {
             configuration.label
+                .foregroundStyle(QuietFrameTheme.ink)
                 .fixedSize(horizontal: false, vertical: true)
             if !isAccessibilitySize {
                 Spacer(minLength: 0)
             }
             configuration.content
-                .foregroundStyle(.secondary)
+                .foregroundStyle(QuietFrameTheme.quietInk)
+                .monospacedDigit()
                 .multilineTextAlignment(isAccessibilitySize ? .leading : .trailing)
                 .fixedSize(horizontal: false, vertical: true)
         }

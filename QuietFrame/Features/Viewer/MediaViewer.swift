@@ -80,6 +80,9 @@ struct MediaViewer: View {
         .sheet(item: $informationMedia) { media in
             MediaInfoView(media: media)
                 .presentationDetents([.medium, .large])
+                .presentationBackground(QuietFrameTheme.elevated)
+                .presentationCornerRadius(QuietFrameTheme.sheetCornerRadius)
+                .presentationDragIndicator(.visible)
         }
         .sheet(item: $movingMedia) { media in
             AlbumDestinationPicker(albums: albums, currentAlbumID: media.album?.id) { albumID in
@@ -87,6 +90,9 @@ struct MediaViewer: View {
                 movingMedia = nil
             }
             .presentationDetents([.medium, .large])
+            .presentationBackground(QuietFrameTheme.elevated)
+            .presentationCornerRadius(QuietFrameTheme.sheetCornerRadius)
+            .presentationDragIndicator(.visible)
         }
         .sheet(item: $shareLease, onDismiss: {
             shareLease?.cleanup()
@@ -112,7 +118,7 @@ struct MediaViewer: View {
             isPresented: $confirmsPermanentDeletion,
             titleVisibility: .visible
         ) {
-            Button("Delete Permanently", role: .destructive) { permanentlyDeleteSelectedMedia() }
+            Button("Delete permanently", role: .destructive) { permanentlyDeleteSelectedMedia() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This removes the encrypted file from this device and cannot be undone.")
@@ -128,7 +134,7 @@ struct MediaViewer: View {
 
     private var viewerContent: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            QuietFrameTheme.background.ignoresSafeArea()
             mediaPager
 
             if controlsAreVisible {
@@ -166,34 +172,33 @@ struct MediaViewer: View {
                 Button {
                     dismiss()
                 } label: {
-                    Image(systemName: "xmark")
-                        .font(.body.weight(.medium))
-                        .frame(minWidth: QuietFrameTheme.controlHeight, minHeight: QuietFrameTheme.controlHeight)
-                        .background(.regularMaterial, in: Circle())
-                        .contentShape(Rectangle())
+                    chromeIcon("xmark")
                 }
                 .accessibilityLabel("Close viewer")
                 Spacer()
                 if let selectedMedia {
                     Text(selectedMedia.displayName)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.subheadline.weight(.medium))
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+                        .truncationMode(.middle)
                         .multilineTextAlignment(.center)
-                        .shadow(color: .black.opacity(0.8), radius: 4)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 6)
+                        .frame(minHeight: QuietFrameTheme.controlHeight)
+                        .viewerChrome(
+                            RoundedRectangle(cornerRadius: QuietFrameTheme.controlHeight / 2, style: .continuous)
+                        )
+                        .accessibilityAddTraits(.isHeader)
                 }
                 Spacer()
                 Button {
                     informationMedia = selectedMedia
                 } label: {
-                    Image(systemName: "info.circle")
-                        .font(.body.weight(.medium))
-                        .frame(minWidth: QuietFrameTheme.controlHeight, minHeight: QuietFrameTheme.controlHeight)
-                        .background(.regularMaterial, in: Circle())
-                        .contentShape(Rectangle())
+                    chromeIcon("info.circle")
                 }
                 .accessibilityLabel("Media information")
             }
-            .padding(.horizontal, QuietFrameTheme.pagePadding)
+            .padding(.horizontal, QuietFrameTheme.contentSpacing)
             .padding(.top, QuietFrameTheme.compactSpacing)
 
             Spacer()
@@ -202,8 +207,7 @@ struct MediaViewer: View {
                 LazyVGrid(
                     columns: Array(
                         repeating: GridItem(.flexible(), spacing: QuietFrameTheme.compactSpacing),
-                        count: dynamicTypeSize.isAccessibilitySize && verticalSizeClass != .compact
-                            ? 2 : (selectedMedia.isTrashed ? 3 : 4)
+                        count: usesTwoColumnActions ? 2 : (selectedMedia.isTrashed ? 3 : 4)
                     ),
                     spacing: QuietFrameTheme.compactSpacing
                 ) {
@@ -211,13 +215,14 @@ struct MediaViewer: View {
                         viewerButton(title: "Restore", symbol: "arrow.uturn.backward") {
                             restoreSelectedMedia()
                         }
-                        viewerButton(title: "Delete", symbol: "trash.slash") {
+                        viewerButton(title: "Delete", symbol: "trash.slash", color: QuietFrameTheme.destructive) {
                             confirmsPermanentDeletion = true
                         }
                     } else {
                         viewerButton(
                             title: selectedMedia.isFavorite ? "Unfavorite" : "Favorite",
-                            symbol: selectedMedia.isFavorite ? "heart.fill" : "heart"
+                            symbol: selectedMedia.isFavorite ? "heart.fill" : "heart",
+                            symbolColor: selectedMedia.isFavorite ? QuietFrameTheme.accent : nil
                         ) {
                             favorite(selectedMedia)
                         }
@@ -232,44 +237,76 @@ struct MediaViewer: View {
                         viewerActionLabel(title: "Export", symbol: "square.and.arrow.up")
                     }
                     .disabled(isWorking)
+                    .opacity(isWorking ? 0.45 : 1)
                     if !selectedMedia.isTrashed {
-                        viewerButton(title: "Trash", symbol: "trash") {
+                        viewerButton(title: "Trash", symbol: "trash", color: QuietFrameTheme.destructive) {
                             confirmsTrash = true
                         }
                     }
                 }
-                .padding(QuietFrameTheme.compactSpacing)
+                .padding(.horizontal, QuietFrameTheme.compactSpacing)
+                .padding(.vertical, 4)
                 .frame(maxWidth: QuietFrameTheme.readableWidth)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: QuietFrameTheme.cornerRadius))
-                .padding(.horizontal, QuietFrameTheme.pagePadding)
-                .padding(.bottom, QuietFrameTheme.contentSpacing)
+                .viewerChrome(actionBarShape, fill: QuietFrameTheme.elevated.opacity(0.94))
+                .padding(.horizontal, QuietFrameTheme.contentSpacing)
+                .padding(.bottom, QuietFrameTheme.compactSpacing)
             }
         }
-        .foregroundStyle(.white)
-        .tint(.white)
+        .foregroundStyle(QuietFrameTheme.ink)
+        .tint(QuietFrameTheme.ink)
         .environment(\.colorScheme, .dark)
+    }
+
+    private var usesTwoColumnActions: Bool {
+        dynamicTypeSize.isAccessibilitySize && verticalSizeClass != .compact
+    }
+
+    private var actionBarShape: RoundedRectangle {
+        RoundedRectangle(
+            cornerRadius: usesTwoColumnActions ? QuietFrameTheme.cornerRadius : 32,
+            style: .continuous
+        )
+    }
+
+    private func chromeIcon(_ systemName: String) -> some View {
+        Image(systemName: systemName)
+            .font(.body.weight(.medium))
+            .padding(dynamicTypeSize.isAccessibilitySize ? 6 : 0)
+            .frame(minWidth: QuietFrameTheme.controlHeight, minHeight: QuietFrameTheme.controlHeight)
+            .viewerChrome(Circle())
+            .contentShape(Rectangle())
     }
 
     private func viewerButton(
         title: String,
         symbol: String,
+        color: Color = QuietFrameTheme.ink,
+        symbolColor: Color? = nil,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            viewerActionLabel(title: title, symbol: symbol)
+            viewerActionLabel(title: title, symbol: symbol, color: color, symbolColor: symbolColor)
         }
     }
 
-    private func viewerActionLabel(title: String, symbol: String) -> some View {
-        VStack(spacing: QuietFrameTheme.compactSpacing) {
+    private func viewerActionLabel(
+        title: String,
+        symbol: String,
+        color: Color = QuietFrameTheme.ink,
+        symbolColor: Color? = nil
+    ) -> some View {
+        VStack(spacing: 4) {
             Image(systemName: symbol)
                 .font(.title3)
+                .foregroundStyle(symbolColor ?? color)
+                .accessibilityHidden(true)
             Text(title)
-                .font(.caption)
+                .font(.caption.weight(.medium))
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.vertical, QuietFrameTheme.compactSpacing)
+        .foregroundStyle(color)
+        .padding(.vertical, 6)
         .frame(minWidth: QuietFrameTheme.controlHeight, maxWidth: .infinity, minHeight: QuietFrameTheme.controlHeight)
         .contentShape(Rectangle())
     }
@@ -403,5 +440,15 @@ struct MediaViewer: View {
                 isWorking = false
             }
         }
+    }
+}
+
+private extension View {
+    func viewerChrome<ChromeShape: InsettableShape>(
+        _ shape: ChromeShape,
+        fill: Color = QuietFrameTheme.background.opacity(0.72)
+    ) -> some View {
+        background(fill, in: shape)
+            .overlay { shape.strokeBorder(QuietFrameTheme.separator, lineWidth: 1) }
     }
 }

@@ -9,23 +9,25 @@ struct OnboardingView: View {
 
     let coordinator: VaultLockCoordinator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var step: Step = .privacy
     @State private var passcode = ""
     @State private var confirmation = ""
     @State private var confirmsNoPasscode = false
 
     var body: some View {
-        AuthenticationLayout {
-            Spacer(minLength: QuietFrameTheme.contentSpacing)
+        AuthenticationLayout { isCompactHeight in
+            Spacer(minLength: QuietFrameTheme.compactSpacing)
             switch step {
             case .privacy:
-                privacyStep
+                welcome(isCompactHeight: isCompactHeight)
             case .create:
                 passcodeStep(
                     title: "Create your passcode",
                     detail: "Choose six digits you can remember. QuietFrame cannot recover a forgotten passcode.",
                     label: "New six-digit passcode",
-                    value: $passcode
+                    value: $passcode,
+                    isCompactHeight: isCompactHeight
                 ) {
                     withAnimation(reduceMotion ? nil : .snappy) { step = .confirm }
                 }
@@ -34,7 +36,8 @@ struct OnboardingView: View {
                     title: "Confirm your passcode",
                     detail: "Enter the same six digits once more.",
                     label: "Confirm six-digit passcode",
-                    value: $confirmation
+                    value: $confirmation,
+                    isCompactHeight: isCompactHeight
                 ) {
                     Task {
                         await coordinator.createPasscode(passcode, confirmation: confirmation)
@@ -48,18 +51,22 @@ struct OnboardingView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .quietCard()
                     .accessibilityLabel("Error: \(message)")
+                    .padding(.top, QuietFrameTheme.contentSpacing)
             }
-            Spacer(minLength: QuietFrameTheme.contentSpacing)
+            Spacer(minLength: QuietFrameTheme.sectionSpacing)
+            if step == .privacy {
+                welcomeActions
+            }
         }
         .confirmationDialog(
             "Continue without an app passcode?",
             isPresented: $confirmsNoPasscode,
             titleVisibility: .visible
         ) {
-            Button("Continue Without Passcode") {
+            Button("Continue without passcode") {
                 Task { await coordinator.createWithoutPasscode() }
             }
-            Button("Use a Passcode", role: .cancel) {
+            Button("Use a passcode", role: .cancel) {
                 withAnimation(reduceMotion ? nil : .snappy) { step = .create }
             }
         } message: {
@@ -68,59 +75,68 @@ struct OnboardingView: View {
         .accessibilityIdentifier("onboarding")
     }
 
-    private var privacyStep: some View {
-        VStack(spacing: QuietFrameTheme.sectionSpacing) {
-            QuietIntroduction(
-                title: "Your moments, held quietly.",
-                message: "QuietFrame encrypts photos and videos on this device. There are no accounts, ads, analytics, or media uploads.",
-                systemImage: "viewfinder.circle.fill"
-            )
-            VStack(alignment: .leading, spacing: QuietFrameTheme.contentSpacing) {
-                privacyPoint("lock.shield.fill", "Encrypted at rest")
-                Divider()
-                privacyPoint("icloud.slash.fill", "Excluded from iCloud backup")
-                Divider()
-                privacyPoint("photo.badge.plus", "Photos access only when you choose")
-            }
-            .padding(QuietFrameTheme.pagePadding)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .quietCard()
+    private func markSize(isCompactHeight: Bool) -> CGFloat {
+        dynamicTypeSize.isAccessibilitySize || isCompactHeight ? 120 : 176
+    }
 
-            VStack(spacing: QuietFrameTheme.compactSpacing) {
-                Button {
-                    withAnimation(reduceMotion ? nil : .snappy) { step = .create }
-                } label: {
-                    Text("Use a Passcode")
-                        .frame(maxWidth: .infinity, minHeight: QuietFrameTheme.controlHeight)
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("start-setup")
+    private func irisSize(isCompactHeight: Bool) -> CGFloat {
+        if isCompactHeight { return 120 }
+        return dynamicTypeSize.isAccessibilitySize ? 128 : 176
+    }
 
-                Button {
-                    confirmsNoPasscode = true
-                } label: {
-                    Text("Continue Without Passcode")
-                        .frame(maxWidth: .infinity, minHeight: QuietFrameTheme.controlHeight)
-                }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("skip-passcode")
+    private func welcome(isCompactHeight: Bool) -> some View {
+        VStack(spacing: 0) {
+            ApertureMark(closure: 0, filledBlades: 0, size: markSize(isCompactHeight: isCompactHeight))
+
+            Text("Your moments,\nheld quietly.")
+                .quietScreenTitle()
+                .padding(.top, 32)
+
+            Text("QuietFrame encrypts photos and videos on this device. There are no accounts, ads, analytics, or media uploads.")
+                .font(.callout)
+                .foregroundStyle(QuietFrameTheme.quietInk)
+                .padding(.top, QuietFrameTheme.contentSpacing)
+
+            VStack(alignment: .leading, spacing: 14) {
+                privacyPoint("lock", "Encrypted at rest")
+                privacyPoint("icloud.slash", "Excluded from iCloud backup")
+                privacyPoint("checkmark.rectangle", "Photos access only when you choose")
             }
-            .font(.headline)
-            .multilineTextAlignment(.center)
-            .fixedSize(horizontal: false, vertical: true)
+            .multilineTextAlignment(.leading)
+            .padding(.top, QuietFrameTheme.sectionSpacing)
+        }
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var welcomeActions: some View {
+        VStack(spacing: QuietFrameTheme.compactSpacing) {
+            Button {
+                withAnimation(reduceMotion ? nil : .snappy) { step = .create }
+            } label: {
+                Text("Use a passcode")
+            }
+            .buttonStyle(.aperturePrimary)
+            .accessibilityIdentifier("start-setup")
+
+            Button {
+                confirmsNoPasscode = true
+            } label: {
+                Text("Continue without passcode")
+            }
+            .buttonStyle(.apertureSecondary)
+            .accessibilityIdentifier("skip-passcode")
         }
     }
 
     private func privacyPoint(_ symbol: String, _ text: String) -> some View {
         Label {
             Text(text)
-                .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
         } icon: {
             Image(systemName: symbol)
-                .foregroundStyle(QuietFrameTheme.accent)
         }
-        .font(.subheadline.weight(.medium))
+        .font(.subheadline)
         .labelStyle(QuietSettingsLabelStyle())
     }
 
@@ -129,18 +145,29 @@ struct OnboardingView: View {
         detail: String,
         label: String,
         value: Binding<String>,
+        isCompactHeight: Bool,
         onComplete: @escaping () -> Void
     ) -> some View {
-        VStack(spacing: QuietFrameTheme.sectionSpacing) {
-            QuietIntroduction(title: title, message: detail, systemImage: "lock.square.stack.fill")
+        VStack(spacing: QuietFrameTheme.pagePadding) {
+            VStack(spacing: QuietFrameTheme.compactSpacing) {
+                Text(title)
+                    .font(QuietFrameTheme.titleFont)
+                    .foregroundStyle(QuietFrameTheme.ink)
+                    .accessibilityAddTraits(.isHeader)
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(QuietFrameTheme.quietInk)
+            }
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+
             SixDigitPasscodeField(
                 label: label,
                 passcode: value,
                 isDisabled: coordinator.isWorking,
+                irisSize: irisSize(isCompactHeight: isCompactHeight),
                 onComplete: onComplete
             )
-            .padding(QuietFrameTheme.contentSpacing)
-            .quietCard()
         }
     }
 }

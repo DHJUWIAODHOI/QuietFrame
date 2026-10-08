@@ -14,28 +14,56 @@ struct RootView: View {
                 .modelContainer(dependencies.modelContainer)
                 .environment(dependencies)
         case .failed(let message):
-            VStack(spacing: QuietFrameTheme.contentSpacing) {
-                ContentUnavailableView(
-                    "Vault Unavailable",
-                    systemImage: "externaldrive.badge.exclamationmark",
-                    description: Text(message)
-                )
-                Button("Try Again") { Task { await appModel.retryBootstrap() } }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
+            VaultProblemView(
+                title: "Vault unavailable",
+                message: message,
+                systemImage: "externaldrive.badge.exclamationmark"
+            ) {
+                Button("Try again") { Task { await appModel.retryBootstrap() } }
+                    .buttonStyle(.aperturePrimary)
             }
-            .frame(maxWidth: QuietFrameTheme.readableWidth)
-            .padding(QuietFrameTheme.pagePadding)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(QuietFrameTheme.background)
             .accessibilityIdentifier("migration-error")
         }
     }
 }
 
+/// A calm full-screen explanation for states where the vault cannot open, with one way forward.
+private struct VaultProblemView<Actions: View>: View {
+    let title: String
+    let message: String
+    let systemImage: String
+    @ViewBuilder let actions: Actions
+
+    var body: some View {
+        VStack(spacing: QuietFrameTheme.sectionSpacing) {
+            Spacer(minLength: 0)
+            VStack(spacing: QuietFrameTheme.contentSpacing) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 40, weight: .light))
+                    .foregroundStyle(QuietFrameTheme.accent)
+                    .accessibilityHidden(true)
+                Text(title)
+                    .font(QuietFrameTheme.titleFont)
+                    .foregroundStyle(QuietFrameTheme.ink)
+                    .accessibilityAddTraits(.isHeader)
+                Text(message)
+                    .font(.body)
+                    .foregroundStyle(QuietFrameTheme.quietInk)
+            }
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+            actions
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: QuietFrameTheme.readableWidth)
+        .padding(QuietFrameTheme.pagePadding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(QuietFrameTheme.background.ignoresSafeArea())
+    }
+}
+
 private struct AuthenticatedRootView: View {
     @Environment(\.scenePhase) private var scenePhase
-    @Query private var settingsRecords: [AppSettings]
     @State private var sceneIsObscured = true
     @State private var screenIsCaptured = false
     @State private var lifecycleTask: Task<Void, Never>?
@@ -58,7 +86,7 @@ private struct AuthenticatedRootView: View {
         .background {
             PrivacyShieldWindow(isVisible: isShielded, captureStateDidChange: updateCaptureState)
         }
-        .preferredColorScheme(preferredColorScheme)
+        .background(QuietFrameTheme.background.ignoresSafeArea())
         .task {
             await coordinator.initializeIfNeeded()
             await handle(scenePhase)
@@ -139,33 +167,20 @@ private struct AuthenticatedRootView: View {
         }
     }
 
-    private var preferredColorScheme: ColorScheme? {
-        switch settingsRecords.first?.appearance ?? .system {
-        case .system: nil
-        case .light: .light
-        case .dark: .dark
-        }
-    }
 }
 
 private struct RetryRequiredView: View {
     let coordinator: VaultLockCoordinator
 
     var body: some View {
-        VStack(spacing: QuietFrameTheme.contentSpacing) {
-            ContentUnavailableView(
-                "QuietFrame Couldn't Open",
-                systemImage: "arrow.clockwise.circle",
-                description: Text(coordinator.userMessage ?? "Try opening the vault again.")
-            )
-            Button("Try Again") { Task { await coordinator.retryOpeningVault() } }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
+        VaultProblemView(
+            title: "QuietFrame couldn't open",
+            message: coordinator.userMessage ?? "Try opening the vault again.",
+            systemImage: "arrow.clockwise.circle"
+        ) {
+            Button("Try again") { Task { await coordinator.retryOpeningVault() } }
+                .buttonStyle(.aperturePrimary)
         }
-        .frame(maxWidth: QuietFrameTheme.readableWidth)
-        .padding(QuietFrameTheme.pagePadding)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(QuietFrameTheme.background)
         .accessibilityIdentifier("vault-retry-required")
     }
 }
@@ -175,14 +190,12 @@ struct LaunchView: View {
         ZStack {
             // Opaque launch cover; must stay opaque for privacy.
             QuietFrameTheme.vaultGradient.ignoresSafeArea()
-            VStack(spacing: QuietFrameTheme.contentSpacing) {
-                Image(systemName: "viewfinder.circle.fill")
-                    .font(.system(size: 54, weight: .medium))
-                    .symbolRenderingMode(.hierarchical)
+            VStack(spacing: QuietFrameTheme.sectionSpacing) {
+                ApertureMark(closure: 1, filledBlades: 6, size: 120)
                 Text("QuietFrame")
-                    .font(.largeTitle.weight(.semibold))
+                    .font(QuietFrameTheme.titleFont)
+                    .foregroundStyle(QuietFrameTheme.ink)
             }
-            .foregroundStyle(.white)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("QuietFrame is opening")
@@ -196,20 +209,14 @@ private struct RecoveryRequiredView: View {
     @State private var showsReset = false
 
     var body: some View {
-        VStack(spacing: QuietFrameTheme.contentSpacing) {
-            ContentUnavailableView(
-                "Encryption Key Unavailable",
-                systemImage: "key.slash",
-                description: Text(message ?? "QuietFrame cannot safely open the existing vault.")
-            )
-            Button("Erase Unrecoverable Vault", role: .destructive) { showsReset = true }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
+        VaultProblemView(
+            title: "Encryption key unavailable",
+            message: message ?? "QuietFrame cannot safely open the existing vault.",
+            systemImage: "key.slash"
+        ) {
+            Button("Erase unrecoverable vault", role: .destructive) { showsReset = true }
+                .buttonStyle(.apertureDestructive)
         }
-        .frame(maxWidth: QuietFrameTheme.readableWidth)
-        .padding(QuietFrameTheme.pagePadding)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(QuietFrameTheme.background)
         .sheet(isPresented: $showsReset) {
             RecoveryResetView(coordinator: coordinator)
         }

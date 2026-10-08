@@ -111,10 +111,15 @@ QuietFrame/
 - **Views:**
   - A screen with a view model creates it in a private `*Content` struct via `State(initialValue:)`; child views take it as `@Bindable`. Simple screens use `@Query` and call services directly.
   - Naming: tab roots are `*Screen`, other views are `*View`, design primitives are `Quiet*`, UIKit bridges are `*View: UIViewRepresentable` with a nested `Coordinator`.
-- **Design:**
-  - Use `QuietFrameTheme` tokens: corner radius 20/12, page padding 20, spacing 28/16/8, control height 44, readable width 560. Use `.quietCard()` and `.quietFormStyle()`.
-  - Use system text styles only, and `.monospacedDigit()` for numbers.
-  - Support Dynamic Type (branch on `isAccessibilitySize`, use `ViewThatFits`) and Reduce Motion. For VoiceOver, use `accessibilityAction(named:)` to mirror long-press and context-menu actions.
+- **Design (the "Aperture" look):**
+  - Always dark; there is no theme setting. `QuietFrameApp` applies `.preferredColorScheme(.dark)`, brass tint, and `QuietFrameTheme.applyGlobalAppearance()` (serif large titles on night navigation bars, dusk tab bar, brass switches). `AppSettings.appearance` still exists in the model but is unused.
+  - Colours come only from `QuietFrameTheme`: `night` ground, `dusk` surfaces/rows/sheets, `slate` raised controls and dividers, `moon` text, `mist` secondary text, `brass` for the iris, primary buttons and selection (sparingly), `ember` for destructive text. Semantic aliases: `background`, `elevated`, `inset`, `separator`, `ink`, `quietInk`, `accent`, `destructive`.
+  - Tokens: corner radius 16, compact 12, tile 10, sheet 28; page padding 24; spacing 28/16/8; grid spacing 6; control height 44; primary button height 52; readable width 560.
+  - Type: New York serif for titles (`screenTitleFont`, `titleFont`, `sectionTitleFont`, or `.quietScreenTitle()`), SF Pro for everything else, `.monospacedDigit()` for numbers.
+  - Components: `.aperturePrimary` / `.apertureSecondary` / `.apertureDestructive` pill buttons; `.quietFormStyle()` on lists plus `.quietRows()` on sections; `.quietCard()`; sheets use `presentationBackground(QuietFrameTheme.elevated)` and `presentationCornerRadius(QuietFrameTheme.sheetCornerRadius)`.
+  - The signature element is `ApertureIris` / `ApertureMark` (`Components/ApertureIris.swift`): six blades that close as `closure` goes 0→1. `SixDigitPasscodeField` shows it above an on-screen keypad, one blade per digit. Keep the iris rare: passcode entry, welcome, launch and privacy cover.
+  - Support Dynamic Type (branch on `isAccessibilitySize`, use `ViewThatFits`) and Reduce Motion, and keep layouts scrollable on a 375×667 iPhone SE. For VoiceOver, use `accessibilityAction(named:)` to mirror long-press and context-menu actions.
+  - The HTML prototypes that defined this look live on the "QuietFrame Redesign Prototypes" canvas (direction B, Aperture).
 - Accessibility identifiers are kebab-case (`onboarding`, `unlock-screen`, `main-tabs`, ...), and the UI test depends on them.
 - Comments are rare; write self-explanatory code.
 - **Tests:**
@@ -144,7 +149,5 @@ QuietFrame/
 - With the default "Immediately", auto-lock fires on the app's own system prompts: Face ID enable, Photos permission, the delete confirmation, Save to Photos (`App/VaultLockCoordinator.swift:324`).
 - Backgrounding during an in-flight unlock leaves the vault unlocked past the auto-lock grace period (`VaultLockCoordinator.swift:324-358`).
 - Any reconcile or purge failure blocks unlock, and the user sees an authentication error (`App/AppDependencies.swift:95`).
-- "Delete from Photos" doesn't warn that the backup-excluded vault becomes the only copy (`Features/Import/ImportPreviewView.swift:58`).
-- The build setting `ASSETCATALOG_COMPILER_ACCENT_COLOR_NAME` is the wrong key, so the tint is system blue (`project.pbxproj:397`).
 - App Store: the app icon is SVG only (~30 MB `Assets.car`, alpha risk); convert it to PNG. The `ITSAppUsesNonExemptEncryption` key is missing.
 - Hosted reset tests write the real reset-journal marker. An aborted run on a device could wipe that device's vault on the next launch.

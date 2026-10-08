@@ -35,33 +35,20 @@ private struct TrashScreenContent: View {
     var body: some View {
         VStack(spacing: 0) {
             if !viewModel.items.isEmpty {
-                Label {
-                    Text("Items are permanently deleted after \(settingsRecords.first?.trashRetentionDays ?? 30) days.")
-                        .fixedSize(horizontal: false, vertical: true)
-                } icon: {
-                    Image(systemName: "clock")
-                        .foregroundStyle(QuietFrameTheme.accent)
-                        .accessibilityHidden(true)
-                }
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(QuietFrameTheme.contentSpacing)
-                    .quietCard()
-                    .padding(.horizontal, QuietFrameTheme.pagePadding)
-                    .padding(.vertical, QuietFrameTheme.compactSpacing)
+                retentionBanner
             }
             GalleryGridView(
                 viewModel: viewModel,
                 thumbnailService: dependencies.thumbnailService,
                 minimumCellWidth: CGFloat(settingsRecords.first?.thumbnailSize.minimumWidth ?? 120),
-                emptyTitle: "Trash Is Empty",
+                emptyTitle: "Trash is empty",
                 emptyDescription: "Deleted media remains encrypted here until it expires.",
                 open: { media in viewerRequest = MediaViewerRequest(mediaID: media.id) }
             )
         }
         .background(QuietFrameTheme.background)
         .navigationTitle("Trash")
+        .navigationBarTitleDisplayMode(.large)
         .searchable(text: searchBinding, prompt: "Search Trash")
         .toolbar { trashToolbar }
         .safeAreaInset(edge: .bottom) { selectionBar }
@@ -88,7 +75,7 @@ private struct TrashScreenContent: View {
             isPresented: $confirmsPermanentDeletion,
             titleVisibility: .visible
         ) {
-            Button("Delete Permanently", role: .destructive) { permanentlyDeleteSelection() }
+            Button("Delete permanently", role: .destructive) { permanentlyDeleteSelection() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This removes encrypted files from this device and cannot be undone.")
@@ -108,6 +95,25 @@ private struct TrashScreenContent: View {
         } message: {
             Text(userMessage ?? "The Trash action could not be completed.")
         }
+    }
+
+    private var retentionBanner: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Image(systemName: "clock")
+                .font(.body)
+                .foregroundStyle(QuietFrameTheme.quietInk)
+                .accessibilityHidden(true)
+            Text("Items are permanently deleted after \(settingsRecords.first?.trashRetentionDays ?? 30) days.")
+                .font(.subheadline)
+                .foregroundStyle(QuietFrameTheme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 14)
+        .padding(.horizontal, QuietFrameTheme.contentSpacing)
+        .quietCard()
+        .padding(.horizontal, QuietFrameTheme.pagePadding)
+        .padding(.vertical, QuietFrameTheme.compactSpacing)
     }
 
     @ToolbarContentBuilder
@@ -131,7 +137,7 @@ private struct TrashScreenContent: View {
                         }
                     }
                 } label: {
-                    Label("Filter and Sort", systemImage: "line.3.horizontal.decrease.circle")
+                    Label("Filter and sort", systemImage: "line.3.horizontal.decrease.circle")
                 }
                 Button("Select", systemImage: "checkmark.circle") { viewModel.beginSelection() }
                     .disabled(viewModel.items.isEmpty)
@@ -139,6 +145,7 @@ private struct TrashScreenContent: View {
                     confirmsEmptyTrash = true
                 }
                 .disabled(viewModel.items.isEmpty || isWorking)
+                .tint(QuietFrameTheme.destructive)
             }
         }
     }
@@ -147,52 +154,78 @@ private struct TrashScreenContent: View {
     private var selectionBar: some View {
         if viewModel.isSelecting {
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: QuietFrameTheme.contentSpacing) {
-                    selectionCount.fixedSize()
-                    Spacer(minLength: QuietFrameTheme.contentSpacing)
-                    selectionActions
-                }
-                .padding(.horizontal, QuietFrameTheme.pagePadding)
-
-                VStack(alignment: .leading, spacing: QuietFrameTheme.compactSpacing) {
+                HStack(spacing: QuietFrameTheme.compactSpacing / 2) {
                     selectionCount
-                        .padding(.horizontal, QuietFrameTheme.pagePadding)
+                        .fixedSize()
+                        .padding(.leading, 12)
+                    Spacer(minLength: QuietFrameTheme.compactSpacing)
+                    HStack(spacing: QuietFrameTheme.compactSpacing / 2) {
+                        restoreButton
+                        deleteButton
+                    }
+                    .fixedSize()
+                }
+
+                VStack(spacing: QuietFrameTheme.compactSpacing / 2) {
+                    selectionCount
+                        .padding(.top, QuietFrameTheme.compactSpacing)
+                    HStack(spacing: QuietFrameTheme.compactSpacing / 2) {
+                        restoreButton
+                            .frame(maxWidth: .infinity)
+                        deleteButton
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: QuietFrameTheme.compactSpacing / 2) {
+                    selectionCount
+                        .padding(.top, QuietFrameTheme.compactSpacing)
+                        .padding(.horizontal, 12)
                     ScrollView(.horizontal) {
-                        selectionActions
-                            .padding(.horizontal, QuietFrameTheme.pagePadding)
+                        HStack(spacing: QuietFrameTheme.compactSpacing / 2) {
+                            restoreButton
+                            deleteButton
+                        }
+                        .fixedSize()
                     }
                     .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
                 }
             }
-            .padding(.vertical, QuietFrameTheme.compactSpacing)
-            .background(QuietFrameTheme.elevated)
-            .overlay(alignment: .top) {
-                Rectangle().fill(QuietFrameTheme.separator).frame(height: 0.5)
+            .labelStyle(TrashSelectionLabelStyle())
+            .buttonStyle(TrashSelectionButtonStyle())
+            .padding(.horizontal, QuietFrameTheme.compactSpacing)
+            .padding(.vertical, QuietFrameTheme.compactSpacing / 2)
+            .frame(minHeight: 64)
+            .background(
+                QuietFrameTheme.elevated,
+                in: RoundedRectangle(cornerRadius: QuietFrameTheme.sheetCornerRadius, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: QuietFrameTheme.sheetCornerRadius, style: .continuous)
+                    .strokeBorder(QuietFrameTheme.separator, lineWidth: 1)
             }
+            .padding(.horizontal, QuietFrameTheme.contentSpacing)
+            .padding(.bottom, QuietFrameTheme.compactSpacing)
         }
     }
 
     private var selectionCount: some View {
-        Text("\(viewModel.selectedIDs.count) Selected")
+        Text("\(viewModel.selectedIDs.count) selected")
             .font(.subheadline.weight(.semibold).monospacedDigit())
+            .foregroundStyle(QuietFrameTheme.ink)
             .fixedSize(horizontal: false, vertical: true)
     }
 
-    private var selectionActions: some View {
-        HStack(spacing: QuietFrameTheme.compactSpacing) {
-            Button("Restore", systemImage: "arrow.uturn.backward") { restoreSelection() }
-                .disabled(viewModel.selectedIDs.isEmpty || isWorking)
-            Button("Delete", systemImage: "trash", role: .destructive) {
-                confirmsPermanentDeletion = true
-            }
+    private var restoreButton: some View {
+        Button("Restore", systemImage: "arrow.uturn.backward") { restoreSelection() }
             .disabled(viewModel.selectedIDs.isEmpty || isWorking)
+    }
+
+    private var deleteButton: some View {
+        Button("Delete permanently", systemImage: "trash", role: .destructive) {
+            confirmsPermanentDeletion = true
         }
-        .font(.subheadline.weight(.semibold))
-        .labelStyle(.titleAndIcon)
-        .buttonStyle(.bordered)
-        .buttonBorderShape(.roundedRectangle(radius: QuietFrameTheme.compactCornerRadius))
-        .controlSize(.large)
-        .fixedSize()
+        .disabled(viewModel.selectedIDs.isEmpty || isWorking)
     }
 
     private var searchBinding: Binding<String> {
@@ -247,5 +280,45 @@ private struct TrashScreenContent: View {
             }
             isWorking = false
         }
+    }
+}
+
+private struct TrashSelectionLabelStyle: LabelStyle {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    @ViewBuilder
+    func makeBody(configuration: Configuration) -> some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            HStack(spacing: 8) {
+                configuration.icon
+                    .font(.title3)
+                configuration.title
+                    .font(.caption.weight(.medium))
+            }
+        } else {
+            VStack(spacing: 4) {
+                configuration.icon
+                    .font(.title3)
+                    .frame(minHeight: 24)
+                configuration.title
+                    .font(.caption.weight(.medium))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+private struct TrashSelectionButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(configuration.role == ButtonRole.destructive ? QuietFrameTheme.destructive : QuietFrameTheme.ink)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .frame(minWidth: 72, minHeight: 56)
+            .contentShape(Rectangle())
+            .opacity(isEnabled ? (configuration.isPressed ? 0.6 : 1) : 0.4)
     }
 }

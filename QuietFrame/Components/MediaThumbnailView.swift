@@ -8,85 +8,138 @@ struct MediaThumbnailView: View {
     var selectionMode = false
     var thumbnailAspectRatio: CGFloat = 1
 
+    @ScaledMetric(relativeTo: .caption) private var badgeSize: CGFloat = 24
     @State private var image: UIImage?
+
+    private static let badgeInset: CGFloat = 6
+
+    private var tileShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: QuietFrameTheme.tileCornerRadius, style: .continuous)
+    }
+
+    private var videoDuration: TimeInterval? {
+        media.mediaType == .video ? media.duration : nil
+    }
 
     var body: some View {
         ZStack {
             // The image sets the minimum height; badges can grow the tile at large text sizes.
             Color.clear.aspectRatio(thumbnailAspectRatio, contentMode: .fit)
 
-            VStack(spacing: QuietFrameTheme.compactSpacing / 2) {
-                HStack(alignment: .top, spacing: QuietFrameTheme.compactSpacing / 2) {
-                    if media.isFavorite {
-                        Image(systemName: "heart.fill")
-                            .font(.caption.bold())
-                            .foregroundStyle(.white)
-                            .padding(6)
-                            .background(.black.opacity(0.8), in: Circle())
-                    }
-                    Spacer(minLength: 0)
-                    if isSelected {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.title2)
-                            .symbolRenderingMode(.palette)
-                            .foregroundStyle(.white, QuietFrameTheme.accent)
-                    }
+            VStack(spacing: Self.badgeInset) {
+                if selectionMode || isSelected {
+                    selectionBadge
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                 }
-                Spacer(minLength: QuietFrameTheme.compactSpacing / 2)
-                VStack(alignment: .leading, spacing: QuietFrameTheme.compactSpacing / 2) {
-                    if media.mediaType == .video, let duration = media.duration {
-                        Label(formattedDuration(duration), systemImage: "play.fill")
-                            .monospacedDigit()
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 4)
-                            .background(.black.opacity(0.8), in: RoundedRectangle(cornerRadius: QuietFrameTheme.compactCornerRadius))
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                    }
-                    if let trashedAt = media.trashedAt {
-                        Label(trashedAt.formatted(date: .abbreviated, time: .omitted), systemImage: "trash.fill")
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 4)
-                            .background(.black.opacity(0.8), in: RoundedRectangle(cornerRadius: QuietFrameTheme.compactCornerRadius))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-                .labelStyle(.titleAndIcon)
-                .font(.caption2.bold())
-                .foregroundStyle(.white)
-                .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                bottomBadges
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(QuietFrameTheme.compactSpacing)
+            .padding(Self.badgeInset)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background {
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                QuietFrameTheme.inset
-                    .overlay {
-                        Image(systemName: media.mediaType.symbolName)
-                            .font(.title2)
-                            .foregroundStyle(.secondary)
-                    }
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: QuietFrameTheme.compactCornerRadius, style: .continuous))
+        .background { thumbnail }
+        .clipShape(tileShape)
         .overlay {
             if isSelected {
-                RoundedRectangle(cornerRadius: QuietFrameTheme.compactCornerRadius, style: .continuous)
+                tileShape
                     .strokeBorder(QuietFrameTheme.accent, lineWidth: 3)
                     .allowsHitTesting(false)
             }
         }
-        .contentShape(RoundedRectangle(cornerRadius: QuietFrameTheme.compactCornerRadius, style: .continuous))
+        .contentShape(tileShape)
         .task(id: media.thumbnailIdentifier) {
             image = await thumbnailService.image(for: media)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilitySummary)
         .accessibilityValue(selectionMode ? (isSelected ? "Selected" : "Not selected") : "")
+    }
+
+    @ViewBuilder
+    private var thumbnail: some View {
+        if let image {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+        } else {
+            QuietFrameTheme.elevated
+                .overlay {
+                    Image(systemName: media.mediaType.symbolName)
+                        .font(.title3)
+                        .foregroundStyle(QuietFrameTheme.quietInk)
+                }
+        }
+    }
+
+    @ViewBuilder
+    private var selectionBadge: some View {
+        if isSelected {
+            Image(systemName: "checkmark")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(QuietFrameTheme.background)
+                .frame(width: badgeSize, height: badgeSize)
+                .background(QuietFrameTheme.accent, in: Circle())
+        } else {
+            Circle()
+                .fill(QuietFrameTheme.background.opacity(0.55))
+                .overlay {
+                    Circle().strokeBorder(QuietFrameTheme.ink, lineWidth: 1.5)
+                }
+                .frame(width: badgeSize, height: badgeSize)
+        }
+    }
+
+    private var bottomBadges: some View {
+        VStack(alignment: .leading, spacing: Self.badgeInset) {
+            if let trashedAt = media.trashedAt {
+                Label(trashedAt.formatted(date: .abbreviated, time: .omitted), systemImage: "trash.fill")
+                    .labelStyle(.titleAndIcon)
+                    .thumbnailBadgeBackground()
+            }
+            if media.isFavorite || videoDuration != nil {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .bottom, spacing: 0) {
+                        if media.isFavorite {
+                            favoriteBadge
+                        }
+                        Spacer(minLength: 4)
+                        if let videoDuration {
+                            durationBadge(videoDuration)
+                                .layoutPriority(1)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: Self.badgeInset) {
+                        if media.isFavorite {
+                            favoriteBadge
+                        }
+                        if let videoDuration {
+                            durationBadge(videoDuration)
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                        }
+                    }
+                }
+            }
+        }
+        .font(.caption.weight(.medium))
+        .foregroundStyle(QuietFrameTheme.ink)
+    }
+
+    private var favoriteBadge: some View {
+        Image(systemName: "heart.fill")
+            .font(.caption2.weight(.semibold))
+            .frame(width: badgeSize, height: badgeSize)
+            .background(QuietFrameTheme.background.opacity(0.78), in: Circle())
+    }
+
+    private func durationBadge(_ duration: TimeInterval) -> some View {
+        Text(formattedDuration(duration))
+            .monospacedDigit()
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .thumbnailBadgeBackground()
     }
 
     private var accessibilitySummary: String {
@@ -101,5 +154,13 @@ struct MediaThumbnailView: View {
             return String(format: "%d:%02d:%02d", hours, (seconds % 3_600) / 60, seconds % 60)
         }
         return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+}
+
+private extension View {
+    func thumbnailBadgeBackground() -> some View {
+        padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(QuietFrameTheme.background.opacity(0.78), in: Capsule())
     }
 }

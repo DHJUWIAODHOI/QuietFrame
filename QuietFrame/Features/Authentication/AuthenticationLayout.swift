@@ -1,23 +1,24 @@
 import SwiftUI
 
 struct AuthenticationLayout<Content: View>: View {
-    @ViewBuilder let content: Content
+    @ViewBuilder let content: (_ isCompactHeight: Bool) -> Content
 
     var body: some View {
         GeometryReader { proxy in
             ScrollView {
-                VStack(spacing: QuietFrameTheme.sectionSpacing) {
-                    content
+                VStack(spacing: 0) {
+                    content(proxy.size.height < 700)
                 }
                 .frame(maxWidth: QuietFrameTheme.readableWidth)
-                .padding(QuietFrameTheme.pagePadding)
+                .padding(.horizontal, QuietFrameTheme.pagePadding)
+                .padding(.vertical, QuietFrameTheme.contentSpacing)
                 .frame(maxWidth: .infinity, minHeight: proxy.size.height)
             }
+            .scrollBounceBehavior(.basedOnSize)
         }
         .background(QuietFrameTheme.background.ignoresSafeArea())
+        .foregroundStyle(QuietFrameTheme.ink)
         .tint(QuietFrameTheme.accent)
-        .controlSize(.large)
-        .buttonBorderShape(.roundedRectangle(radius: QuietFrameTheme.compactCornerRadius))
     }
 }
 
@@ -27,10 +28,10 @@ struct AuthenticationErrorMessage: View {
     var body: some View {
         Label {
             Text(message)
-                .foregroundStyle(.primary)
+                .foregroundStyle(QuietFrameTheme.ink)
         } icon: {
-            Image(systemName: "exclamationmark.circle.fill")
-                .foregroundStyle(.red)
+            Image(systemName: "exclamationmark.circle")
+                .foregroundStyle(QuietFrameTheme.destructive)
                 .accessibilityHidden(true)
         }
         .font(.callout)

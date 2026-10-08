@@ -7,22 +7,23 @@ struct PrivacyShieldView: View {
     var body: some View {
         ZStack {
             QuietFrameTheme.vaultGradient.ignoresSafeArea()
-            VStack(spacing: 14) {
-                Image(systemName: isScreenCaptured ? "record.circle" : "viewfinder.circle.fill")
-                    .font(.system(size: 46, weight: .medium))
-                    .symbolRenderingMode(.hierarchical)
-                Text(isScreenCaptured ? "Sensitive Content Hidden" : "QuietFrame")
-                    .font(.title2.weight(.semibold))
-                if isScreenCaptured {
-                    Text("Stop screen recording or mirroring to view your vault.")
-                        .font(.subheadline)
-                        .multilineTextAlignment(.center)
-                        .foregroundStyle(.white.opacity(0.78))
+            VStack(spacing: QuietFrameTheme.sectionSpacing) {
+                ApertureMark(closure: 1, filledBlades: 6, size: 150)
+                VStack(spacing: QuietFrameTheme.compactSpacing) {
+                    Text(isScreenCaptured ? "Sensitive content hidden" : "QuietFrame")
+                        .font(QuietFrameTheme.titleFont)
+                        .foregroundStyle(QuietFrameTheme.ink)
+                    if isScreenCaptured {
+                        Text("Stop screen recording or mirroring to view your vault.")
+                            .font(.subheadline)
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(QuietFrameTheme.quietInk)
+                    }
                 }
             }
-            .foregroundStyle(.white)
-            .padding()
+            .padding(QuietFrameTheme.pagePadding)
         }
+        .environment(\.colorScheme, .dark)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isModal)
         .accessibilityLabel(isScreenCaptured ? "Sensitive content hidden during screen capture" : "QuietFrame is locked from view")
@@ -95,7 +96,8 @@ struct PrivacyShieldWindow: UIViewRepresentable {
 
             let privacyWindow = UIWindow(windowScene: scene)
             privacyWindow.windowLevel = .alert + 1
-            privacyWindow.backgroundColor = .black
+            privacyWindow.backgroundColor = QuietFrameTheme.nightUI
+            privacyWindow.overrideUserInterfaceStyle = .dark
             privacyWindow.rootViewController = hostingController
 
             self.hostingController = hostingController

@@ -8,36 +8,43 @@ struct AlbumDestinationPicker: View {
     var body: some View {
         NavigationStack {
             List {
-                Button("No Album", systemImage: "rectangle.stack.badge.minus") {
-                    choose(nil)
+                Section {
+                    Button("No album", systemImage: "rectangle.stack.badge.minus") {
+                        choose(nil)
+                    }
+                    .disabled(currentAlbumID == nil)
+                    .opacity(currentAlbumID == nil ? 0.45 : 1)
                 }
-                .disabled(currentAlbumID == nil)
-                .listRowBackground(QuietFrameTheme.elevated)
+                .quietRows()
 
-                ForEach(albums) { album in
-                    Button {
-                        choose(album.id)
-                    } label: {
-                        HStack(spacing: QuietFrameTheme.contentSpacing) {
-                            Label(album.name, systemImage: "rectangle.stack")
-                                .fixedSize(horizontal: false, vertical: true)
-                            Spacer(minLength: QuietFrameTheme.compactSpacing)
-                            if album.id == currentAlbumID {
-                                Image(systemName: "checkmark")
-                                    .font(.body.weight(.semibold))
-                                    .accessibilityHidden(true)
+                Section {
+                    ForEach(albums) { album in
+                        let isCurrent = album.id == currentAlbumID
+                        Button {
+                            choose(album.id)
+                        } label: {
+                            HStack(spacing: QuietFrameTheme.contentSpacing) {
+                                Label(album.name, systemImage: "rectangle.stack")
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: QuietFrameTheme.compactSpacing)
+                                if isCurrent {
+                                    Image(systemName: "checkmark")
+                                        .font(.body.weight(.semibold))
+                                        .foregroundStyle(QuietFrameTheme.accent)
+                                        .accessibilityHidden(true)
+                                }
                             }
                         }
+                        .disabled(isCurrent)
+                        .accessibilityAddTraits(isCurrent ? .isSelected : [])
                     }
-                    .disabled(album.id == currentAlbumID)
-                    .accessibilityAddTraits(album.id == currentAlbumID ? .isSelected : [])
-                    .listRowBackground(QuietFrameTheme.elevated)
                 }
+                .quietRows()
             }
             .labelStyle(QuietSettingsLabelStyle())
             .listStyle(.insetGrouped)
             .quietFormStyle()
-            .navigationTitle("Move to Album")
+            .navigationTitle("Move to album")
             .navigationBarTitleDisplayMode(.inline)
         }
     }

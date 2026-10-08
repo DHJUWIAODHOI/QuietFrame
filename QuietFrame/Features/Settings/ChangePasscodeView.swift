@@ -1,47 +1,57 @@
 import SwiftUI
 
 struct ChangePasscodeView: View {
+    private enum Step: Hashable {
+        case current
+        case newPasscode
+        case confirmation
+    }
+
     let coordinator: VaultLockCoordinator
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var current = ""
     @State private var newPasscode = ""
     @State private var confirmation = ""
     @State private var message: String?
+    @State private var step: Step = .current
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    QuietIntroduction(
-                        title: "Change Passcode",
-                        message: "Changing your passcode securely re-wraps the existing vault key. Media is not decrypted or rewritten.",
-                        systemImage: "ellipsis.rectangle"
-                    )
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, QuietFrameTheme.contentSpacing)
-                    .listRowBackground(Color.clear)
-                }
+            GeometryReader { proxy in
+                ScrollView {
+                    VStack(spacing: QuietFrameTheme.contentSpacing) {
+                        stepPicker
 
-                Section("Current Passcode") {
-                    passcodeField("Current six-digit passcode", text: $current)
-                }
-                Section {
-                    passcodeField("New six-digit passcode", text: $newPasscode)
-                    passcodeField("Confirm new passcode", text: $confirmation)
-                } header: {
-                    Text("New Passcode")
-                }
-                if let message {
-                    Section {
-                        AuthenticationErrorMessage(message: message)
-                            .accessibilityLabel("Error: \(message)")
+                        if let message {
+                            AuthenticationErrorMessage(message: message)
+                                .accessibilityLabel("Error: \(message)")
+                                .padding(QuietFrameTheme.contentSpacing)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(QuietFrameTheme.background, in: RoundedRectangle(cornerRadius: QuietFrameTheme.compactCornerRadius, style: .continuous))
+                        }
+
+                        passcodeWell(isCompactHeight: proxy.size.height < 640)
+
+                        Text("Changing your passcode securely re-wraps the existing vault key. Media is not decrypted or rewritten.")
+                            .font(.subheadline)
+                            .foregroundStyle(QuietFrameTheme.quietInk)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity)
                     }
+                    .frame(maxWidth: QuietFrameTheme.readableWidth)
+                    .padding(.horizontal, QuietFrameTheme.pagePadding)
+                    .padding(.vertical, QuietFrameTheme.contentSpacing)
+                    .frame(maxWidth: .infinity)
                 }
+                .scrollBounceBehavior(.basedOnSize)
             }
-            .listSectionSpacing(QuietFrameTheme.sectionSpacing)
-            .quietFormStyle()
-            .navigationTitle("Change Passcode")
+            .background(QuietFrameTheme.elevated)
+            .navigationTitle("Change passcode")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(QuietFrameTheme.elevated, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -52,16 +62,112 @@ struct ChangePasscodeView: View {
                 }
             }
         }
+        .presentationBackground(QuietFrameTheme.elevated)
+        .presentationCornerRadius(QuietFrameTheme.sheetCornerRadius)
     }
 
-    private func passcodeField(_ label: String, text: Binding<String>) -> some View {
-        SecureField(label, text: text)
-            .keyboardType(.numberPad)
-            .textContentType(.password)
-            .onChange(of: text.wrappedValue) { _, newValue in
-                text.wrappedValue = String(newValue.filter { $0 >= "0" && $0 <= "9" }.prefix(6))
+    private var stepPicker: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 4) {
+                stepChips
             }
+            VStack(alignment: .leading, spacing: 4) {
+                stepChips
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private var stepChips: some View {
+        stepChip("Current", accessibilityTitle: "Current passcode", for: .current, isComplete: current.count == 6)
+        stepChip("New", accessibilityTitle: "New passcode", for: .newPasscode, isComplete: newPasscode.count == 6)
+        stepChip("Confirm", accessibilityTitle: "Confirm new passcode", for: .confirmation, isComplete: confirmation.count == 6)
+    }
+
+    private func stepChip(_ title: String, accessibilityTitle: String, for target: Step, isComplete: Bool) -> some View {
+        let isSelected = step == target
+        return Button {
+            select(target)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: isComplete ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isComplete ? QuietFrameTheme.accent : QuietFrameTheme.quietInk)
+                    .accessibilityHidden(true)
+                Text(title)
+                    .foregroundStyle(isSelected ? QuietFrameTheme.ink : QuietFrameTheme.quietInk)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .font(.subheadline.weight(.medium))
+            .padding(.horizontal, 14)
             .frame(minHeight: QuietFrameTheme.controlHeight)
+            .background(isSelected ? QuietFrameTheme.background : Color.clear, in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityTitle)
+        .accessibilityValue(isComplete ? "Entered" : "Not entered")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private func passcodeWell(isCompactHeight: Bool) -> some View {
+        VStack(spacing: QuietFrameTheme.contentSpacing) {
+            Text(prompt)
+                .font(QuietFrameTheme.sectionTitleFont)
+                .foregroundStyle(QuietFrameTheme.ink)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+
+            SixDigitPasscodeField(
+                label: fieldLabel,
+                passcode: activeBinding,
+                irisSize: isCompactHeight ? 88 : 140,
+                onComplete: { advance() }
+            )
+            .id(step)
+        }
+        .padding(.vertical, isCompactHeight ? QuietFrameTheme.contentSpacing : QuietFrameTheme.pagePadding)
+        .padding(.horizontal, QuietFrameTheme.compactSpacing)
+        .frame(maxWidth: .infinity)
+        .background(QuietFrameTheme.background, in: RoundedRectangle(cornerRadius: QuietFrameTheme.cornerRadius, style: .continuous))
+    }
+
+    private var prompt: String {
+        switch step {
+        case .current: "Enter your current passcode"
+        case .newPasscode: "Choose a new passcode"
+        case .confirmation: "Confirm the new passcode"
+        }
+    }
+
+    private var fieldLabel: String {
+        switch step {
+        case .current: "Current six-digit passcode"
+        case .newPasscode: "New six-digit passcode"
+        case .confirmation: "Confirm new passcode"
+        }
+    }
+
+    private var activeBinding: Binding<String> {
+        switch step {
+        case .current: $current
+        case .newPasscode: $newPasscode
+        case .confirmation: $confirmation
+        }
+    }
+
+    private func advance() {
+        switch step {
+        case .current: select(.newPasscode)
+        case .newPasscode: select(.confirmation)
+        case .confirmation: break
+        }
+    }
+
+    private func select(_ target: Step) {
+        guard step != target else { return }
+        withAnimation(reduceMotion ? nil : .snappy) { step = target }
     }
 
     private func changePasscode() {
@@ -76,6 +182,7 @@ struct ChangePasscodeView: View {
             } else {
                 message = coordinator.userMessage
                 current = ""
+                select(.current)
             }
         }
     }

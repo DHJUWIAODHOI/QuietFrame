@@ -8,19 +8,22 @@ struct MediaInfoView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Media") {
+                Section {
                     if let filename = media.originalFilename {
                         infoRow("Filename", filename)
                     }
                     infoRow("Type", typeDescription)
-                    infoRow("Dimensions", "\(media.pixelWidth) x \(media.pixelHeight)")
-                    infoRow("File Size", ByteCountFormatter.string(fromByteCount: media.byteCount, countStyle: .file))
+                    infoRow("Dimensions", "\(media.pixelWidth) \u{00D7} \(media.pixelHeight)")
+                    infoRow("File size", ByteCountFormatter.string(fromByteCount: media.byteCount, countStyle: .file))
                     if let duration = media.duration {
                         infoRow("Duration", formattedDuration(duration))
                     }
+                } header: {
+                    sectionHeader("Media")
                 }
+                .quietRows()
 
-                Section("Dates") {
+                Section {
                     infoRow("Imported", media.importedAt.formatted(date: .long, time: .shortened))
                     if let originalCreationDate = media.originalCreationDate {
                         infoRow("Created", originalCreationDate.formatted(date: .long, time: .shortened))
@@ -28,26 +31,39 @@ struct MediaInfoView: View {
                     if let trashedAt = media.trashedAt {
                         infoRow("Deleted", trashedAt.formatted(date: .long, time: .shortened))
                     }
+                } header: {
+                    sectionHeader("Dates")
                 }
+                .quietRows()
 
-                Section("Organization") {
-                    infoRow("Album", media.album?.name ?? "No Album")
+                Section {
+                    infoRow("Album", media.album?.name ?? "No album")
                     infoRow("Favorite", media.isFavorite ? "Yes" : "No")
                     if !media.tags.isEmpty {
                         infoRow("Tags", media.tags.joined(separator: ", "))
                     }
+                } header: {
+                    sectionHeader("Organization")
                 }
+                .quietRows()
             }
             .labeledContentStyle(MediaInfoRowStyle())
             .quietFormStyle()
-            .navigationTitle("Media Information")
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("Media information")
+            .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
             }
         }
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(QuietFrameTheme.sectionTitleFont)
+            .foregroundStyle(QuietFrameTheme.ink)
+            .textCase(nil)
     }
 
     private func infoRow(_ title: String, _ value: String) -> some View {
@@ -71,8 +87,11 @@ struct MediaInfoView: View {
 
 private struct MediaInfoRowStyle: LabeledContentStyle {
     func makeBody(configuration: Configuration) -> some View {
-        let label = configuration.label.foregroundStyle(.secondary)
-        let value = configuration.content.foregroundStyle(.primary)
+        let label = configuration.label
+            .foregroundStyle(QuietFrameTheme.quietInk)
+        let value = configuration.content
+            .foregroundStyle(QuietFrameTheme.ink)
+            .monospacedDigit()
 
         return ViewThatFits(in: .horizontal) {
             HStack(alignment: .firstTextBaseline, spacing: QuietFrameTheme.contentSpacing) {

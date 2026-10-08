@@ -8,21 +8,26 @@ struct EmptyVaultView: View {
 
     var body: some View {
         VStack(spacing: QuietFrameTheme.sectionSpacing) {
-            QuietIntroduction(
-                title: title,
-                message: message,
-                systemImage: "photo.on.rectangle.angled"
-            )
+            VStack(spacing: QuietFrameTheme.contentSpacing) {
+                ApertureIris(closure: 1, filledBlades: 0, size: 88)
+                    .accessibilityHidden(true)
+                VStack(spacing: QuietFrameTheme.compactSpacing) {
+                    Text(title)
+                        .font(QuietFrameTheme.titleFont)
+                        .foregroundStyle(QuietFrameTheme.ink)
+                        .accessibilityAddTraits(.isHeader)
+                    Text(message)
+                        .font(.body)
+                        .foregroundStyle(QuietFrameTheme.quietInk)
+                }
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            }
 
             Button(action: action) {
                 Label(actionTitle, systemImage: "plus")
-                    .font(.headline)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, minHeight: QuietFrameTheme.controlHeight)
             }
-            .buttonStyle(.borderedProminent)
-            .buttonBorderShape(.roundedRectangle(radius: QuietFrameTheme.compactCornerRadius))
-            .controlSize(.large)
+            .buttonStyle(.aperturePrimary)
             .accessibilityIdentifier("choose-media")
         }
         .frame(maxWidth: QuietFrameTheme.readableWidth)

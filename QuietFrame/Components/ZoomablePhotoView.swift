@@ -19,7 +19,7 @@ struct ZoomablePhotoView: UIViewRepresentable {
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.showsVerticalScrollIndicator = false
         scrollView.contentInsetAdjustmentBehavior = .never
-        scrollView.backgroundColor = .black
+        scrollView.backgroundColor = QuietFrameTheme.nightUI
 
         let imageView = scrollView.imageView
         imageView.contentMode = .scaleAspectFit

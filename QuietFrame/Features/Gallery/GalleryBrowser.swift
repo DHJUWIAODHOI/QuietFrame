@@ -75,15 +75,16 @@ private struct GalleryBrowserContent: View {
             viewModel: galleryViewModel,
             thumbnailService: dependencies.thumbnailService,
             minimumCellWidth: thumbnailWidth,
-            emptyTitle: allowsImport ? "Your Vault Is Ready" : "No Media Here",
+            emptyTitle: allowsImport ? "Your vault is ready" : "No media here",
             emptyDescription: allowsImport
                 ? "Import photos and videos to protect them on this device."
                 : "Items matching this collection will appear here.",
-            emptyActionTitle: allowsImport ? "Choose Media" : nil,
+            emptyActionTitle: allowsImport ? "Choose media" : nil,
             emptyAction: allowsImport ? beginImportSelection : nil
         ) { media in
             viewerRequest = MediaViewerRequest(mediaID: media.id)
         }
+        .safeAreaInset(edge: .top, spacing: 0) { filterBar }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.large)
         .searchable(text: searchBinding, prompt: "Filename, album, date, or tag")
@@ -122,6 +123,9 @@ private struct GalleryBrowserContent: View {
                 showsAlbumDestinations = false
             }
             .presentationDetents([.medium, .large])
+            .presentationBackground(QuietFrameTheme.elevated)
+            .presentationCornerRadius(QuietFrameTheme.sheetCornerRadius)
+            .presentationDragIndicator(.visible)
         }
         .fullScreenCover(item: $viewerRequest, onDismiss: {
             Task { await galleryViewModel.loadInitial() }
@@ -152,12 +156,12 @@ private struct GalleryBrowserContent: View {
             Text("Items remain encrypted and can be restored until the Trash retention period expires.")
         }
         .confirmationDialog(
-            "Photos Access Needed",
+            "Photos access needed",
             isPresented: $showsPhotosAccessWarning,
             titleVisibility: .visible
         ) {
             Button("Open Settings") { openSystemSettings() }
-            Button(allowsOriginalDeletionForImport ? "Continue with Limited Access" : "Continue Without Automatic Deletion") {
+            Button(allowsOriginalDeletionForImport ? "Continue with limited access" : "Continue without automatic deletion") {
                 showsPicker = true
             }
             Button("Cancel", role: .cancel) {}
@@ -187,13 +191,18 @@ private struct GalleryBrowserContent: View {
 
     @ToolbarContentBuilder
     private var galleryToolbar: some ToolbarContent {
-        ToolbarItem(placement: .topBarLeading) {
-            if galleryViewModel.isSelecting {
-                Button("Cancel") { galleryViewModel.endSelection() }
+        if galleryViewModel.isSelecting {
+            ToolbarItem(placement: .principal) {
+                selectionCount
+                    .font(.headline)
+                    .lineLimit(1)
+                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             }
         }
         ToolbarItemGroup(placement: .topBarTrailing) {
-            if !galleryViewModel.isSelecting {
+            if galleryViewModel.isSelecting {
+                Button("Cancel") { galleryViewModel.endSelection() }
+            } else {
                 Menu {
                     Picker("Filter", selection: filterBinding) {
                         ForEach(MediaFilter.allCases) { filter in
@@ -210,16 +219,16 @@ private struct GalleryBrowserContent: View {
                        galleryViewModel.query.sort == .importedAt
                         || galleryViewModel.query.sort == .createdAt {
                         Divider()
-                        Picker("Sort Order", selection: dateSortDirectionBinding) {
+                        Picker("Sort order", selection: dateSortDirectionBinding) {
                             ForEach(MediaDateSortDirection.allCases) { direction in
                                 Text(direction.title).tag(direction)
                             }
                         }
                     }
                 } label: {
-                    Label("Filter and Sort", systemImage: "line.3.horizontal.decrease.circle")
+                    Label("Filter and sort", systemImage: "line.3.horizontal.decrease.circle")
                 }
-                Button("Select", systemImage: "checkmark.circle") {
+                Button("Select") {
                     galleryViewModel.beginSelection()
                 }
                 if allowsImport {
@@ -230,72 +239,130 @@ private struct GalleryBrowserContent: View {
         }
     }
 
+    private var showsFilterChips: Bool {
+        !galleryViewModel.items.isEmpty
+            || galleryViewModel.query.filter != .all
+            || !galleryViewModel.query.searchText.isEmpty
+    }
+
+    @ViewBuilder
+    private var filterBar: some View {
+        if showsFilterChips {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: QuietFrameTheme.compactSpacing) {
+                    ForEach(MediaFilter.allCases) { filter in
+                        let isSelected = galleryViewModel.query.filter == filter
+                        Button(filter.title) { selectFilter(filter) }
+                            .buttonStyle(GalleryFilterChipStyle(isSelected: isSelected))
+                            .accessibilityAddTraits(isSelected ? .isSelected : [])
+                    }
+                }
+
+                Menu {
+                    Picker("Filter", selection: filterBinding) {
+                        ForEach(MediaFilter.allCases) { filter in
+                            Text(filter.title).tag(filter)
+                        }
+                    }
+                } label: {
+                    Text("Filter: \(galleryViewModel.query.filter.title)")
+                }
+                .buttonStyle(GalleryFilterChipStyle(isSelected: false))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, QuietFrameTheme.pagePadding)
+            .padding(.top, QuietFrameTheme.compactSpacing / 2)
+            .padding(.bottom, QuietFrameTheme.compactSpacing)
+            .background(QuietFrameTheme.background)
+            .disabled(galleryViewModel.isSelecting)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Filter")
+        }
+    }
+
     @ViewBuilder
     private var selectionBar: some View {
         if galleryViewModel.isSelecting {
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: QuietFrameTheme.contentSpacing) {
-                    selectionCount.fixedSize()
-                    Spacer(minLength: QuietFrameTheme.contentSpacing)
+                HStack(spacing: 0) {
                     selectionActions
                 }
-                .padding(.horizontal, QuietFrameTheme.pagePadding)
 
                 VStack(alignment: .leading, spacing: QuietFrameTheme.compactSpacing) {
                     selectionCount
-                        .padding(.horizontal, QuietFrameTheme.pagePadding)
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, QuietFrameTheme.compactSpacing)
+                        .padding(.top, QuietFrameTheme.compactSpacing)
                     ScrollView(.horizontal) {
-                        selectionActions
-                            .padding(.horizontal, QuietFrameTheme.pagePadding)
+                        HStack(spacing: 0) {
+                            selectionActions
+                        }
                     }
                     .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
                 }
             }
-            .padding(.vertical, QuietFrameTheme.compactSpacing)
-            .background(QuietFrameTheme.elevated)
-            .overlay(alignment: .top) {
-                Rectangle().fill(QuietFrameTheme.separator).frame(height: 0.5)
-            }
+            .buttonStyle(GallerySelectionActionStyle())
+            .padding(.horizontal, QuietFrameTheme.compactSpacing)
+            .padding(.vertical, QuietFrameTheme.compactSpacing / 2)
+            .frame(maxWidth: QuietFrameTheme.readableWidth)
+            .background(
+                QuietFrameTheme.elevated,
+                in: RoundedRectangle(cornerRadius: QuietFrameTheme.sheetCornerRadius, style: .continuous)
+            )
+            .padding(.horizontal, QuietFrameTheme.contentSpacing)
+            .padding(.bottom, QuietFrameTheme.compactSpacing)
         }
     }
 
     private var selectionCount: some View {
-        Text("\(galleryViewModel.selectedIDs.count) Selected")
-            .font(.subheadline.weight(.semibold).monospacedDigit())
+        Text("\(galleryViewModel.selectedIDs.count) selected")
+            .monospacedDigit()
+            .foregroundStyle(QuietFrameTheme.ink)
             .fixedSize(horizontal: false, vertical: true)
     }
 
+    @ViewBuilder
     private var selectionActions: some View {
-        HStack(spacing: QuietFrameTheme.compactSpacing) {
-            Button("Favorite", systemImage: "heart") {
-                selectedItems.forEach {
-                    galleryViewModel.setFavorite(mediaID: $0.id, isFavorite: true)
-                }
+        Button {
+            selectedItems.forEach {
+                galleryViewModel.setFavorite(mediaID: $0.id, isFavorite: true)
             }
-            .disabled(galleryViewModel.selectedIDs.isEmpty)
-            Button("Move", systemImage: "folder") { showsAlbumDestinations = true }
-                .disabled(galleryViewModel.selectedIDs.isEmpty)
-            Menu {
-                Button("Share", systemImage: "square.and.arrow.up") { shareSelection() }
-                Button("Save to Photos", systemImage: "photo.badge.arrow.down") { saveSelectionToPhotos() }
-            } label: {
-                Label("Export", systemImage: "square.and.arrow.up")
-            }
-            .disabled(galleryViewModel.selectedIDs.isEmpty || isExporting)
-            Button("Trash", systemImage: "trash", role: .destructive) {
-                confirmsMoveToTrash = true
-            }
-            .disabled(galleryViewModel.selectedIDs.isEmpty)
-            if let albumID = initialQuery.albumID, galleryViewModel.selectedIDs.count == 1 {
-                Button("Cover", systemImage: "photo") { setCover(albumID: albumID) }
-            }
+        } label: {
+            GallerySelectionActionLabel(title: "Favorite", systemImage: "heart")
         }
-        .font(.subheadline.weight(.semibold))
-        .labelStyle(.titleAndIcon)
-        .buttonStyle(.bordered)
-        .buttonBorderShape(.roundedRectangle(radius: QuietFrameTheme.compactCornerRadius))
-        .controlSize(.large)
-        .fixedSize()
+        .disabled(galleryViewModel.selectedIDs.isEmpty)
+
+        Button {
+            showsAlbumDestinations = true
+        } label: {
+            GallerySelectionActionLabel(title: "Move", systemImage: "folder")
+        }
+        .disabled(galleryViewModel.selectedIDs.isEmpty)
+
+        Menu {
+            Button("Share", systemImage: "square.and.arrow.up") { shareSelection() }
+            Button("Save to Photos", systemImage: "photo.badge.arrow.down") { saveSelectionToPhotos() }
+        } label: {
+            GallerySelectionActionLabel(title: "Export", systemImage: "square.and.arrow.up")
+        }
+        .disabled(galleryViewModel.selectedIDs.isEmpty || isExporting)
+        .accessibilityHint("Share or save to Photos")
+
+        Button(role: .destructive) {
+            confirmsMoveToTrash = true
+        } label: {
+            GallerySelectionActionLabel(title: "Trash", systemImage: "trash", isDestructive: true)
+        }
+        .disabled(galleryViewModel.selectedIDs.isEmpty)
+
+        if let albumID = initialQuery.albumID, galleryViewModel.selectedIDs.count == 1 {
+            Button {
+                setCover(albumID: albumID)
+            } label: {
+                GallerySelectionActionLabel(title: "Cover", systemImage: "photo")
+            }
+            .accessibilityHint("Sets the selected item as the album cover")
+        }
     }
 
     private var filterBinding: Binding<MediaFilter> {
@@ -325,6 +392,11 @@ private struct GalleryBrowserContent: View {
 
     private var selectedItems: [VaultMedia] {
         galleryViewModel.items.filter { galleryViewModel.selectedIDs.contains($0.id) }
+    }
+
+    private func selectFilter(_ filter: MediaFilter) {
+        guard filterBinding.wrappedValue != filter else { return }
+        filterBinding.wrappedValue = filter
     }
 
     private func moveSelection(to albumID: UUID?) {
@@ -426,6 +498,57 @@ private struct GalleryBrowserContent: View {
     private func openSystemSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
+    }
+}
+
+private struct GallerySelectionActionLabel: View {
+    let title: String
+    let systemImage: String
+    var isDestructive = false
+
+    @ScaledMetric(relativeTo: .title3) private var iconHeight: CGFloat = 24
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Image(systemName: systemImage)
+                .font(.title3)
+                .frame(height: iconHeight)
+                .accessibilityHidden(true)
+            Text(title)
+                .font(.caption.weight(.medium))
+        }
+        .foregroundStyle(isDestructive ? QuietFrameTheme.destructive : QuietFrameTheme.ink)
+        .padding(.horizontal, QuietFrameTheme.compactSpacing)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, minHeight: QuietFrameTheme.controlHeight)
+    }
+}
+
+private struct GallerySelectionActionStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .contentShape(Rectangle())
+            .opacity(isEnabled ? (configuration.isPressed ? 0.6 : 1) : 0.4)
+    }
+}
+
+private struct GalleryFilterChipStyle: ButtonStyle {
+    let isSelected: Bool
+
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(isSelected ? .semibold : .medium))
+            .multilineTextAlignment(.center)
+            .foregroundStyle(isSelected ? QuietFrameTheme.background : QuietFrameTheme.ink)
+            .padding(.horizontal, 14)
+            .frame(minHeight: QuietFrameTheme.controlHeight)
+            .background(isSelected ? QuietFrameTheme.accent : QuietFrameTheme.elevated, in: Capsule())
+            .contentShape(Capsule())
+            .opacity(isEnabled ? (configuration.isPressed ? 0.78 : 1) : 0.45)
     }
 }
 

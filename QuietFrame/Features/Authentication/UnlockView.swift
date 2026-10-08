@@ -3,6 +3,7 @@ import SwiftUI
 struct UnlockView: View {
     let coordinator: VaultLockCoordinator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var passcode = ""
     @State private var attemptedBiometrics = false
     @State private var currentDate = Date()
@@ -10,83 +11,66 @@ struct UnlockView: View {
     @State private var showsRecoveryReset = false
 
     var body: some View {
-        AuthenticationLayout {
-            Spacer(minLength: QuietFrameTheme.contentSpacing)
-            QuietIntroduction(
-                title: "QuietFrame",
-                message: "Enter your passcode to continue",
-                systemImage: "viewfinder.circle.fill"
-            )
-            VStack(spacing: QuietFrameTheme.contentSpacing) {
-                SixDigitPasscodeField(
-                    label: "Six-digit QuietFrame passcode",
-                    passcode: $passcode,
-                    isDisabled: coordinator.isWorking || isLockedOut
-                ) {
-                    Task {
-                        await coordinator.unlock(passcode: passcode)
-                        if coordinator.state != .unlocked { passcode = "" }
-                    }
-                }
+        AuthenticationLayout { isCompactHeight in
+            Spacer(minLength: 0)
+            VStack(spacing: 6) {
+                Text("QuietFrame")
+                    .font(QuietFrameTheme.titleFont)
+                    .foregroundStyle(QuietFrameTheme.ink)
+                    .accessibilityAddTraits(.isHeader)
+                Text("Enter your passcode to continue")
+                    .font(.subheadline)
+                    .foregroundStyle(QuietFrameTheme.quietInk)
+            }
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.bottom, QuietFrameTheme.pagePadding)
 
+            SixDigitPasscodeField(
+                label: "Six-digit QuietFrame passcode",
+                passcode: $passcode,
+                isDisabled: coordinator.isWorking || isLockedOut,
+                irisSize: irisSize(isCompactHeight: isCompactHeight)
+            ) {
+                Task {
+                    await coordinator.unlock(passcode: passcode)
+                    if coordinator.state != .unlocked { passcode = "" }
+                }
+            }
+
+            statusMessage
+
+            VStack(spacing: 4) {
                 if coordinator.biometricsEnabled, coordinator.biometricKind != .none {
                     Button {
                         Task { await coordinator.unlockWithBiometrics() }
                     } label: {
                         Label(coordinator.biometricButtonTitle, systemImage: biometricSymbol)
-                            .frame(maxWidth: .infinity, minHeight: QuietFrameTheme.controlHeight)
-                            .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(ApertureButtonStyle(kind: .secondary, fillsWidth: false))
                     .disabled(coordinator.isWorking)
                     .accessibilityIdentifier("biometric-unlock")
                 }
-            }
-            .padding(QuietFrameTheme.contentSpacing)
-            .quietCard()
 
-            if let lockoutDate = coordinator.lockoutDate, lockoutDate > Date() {
-                TimelineView(.periodic(from: Date(), by: 1)) { context in
-                    Label {
-                        Text(lockoutText(at: context.date, until: lockoutDate))
-                            .foregroundStyle(.primary)
-                    } icon: {
-                        Image(systemName: "clock")
-                            .foregroundStyle(.secondary)
-                            .accessibilityHidden(true)
-                    }
-                    .font(.callout.monospacedDigit())
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(QuietFrameTheme.contentSpacing)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .quietCard()
-                }
-            } else if let message = coordinator.userMessage {
-                AuthenticationErrorMessage(message: message)
-                    .padding(QuietFrameTheme.contentSpacing)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .quietCard()
-                    .accessibilityLabel("Error: \(message)")
-            }
-            Spacer(minLength: QuietFrameTheme.contentSpacing)
-            VStack(spacing: QuietFrameTheme.compactSpacing) {
                 Button {
                     confirmsForgottenPasscode = true
                 } label: {
-                    Text("Forgot Passcode?")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: QuietFrameTheme.controlHeight)
+                    Text("Forgot passcode?")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(QuietFrameTheme.quietInk)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, QuietFrameTheme.contentSpacing)
+                        .frame(minHeight: QuietFrameTheme.controlHeight)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(QuietFrameTheme.accent)
-                Text("Media remains encrypted on this device")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
             }
-            .multilineTextAlignment(.center)
-            .fixedSize(horizontal: false, vertical: true)
+            .padding(.top, QuietFrameTheme.contentSpacing)
+
+            Spacer(minLength: QuietFrameTheme.contentSpacing)
+
+            encryptionFooter
         }
         .task {
             guard !attemptedBiometrics,
@@ -118,7 +102,7 @@ struct UnlockView: View {
             isPresented: $confirmsForgottenPasscode,
             titleVisibility: .visible
         ) {
-            Button("Erase Vault and Start Over", role: .destructive) { showsRecoveryReset = true }
+            Button("Erase vault and start over", role: .destructive) { showsRecoveryReset = true }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("The passcode cannot be recovered. Starting over permanently erases encrypted media and keys after device-owner authentication.")
@@ -127,6 +111,54 @@ struct UnlockView: View {
             RecoveryResetView(coordinator: coordinator)
         }
         .accessibilityIdentifier("unlock-screen")
+    }
+
+    @ViewBuilder
+    private var statusMessage: some View {
+        if let lockoutDate = coordinator.lockoutDate, lockoutDate > Date() {
+            TimelineView(.periodic(from: Date(), by: 1)) { context in
+                Label {
+                    Text(lockoutText(at: context.date, until: lockoutDate))
+                        .foregroundStyle(QuietFrameTheme.ink)
+                } icon: {
+                    Image(systemName: "clock")
+                        .foregroundStyle(QuietFrameTheme.quietInk)
+                        .accessibilityHidden(true)
+                }
+                .font(.callout.monospacedDigit())
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(QuietFrameTheme.contentSpacing)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .quietCard()
+            }
+            .padding(.top, QuietFrameTheme.contentSpacing)
+        } else if let message = coordinator.userMessage {
+            AuthenticationErrorMessage(message: message)
+                .padding(QuietFrameTheme.contentSpacing)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .quietCard()
+                .accessibilityLabel("Error: \(message)")
+                .padding(.top, QuietFrameTheme.contentSpacing)
+        }
+    }
+
+    private var encryptionFooter: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "lock")
+                .imageScale(.small)
+                .accessibilityHidden(true)
+            Text("Media remains encrypted on this device")
+        }
+        .font(.footnote)
+        .foregroundStyle(QuietFrameTheme.quietInk)
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func irisSize(isCompactHeight: Bool) -> CGFloat {
+        if isCompactHeight { return 120 }
+        return dynamicTypeSize.isAccessibilitySize ? 128 : 176
     }
 
     private var isLockedOut: Bool {
