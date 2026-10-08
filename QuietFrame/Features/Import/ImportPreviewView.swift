@@ -1,15 +1,19 @@
 import SwiftData
 import SwiftUI
+import UIKit
 
 struct ImportPreviewView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(AppDependencies.self) private var dependencies
     @Query(sort: \VaultAlbum.position) private var albums: [VaultAlbum]
     @Bindable var viewModel: ImportViewModel
     let dismiss: () -> Void
 
     @State private var confirmsOriginalDeletion = false
     @State private var destinationAlbumID: UUID?
+    @State private var showsAlbumPicker = false
+    @State private var assignmentAnnouncement: String?
 
     private var columns: [GridItem] {
         [GridItem(
@@ -53,10 +57,10 @@ struct ImportPreviewView: View {
         } message: {
             Text("iOS will ask for permission. Deleted items may remain in the Photos app's Recently Deleted album. QuietFrame never deletes originals automatically. Your vault copies are not in iCloud backup. If you delete the originals, the vault holds the only copy.")
         }
-        .interactiveDismissDisabled(viewModel.isImporting)
+        .interactiveDismissDisabled(protectsReview)
         .presentationBackground(QuietFrameTheme.elevated)
         .presentationCornerRadius(QuietFrameTheme.sheetCornerRadius)
-        .presentationDragIndicator(viewModel.isImporting ? .hidden : .visible)
+        .presentationDragIndicator(protectsReview ? .hidden : .visible)
         .onChange(of: viewModel.summary) { _, summary in
             guard summary?.shouldOfferOriginalDeletion == true else { return }
             Task { @MainActor in
@@ -64,7 +68,34 @@ struct ImportPreviewView: View {
                 confirmsOriginalDeletion = true
             }
         }
+        .onChange(of: albumIDs, initial: true) { _, ids in
+            viewModel.discardAlbumAssignments(notIn: Set(ids))
+        }
+        .sheet(isPresented: $showsAlbumPicker, onDismiss: { announceAssignment() }) { albumPicker }
         .onDisappear { viewModel.cleanupIfIdle() }
+    }
+
+    private var protectsReview: Bool {
+        viewModel.isImporting || viewModel.albumAssignments.hasAssignments
+    }
+
+    private var albumPicker: some View {
+        AlbumDestinationPicker(
+            albums: albums,
+            currentAlbumID: viewModel.albumAssignments.selectionAlbumID,
+            title: "Add to album",
+            noAlbumTitle: "Leave unassigned",
+            disablesCurrentChoice: false,
+            createAlbum: { try dependencies.albumService.createAlbum(name: $0).id }
+        ) { albumID in
+            assignmentAnnouncement = assignmentMessage(for: albumID)
+            viewModel.assignSelection(toAlbumID: albumID)
+            showsAlbumPicker = false
+        }
+        .presentationDetents([.medium, .large])
+        .presentationBackground(QuietFrameTheme.elevated)
+        .presentationCornerRadius(QuietFrameTheme.sheetCornerRadius)
+        .presentationDragIndicator(.visible)
     }
 
     private var header: some View {
@@ -205,14 +236,26 @@ struct ImportPreviewView: View {
                     if let headerTitle {
                         reviewTitle(headerTitle)
                     }
-                    destinationRow
+                    selectionHint
+                    if hasUnassignedCandidates {
+                        destinationRow
+                    }
+                } else {
+                    selectionHint
                 }
 
                 LazyVGrid(columns: columns, spacing: QuietFrameTheme.gridSpacing) {
                     ForEach(viewModel.candidates) { candidate in
-                        ImportPreviewCell(candidate: candidate) {
+                        ImportPreviewCell(
+                            candidate: candidate,
+                            albumName: albumName(for: candidate.id),
+                            isSelected: viewModel.albumAssignments.isSelected(candidate.id),
+                            selectionMode: viewModel.albumAssignments.hasSelection,
+                            toggleSelection: { viewModel.toggleSelection(id: candidate.id) }
+                        ) {
                             viewModel.removeCandidate(id: candidate.id)
                         }
+                        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
                     }
                 }
 
@@ -236,6 +279,35 @@ struct ImportPreviewView: View {
             .padding(.top, QuietFrameTheme.contentSpacing)
             .padding(.bottom, QuietFrameTheme.pagePadding)
             .frame(maxWidth: .infinity)
+        }
+    }
+
+    private var selectionHint: some View {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: QuietFrameTheme.compactSpacing))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: QuietFrameTheme.contentSpacing))
+
+        return layout {
+            Text("Tap items to select them, then choose Add to album. Before importing, set where any unassigned items go.")
+                .font(.subheadline)
+                .foregroundStyle(QuietFrameTheme.quietInk)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                if allCandidatesSelected {
+                    viewModel.clearSelection()
+                } else {
+                    viewModel.selectAllCandidates()
+                }
+            } label: {
+                Text(allCandidatesSelected ? "Deselect all" : "Select all")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(QuietFrameTheme.accent)
+                    .frame(minHeight: QuietFrameTheme.controlHeight)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .layoutPriority(1)
         }
     }
 
@@ -346,16 +418,27 @@ struct ImportPreviewView: View {
                     }
                     .buttonStyle(.apertureSecondary)
                 } else if !viewModel.candidates.isEmpty {
-                    if !dynamicTypeSize.isAccessibilitySize {
-                        destinationRow
+                    if viewModel.albumAssignments.hasSelection {
+                        selectionSummary
+                        Button {
+                            showsAlbumPicker = true
+                        } label: {
+                            Text("Add to album…")
+                        }
+                        .buttonStyle(.aperturePrimary)
+                        .accessibilityIdentifier("add-to-album")
+                    } else {
+                        if !dynamicTypeSize.isAccessibilitySize, hasUnassignedCandidates {
+                            destinationRow
+                        }
+                        Button {
+                            viewModel.startImport(albumID: destinationAlbumID)
+                        } label: {
+                            Text("Encrypt and import")
+                        }
+                        .buttonStyle(.aperturePrimary)
+                        .accessibilityIdentifier("begin-import")
                     }
-                    Button {
-                        viewModel.startImport(albumID: destinationAlbumID)
-                    } label: {
-                        Text("Encrypt and import")
-                    }
-                    .buttonStyle(.aperturePrimary)
-                    .accessibilityIdentifier("begin-import")
                 }
             }
             .frame(maxWidth: QuietFrameTheme.readableWidth)
@@ -364,6 +447,31 @@ struct ImportPreviewView: View {
             .padding(.bottom, QuietFrameTheme.compactSpacing)
             .frame(maxWidth: .infinity)
             .background(ground)
+        }
+    }
+
+    private var selectionSummary: some View {
+        let count = viewModel.albumAssignments.selectedIDs.count
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: QuietFrameTheme.compactSpacing))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: QuietFrameTheme.contentSpacing))
+
+        return layout {
+            Text("\(count) selected")
+                .font(.body.weight(.semibold).monospacedDigit())
+                .foregroundStyle(QuietFrameTheme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                viewModel.clearSelection()
+            } label: {
+                Text("Deselect")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(QuietFrameTheme.accent)
+                    .frame(minHeight: QuietFrameTheme.controlHeight)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -404,12 +512,16 @@ struct ImportPreviewView: View {
             )
             .contentShape(RoundedRectangle(cornerRadius: QuietFrameTheme.cornerRadius, style: .continuous))
         }
-        .accessibilityLabel("Destination")
+        .accessibilityLabel(destinationLabel)
         .accessibilityValue(destinationName)
     }
 
+    private var destinationLabel: String {
+        viewModel.albumAssignments.hasAssignments ? "Unassigned items" : "Destination"
+    }
+
     private var destinationTitle: some View {
-        Text("Destination")
+        Text(destinationLabel)
             .font(.body)
             .foregroundStyle(QuietFrameTheme.quietInk)
     }
@@ -435,6 +547,47 @@ struct ImportPreviewView: View {
             return Self.vaultDestinationName
         }
         return album.name
+    }
+
+    private var albumIDs: [UUID] {
+        albums.map(\.id)
+    }
+
+    private func albumName(for candidateID: UUID) -> String? {
+        guard let albumID = viewModel.albumAssignments.albumID(for: candidateID) else { return nil }
+        return albums.first(where: { $0.id == albumID })?.name
+    }
+
+    private var allCandidatesSelected: Bool {
+        !viewModel.candidates.isEmpty
+            && viewModel.candidates.allSatisfy { viewModel.albumAssignments.isSelected($0.id) }
+    }
+
+    private var hasUnassignedCandidates: Bool {
+        viewModel.candidates.contains { viewModel.albumAssignments.albumID(for: $0.id) == nil }
+    }
+
+    private func assignmentMessage(for albumID: UUID?) -> String {
+        let count = viewModel.albumAssignments.selectedIDs.count
+        let items = "\(count) item\(count == 1 ? "" : "s")"
+        guard let albumID else { return "\(items) left unassigned" }
+        guard let name = albums.first(where: { $0.id == albumID })?.name else {
+            return "\(items) added to the new album"
+        }
+        return "\(items) added to \(name)"
+    }
+
+    private func announceAssignment() {
+        guard let message = assignmentAnnouncement else { return }
+        assignmentAnnouncement = nil
+        Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: 400_000_000)
+            } catch {
+                return
+            }
+            UIAccessibility.post(notification: .announcement, argument: message)
+        }
     }
 
     private var headerTitle: String? {
@@ -497,59 +650,175 @@ private struct ImportNotice: View {
 private struct ImportPreviewCell: View {
     @ScaledMetric(relativeTo: .body) private var badgeSize: CGFloat = 26
     let candidate: ImportPreviewCandidate
+    let albumName: String?
+    let isSelected: Bool
+    let selectionMode: Bool
+    let toggleSelection: () -> Void
     let remove: () -> Void
+
+    private static let badgeInset: CGFloat = 6
+
+    private var tileShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: QuietFrameTheme.tileCornerRadius, style: .continuous)
+    }
+
+    private var videoDuration: TimeInterval? {
+        candidate.source.metadata.mediaType == .video ? candidate.source.metadata.duration : nil
+    }
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            Rectangle()
-                .fill(QuietFrameTheme.inset)
-                .aspectRatio(1, contentMode: .fit)
-                .overlay {
-                    if let image = candidate.previewImage {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFill()
-                    } else {
-                        Image(systemName: candidate.source.metadata.mediaType.symbolName)
-                            .font(.title)
-                            .foregroundStyle(QuietFrameTheme.quietInk)
-                    }
+            Button(action: toggleSelection) {
+                tile
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(tileAccessibilityLabel)
+            .accessibilityHint("Toggles selection for adding to an album")
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
+            .accessibilityAction(named: "Remove") {
+                remove()
+            }
+
+            if !selectionMode {
+                Button(action: remove) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: badgeSize * 0.46, weight: .bold))
+                        .foregroundStyle(QuietFrameTheme.ink)
+                        .frame(width: badgeSize, height: badgeSize)
+                        .background(QuietFrameTheme.background.opacity(0.78), in: Circle())
+                        .padding(6)
+                        .frame(
+                            minWidth: QuietFrameTheme.controlHeight,
+                            minHeight: QuietFrameTheme.controlHeight,
+                            alignment: .topTrailing
+                        )
+                        .contentShape(Rectangle())
                 }
-                .clipShape(RoundedRectangle(cornerRadius: QuietFrameTheme.tileCornerRadius, style: .continuous))
-                .overlay(alignment: .bottomTrailing) {
-                    if candidate.source.metadata.mediaType == .video,
-                       let duration = candidate.source.metadata.duration {
-                        Text(formattedDuration(duration))
-                            .font(.caption.weight(.medium).monospacedDigit())
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 2)
-                            .background(QuietFrameTheme.background.opacity(0.78), in: Capsule())
-                            .foregroundStyle(QuietFrameTheme.ink)
-                            .padding(6)
-                            .accessibilityLabel("Video duration \(formattedDuration(duration))")
+                .buttonStyle(.plain)
+                .accessibilityLabel("Remove \(candidate.source.metadata.originalFilename ?? "item")")
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var tile: some View {
+        Rectangle()
+            .fill(QuietFrameTheme.inset)
+            .aspectRatio(1, contentMode: .fit)
+            .overlay {
+                if let image = candidate.previewImage {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Image(systemName: candidate.source.metadata.mediaType.symbolName)
+                        .font(.title)
+                        .foregroundStyle(QuietFrameTheme.quietInk)
+                }
+            }
+            .clipShape(tileShape)
+            .overlay {
+                if isSelected {
+                    tileShape
+                        .strokeBorder(QuietFrameTheme.accent, lineWidth: 3)
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if isSelected || selectionMode {
+                    selectionBadge
+                        .padding(Self.badgeInset)
+                }
+            }
+            .overlay(alignment: .bottom) {
+                bottomBadges
+            }
+            .contentShape(tileShape)
+    }
+
+    @ViewBuilder
+    private var selectionBadge: some View {
+        if isSelected {
+            Image(systemName: "checkmark")
+                .font(.system(size: badgeSize * 0.46, weight: .bold))
+                .foregroundStyle(QuietFrameTheme.background)
+                .frame(width: badgeSize, height: badgeSize)
+                .background(QuietFrameTheme.accent, in: Circle())
+        } else {
+            Circle()
+                .fill(QuietFrameTheme.background.opacity(0.55))
+                .overlay {
+                    Circle().strokeBorder(QuietFrameTheme.ink, lineWidth: 1.5)
+                }
+                .frame(width: badgeSize, height: badgeSize)
+        }
+    }
+
+    @ViewBuilder
+    private var bottomBadges: some View {
+        if albumName != nil || videoDuration != nil {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .bottom, spacing: 4) {
+                    if let albumName {
+                        albumBadge(albumName)
+                    }
+                    Spacer(minLength: 0)
+                    if let videoDuration {
+                        durationText(videoDuration)
+                            .layoutPriority(1)
                     }
                 }
 
-            Button(action: remove) {
-                Image(systemName: "xmark")
-                    .font(.system(size: badgeSize * 0.46, weight: .bold))
-                    .foregroundStyle(QuietFrameTheme.ink)
-                    .frame(width: badgeSize, height: badgeSize)
-                    .background(QuietFrameTheme.background.opacity(0.78), in: Circle())
-                    .padding(6)
-                    .frame(
-                        minWidth: QuietFrameTheme.controlHeight,
-                        minHeight: QuietFrameTheme.controlHeight,
-                        alignment: .topTrailing
-                    )
-                    .contentShape(Rectangle())
+                VStack(alignment: .leading, spacing: 4) {
+                    if let albumName {
+                        albumBadge(albumName)
+                    }
+                    if let videoDuration {
+                        durationText(videoDuration)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Remove \(candidate.source.metadata.originalFilename ?? "item")")
+            .padding(Self.badgeInset)
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(candidate.source.metadata.originalFilename ?? candidate.source.metadata.mediaType.title)
+    }
+
+    private func durationText(_ duration: TimeInterval) -> some View {
+        Text(formattedDuration(duration))
+            .font(.caption.weight(.medium).monospacedDigit())
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(QuietFrameTheme.background.opacity(0.78), in: Capsule())
+            .foregroundStyle(QuietFrameTheme.ink)
+    }
+
+    private func albumBadge(_ name: String) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 3) {
+                Image(systemName: "rectangle.stack")
+                    .font(.caption2.weight(.semibold))
+                Text(name)
+            }
+            Text(name)
+        }
+        .font(.caption.weight(.medium))
+        .lineLimit(1)
+        .truncationMode(.tail)
+        .foregroundStyle(QuietFrameTheme.ink)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 2)
+        .background(QuietFrameTheme.background.opacity(0.78), in: Capsule())
+    }
+
+    private var tileAccessibilityLabel: String {
+        var parts = [candidate.source.metadata.originalFilename ?? candidate.source.metadata.mediaType.title]
+        if let videoDuration {
+            parts.append("video duration \(formattedDuration(videoDuration))")
+        }
+        parts.append(albumName.map { "album \($0)" } ?? "unassigned")
+        return parts.joined(separator: ", ")
     }
 
     private func formattedDuration(_ duration: TimeInterval) -> String {

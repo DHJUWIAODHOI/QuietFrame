@@ -19,6 +19,7 @@ final class ImportViewModel {
     private(set) var isDeletingOriginals = false
     private(set) var progress = ImportProgress(completedItems: 0, totalItems: 0, currentItemFraction: 0)
     private(set) var summary: ImportSummary?
+    private(set) var albumAssignments = ImportAlbumAssignments()
     var userMessage: String?
 
     private let metadataReader: any MediaMetadataReading
@@ -52,6 +53,7 @@ final class ImportViewModel {
         let generation = preparationGeneration
         cleanupPreparedFiles()
         candidates = []
+        albumAssignments.reset()
         summary = nil
         userMessage = nil
         isPreparing = true
@@ -154,17 +156,49 @@ final class ImportViewModel {
         let candidate = candidates[index]
         IncomingMediaFileStore.remove(candidate.source.temporaryURL)
         candidates.remove(at: index)
+        albumAssignments.remove(candidate.id)
         if candidate.thumbnailFailed {
             preparationThumbnailFailureCount = max(0, preparationThumbnailFailureCount - 1)
         }
     }
 
+    func toggleSelection(id: UUID) {
+        guard !isImporting, candidates.contains(where: { $0.id == id }) else { return }
+        albumAssignments.toggleSelection(id)
+    }
+
+    func selectAllCandidates() {
+        guard !isImporting else { return }
+        albumAssignments.select(candidates.map(\.id))
+    }
+
+    func clearSelection() {
+        albumAssignments.clearSelection()
+    }
+
+    /// Puts the selected items in `albumID`; nil sends them back to the default destination.
+    func assignSelection(toAlbumID albumID: UUID?) {
+        guard !isImporting else { return }
+        albumAssignments.assignSelection(to: albumID)
+    }
+
+    func discardAlbumAssignments(notIn existingAlbumIDs: Set<UUID>) {
+        albumAssignments.discardAlbums(notIn: existingAlbumIDs)
+    }
+
+    /// Starts encrypting every candidate. Items assigned to an album go there; the rest go to `albumID`.
     func startImport(albumID: UUID? = nil) {
         guard !candidates.isEmpty, !isImporting else { return }
         isImporting = true
         summary = nil
         userMessage = nil
-        let sources = candidates.map(\.source)
+        albumAssignments.clearSelection()
+        let assignments = albumAssignments
+        let sources = candidates.map { candidate in
+            var source = candidate.source
+            source.albumID = assignments.destination(for: candidate.id, defaultAlbumID: albumID)
+            return source
+        }
         progress = ImportProgress(completedItems: 0, totalItems: sources.count, currentItemFraction: 0)
 
         importTask = Task { [weak self] in
@@ -180,6 +214,7 @@ final class ImportViewModel {
                 }
                 summary = result
                 candidates = []
+                albumAssignments.reset()
                 if result.importedCount > 0, !result.canDeleteImportedOriginals {
                     userMessage = "Automatic deletion was not offered because every imported item could not be matched safely to a replaceable Photos asset."
                 }
@@ -201,6 +236,7 @@ final class ImportViewModel {
         preparationGeneration &+= 1
         cleanupPreparedFiles()
         candidates = []
+        albumAssignments.reset()
         isPreparing = false
     }
 
@@ -231,6 +267,7 @@ final class ImportViewModel {
         preparationGeneration &+= 1
         cleanupPreparedFiles()
         candidates = []
+        albumAssignments.reset()
     }
 
     private func cleanupPreparedFiles() {

@@ -6,19 +6,23 @@ struct ImportSource: Identifiable, Sendable {
     let metadata: MediaMetadata
     let thumbnailJPEGData: Data?
     let sourceLocalIdentifier: String?
+    /// The album this item is imported into; nil uses the import's default album.
+    var albumID: UUID?
 
     init(
         id: UUID = UUID(),
         temporaryURL: URL,
         metadata: MediaMetadata,
         thumbnailJPEGData: Data?,
-        sourceLocalIdentifier: String?
+        sourceLocalIdentifier: String?,
+        albumID: UUID? = nil
     ) {
         self.id = id
         self.temporaryURL = temporaryURL
         self.metadata = metadata
         self.thumbnailJPEGData = thumbnailJPEGData
         self.sourceLocalIdentifier = sourceLocalIdentifier
+        self.albumID = albumID
     }
 }
 
@@ -171,7 +175,7 @@ actor MediaImportService: MediaImporting {
                             thumbnailIdentifier: thumbnailIdentifier,
                             fingerprint: storedMedia.result.fingerprint,
                             metadata: source.metadata,
-                            albumID: albumID
+                            albumID: source.albumID ?? albumID
                         )
                         guard generation == operationGeneration else {
                             try await repository.deleteImportedMedia(id: mediaID)

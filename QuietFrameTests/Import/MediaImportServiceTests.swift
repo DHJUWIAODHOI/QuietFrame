@@ -118,6 +118,51 @@ final class MediaImportServiceTests: XCTestCase {
         XCTAssertEqual(records.map(\.mediaTypeRawValue).sorted(), ["photo", "video"])
     }
 
+    func testEachItemCanGoToItsOwnAlbumWithTheRestUsingTheDefault() async throws {
+        let environment = try await makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.root) }
+        let family = try environment.repository.createAlbum(name: "Family")
+        let documents = try environment.repository.createAlbum(name: "Documents")
+        let defaultAlbum = try environment.repository.createAlbum(name: "Inbox")
+        var familyPhoto = try makeSource(
+            at: environment.cache.appendingPathComponent("family.jpg"),
+            bytes: Data(repeating: 0x11, count: 70_000),
+            mediaType: .photo,
+            filename: "family.jpg"
+        )
+        familyPhoto.albumID = family.id
+        var passport = try makeSource(
+            at: environment.cache.appendingPathComponent("passport.jpg"),
+            bytes: Data(repeating: 0x22, count: 70_000),
+            mediaType: .photo,
+            filename: "passport.jpg"
+        )
+        passport.albumID = documents.id
+        let unassignedVideo = try makeSource(
+            at: environment.cache.appendingPathComponent("clip.mov"),
+            bytes: Data(repeating: 0x33, count: 90_000),
+            mediaType: .video,
+            filename: "clip.mov"
+        )
+
+        let summary = try await environment.importer.importMedia(
+            [familyPhoto, passport, unassignedVideo],
+            albumID: defaultAlbum.id,
+            preflightFailureCount: 0,
+            preflightThumbnailFailureCount: 0,
+            progress: nil
+        )
+
+        XCTAssertEqual(summary.importedCount, 3)
+        let records = try environment.container.mainContext.fetch(FetchDescriptor<VaultMedia>())
+        let albumsByFilename = Dictionary(
+            uniqueKeysWithValues: records.map { ($0.originalFilename ?? "", $0.album?.name) }
+        )
+        XCTAssertEqual(albumsByFilename["family.jpg"], "Family")
+        XCTAssertEqual(albumsByFilename["passport.jpg"], "Documents")
+        XCTAssertEqual(albumsByFilename["clip.mov"], "Inbox")
+    }
+
     func testImportWithNoAlbumKeepsMediaUnassigned() async throws {
         let environment = try await makeEnvironment()
         defer { try? FileManager.default.removeItem(at: environment.root) }
