@@ -22,7 +22,10 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
+      # Simulator apps need an (ad-hoc) code signature for Keychain access;
+      # an unsigned test host fails every SecItem call.
       - name: Run full tests
+        timeout-minutes: 30
         run: |
           set -o pipefail
           xcodebuild \
@@ -32,9 +35,22 @@ jobs:
             -sdk iphonesimulator \
             -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=latest' \
             -destination-timeout 120 \
-            CODE_SIGNING_ALLOWED=NO \
+            -resultBundlePath "$RUNNER_TEMP/QuietFrameTests.xcresult" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY=- \
+            DEVELOPMENT_TEAM= \
+            PROVISIONING_PROFILE_SPECIFIER= \
             test \
             | tee "$RUNNER_TEMP/xctest.log"
+
+      - name: Summarize test failures
+        if: failure() || cancelled()
+        run: |
+          RESULT="$RUNNER_TEMP/QuietFrameTests.xcresult"
+          if [ -d "$RESULT" ]; then
+            xcrun xcresulttool get test-results summary --path "$RESULT" || true
+          fi
+          grep -E -A8 '^(CodeSign|ProcessProductPackaging) .*QuietFrame\.app' "$RUNNER_TEMP/xctest.log" | head -80 || true
 
       - name: Archive without signing
         run: |
@@ -73,12 +89,13 @@ jobs:
           retention-days: 14
 
       - name: Upload build log on failure
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: QuietFrame-build-log
           path: |
             ${{ runner.temp }}/xctest.log
             ${{ runner.temp }}/xcodebuild.log
+            ${{ runner.temp }}/QuietFrameTests.xcresult
           if-no-files-found: ignore
           retention-days: 7

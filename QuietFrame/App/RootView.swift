@@ -186,6 +186,7 @@ struct LaunchView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("QuietFrame is opening")
+        .accessibilityIdentifier("launch")
     }
 }
 

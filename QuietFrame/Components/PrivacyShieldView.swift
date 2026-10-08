@@ -26,6 +26,7 @@ struct PrivacyShieldView: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isModal)
         .accessibilityLabel(isScreenCaptured ? "Sensitive content hidden during screen capture" : "QuietFrame is locked from view")
+        .accessibilityIdentifier("privacy-shield")
     }
 }
 
