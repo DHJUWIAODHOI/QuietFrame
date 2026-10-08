@@ -21,45 +21,74 @@ final class MediaExportLease: Identifiable, @unchecked Sendable {
     }
 }
 
+struct MediaExportItem: Sendable, Equatable {
+    let storageIdentifier: String
+    let location: EncryptedAssetLocation
+    let contentTypeIdentifier: String
+    let mediaType: MediaType
+    let creationDate: Date?
+}
+
+extension MediaExportItem {
+    @MainActor
+    init(media: VaultMedia) {
+        self.init(
+            storageIdentifier: media.storageIdentifier,
+            location: media.isTrashed ? .trash : .media,
+            contentTypeIdentifier: media.contentTypeIdentifier,
+            mediaType: media.mediaType,
+            creationDate: media.originalCreationDate
+        )
+    }
+}
+
 protocol MediaExporting: Sendable {
-    func prepareForSharing(media: [VaultMedia]) async throws -> MediaExportLease
-    func saveToPhotos(media: [VaultMedia]) async throws
+    func prepareForSharing(mediaIDs: [UUID]) async throws -> MediaExportLease
+    func saveToPhotos(mediaIDs: [UUID]) async throws
 }
 
 actor MediaExportService: MediaExporting {
-    private struct PhotosExportItem: @unchecked Sendable {
+    private struct PhotosExportItem: Sendable {
         let url: URL
         let mediaType: MediaType
         let creationDate: Date?
     }
 
     private let storage: any SecureFileStoring
+    private let repository: any VaultRepositoryProtocol
     private let operationGate: VaultOperationGate
 
     init(
         storage: any SecureFileStoring,
+        repository: any VaultRepositoryProtocol,
         operationGate: VaultOperationGate = VaultOperationGate()
     ) {
         self.storage = storage
+        self.repository = repository
         self.operationGate = operationGate
     }
 
-    func prepareForSharing(media: [VaultMedia]) async throws -> MediaExportLease {
-        try await operationGate.withLock {
-            try await self.prepareForSharingExclusively(media: media)
+    func prepareForSharing(mediaIDs: [UUID]) async throws -> MediaExportLease {
+        try Self.validateSelection(mediaIDs)
+        return try await operationGate.withLock {
+            let items = try await self.repository.exportItems(ids: mediaIDs)
+            return try await self.prepareForSharingExclusively(items: items)
         }
     }
 
-    private func prepareForSharingExclusively(media: [VaultMedia]) async throws -> MediaExportLease {
-        guard !media.isEmpty else { throw VaultError.invalidInput("Select at least one item to export.") }
+    private static func validateSelection(_ mediaIDs: [UUID]) throws {
+        guard !mediaIDs.isEmpty else { throw VaultError.invalidInput("Select at least one item to export.") }
+    }
+
+    private func prepareForSharingExclusively(items: [MediaExportItem]) async throws -> MediaExportLease {
         var files: [SecureTemporaryFileLease] = []
         do {
-            for item in media {
+            for item in items {
                 try Task.checkCancellation()
                 let fileExtension = UTType(item.contentTypeIdentifier)?.preferredFilenameExtension
                 let lease = try await storage.temporaryDecryptedFile(
                     identifier: item.storageIdentifier,
-                    location: item.isTrashed ? .trash : .media,
+                    location: item.location,
                     preferredExtension: fileExtension
                 )
                 files.append(lease)
@@ -74,16 +103,18 @@ actor MediaExportService: MediaExporting {
         }
     }
 
-    func saveToPhotos(media: [VaultMedia]) async throws {
+    func saveToPhotos(mediaIDs: [UUID]) async throws {
+        try Self.validateSelection(mediaIDs)
         let authorization = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
         guard authorization == .authorized || authorization == .limited else {
             throw VaultError.photosPermissionDenied
         }
         try await operationGate.withLock {
-            let lease = try await prepareForSharingExclusively(media: media)
+            let items = try await self.repository.exportItems(ids: mediaIDs)
+            let lease = try await self.prepareForSharingExclusively(items: items)
             defer { lease.cleanup() }
-            let exportItems = zip(media, lease.urls).map { item, url in
-                PhotosExportItem(url: url, mediaType: item.mediaType, creationDate: item.originalCreationDate)
+            let exportItems = zip(items, lease.urls).map { item, url in
+                PhotosExportItem(url: url, mediaType: item.mediaType, creationDate: item.creationDate)
             }
 
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in

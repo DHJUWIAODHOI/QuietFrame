@@ -15,6 +15,7 @@ protocol VaultRepositoryProtocol: AnyObject {
     func beginImport(requestedCount: Int) throws -> UUID
     func finishImport(id: UUID, summary: ImportSummary, status: ImportStatus) throws
     func fetchMedia(query: GalleryQuery, offset: Int, limit: Int) throws -> (items: [VaultMedia], hasMore: Bool)
+    func exportItems(ids: [UUID]) throws -> [MediaExportItem]
     func createAlbum(name: String) throws -> VaultAlbum
     func renameAlbum(id: UUID, name: String) throws
     func moveMedia(ids: Set<UUID>, toAlbumID: UUID?) throws
@@ -119,6 +120,19 @@ final class VaultRepository: VaultRepositoryProtocol {
             try modelContext.save()
         } catch {
             throw VaultError.persistenceFailure
+        }
+    }
+
+    func exportItems(ids: [UUID]) throws -> [MediaExportItem] {
+        try ids.map { id in
+            var descriptor = FetchDescriptor<VaultMedia>(
+                predicate: #Predicate { media in media.id == id }
+            )
+            descriptor.fetchLimit = 1
+            guard let media = try modelContext.fetch(descriptor).first else {
+                throw VaultError.invalidInput("One or more selected items are no longer available.")
+            }
+            return MediaExportItem(media: media)
         }
     }
 

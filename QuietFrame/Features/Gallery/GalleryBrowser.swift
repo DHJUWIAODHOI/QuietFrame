@@ -350,12 +350,12 @@ private struct GalleryBrowserContent: View {
     }
 
     private func shareSelection() {
-        let media = selectedItems
-        guard !media.isEmpty, !isExporting else { return }
+        let mediaIDs = selectedItems.map(\.id)
+        guard !mediaIDs.isEmpty, !isExporting else { return }
         isExporting = true
         Task {
             do {
-                shareLease = try await dependencies.mediaExportService.prepareForSharing(media: media)
+                shareLease = try await dependencies.mediaExportService.prepareForSharing(mediaIDs: mediaIDs)
             } catch {
                 actionMessage = (error as? VaultError)?.localizedDescription
                     ?? VaultError.exportFailed.localizedDescription
@@ -365,13 +365,13 @@ private struct GalleryBrowserContent: View {
     }
 
     private func saveSelectionToPhotos() {
-        let media = selectedItems
-        guard !media.isEmpty, !isExporting else { return }
+        let mediaIDs = selectedItems.map(\.id)
+        guard !mediaIDs.isEmpty, !isExporting else { return }
         isExporting = true
         Task {
             do {
-                try await dependencies.mediaExportService.saveToPhotos(media: media)
-                actionMessage = "Saved \(media.count) item\(media.count == 1 ? "" : "s") to Photos."
+                try await dependencies.mediaExportService.saveToPhotos(mediaIDs: mediaIDs)
+                actionMessage = "Saved \(mediaIDs.count) item\(mediaIDs.count == 1 ? "" : "s") to Photos."
             } catch {
                 actionMessage = (error as? VaultError)?.localizedDescription
                     ?? VaultError.exportFailed.localizedDescription

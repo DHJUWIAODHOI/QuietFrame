@@ -1,14 +1,29 @@
+import AVFoundation
 import AVKit
 import Combine
-import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
+
+enum VideoPageAction: Equatable {
+    case cleanup
+    case pause
+    case load
+    case idle
+}
+
+/// Videos are decrypted only for the selected page; prepared neighbours keep an existing player but never start one.
+func videoPageAction(shouldPrepare: Bool, isActive: Bool, scenePhase: ScenePhase) -> VideoPageAction {
+    guard shouldPrepare else { return .cleanup }
+    guard scenePhase == .active else { return .pause }
+    return isActive ? .load : .idle
+}
 
 struct SecureMediaPage: View {
     let media: VaultMedia
     let isActive: Bool
     let shouldPrepare: Bool
     let storage: any SecureFileStoring
+    let photoLoader: ViewerPhotoLoader
     let onPhotoTap: () -> Void
     let onPhotoZoomChanged: (Bool) -> Void
     let onVideoPlaybackChanged: (Bool) -> Void
@@ -19,8 +34,7 @@ struct SecureMediaPage: View {
             SecurePhotoPage(
                 media: media,
                 isActive: isActive,
-                shouldPrepare: shouldPrepare,
-                storage: storage,
+                photoLoader: photoLoader,
                 onTap: onPhotoTap,
                 onZoomChanged: onPhotoZoomChanged
             )
@@ -39,19 +53,14 @@ struct SecureMediaPage: View {
 private struct SecurePhotoPage: View {
     let media: VaultMedia
     let isActive: Bool
-    let shouldPrepare: Bool
-    let storage: any SecureFileStoring
+    let photoLoader: ViewerPhotoLoader
     let onTap: () -> Void
     let onZoomChanged: (Bool) -> Void
-
-    @State private var image: UIImage?
-    @State private var errorMessage: String?
-    @State private var isLoading = false
 
     var body: some View {
         ZStack {
             Color.black
-            if let image {
+            if let image = photoLoader.image(for: media.id) {
                 if isActive {
                     ZoomablePhotoView(
                         image: image,
@@ -64,14 +73,14 @@ private struct SecurePhotoPage: View {
                         .scaledToFit()
                         .accessibilityLabel(media.accessibilitySummary)
                 }
-            } else if let errorMessage {
+            } else if let errorMessage = photoLoader.failureMessage(for: media.id) {
                 ContentUnavailableView(
                     "Photo Unavailable",
                     systemImage: "photo.badge.exclamationmark",
                     description: Text(errorMessage)
                 )
                 .foregroundStyle(.white)
-            } else if isLoading {
+            } else {
                 ProgressView()
                     .tint(.white)
                     .accessibilityLabel("Decrypting photo")
@@ -79,66 +88,6 @@ private struct SecurePhotoPage: View {
         }
         .contentShape(Rectangle())
         .simultaneousGesture(TapGesture().onEnded { if isActive { onTap() } })
-        .task(id: shouldPrepare) {
-            if shouldPrepare {
-                await loadWhenReady()
-            } else {
-                image = nil
-                errorMessage = nil
-            }
-        }
-    }
-
-    private func loadWhenReady() async {
-        while isLoading {
-            do {
-                try await Task.sleep(nanoseconds: 25_000_000)
-            } catch {
-                return
-            }
-        }
-        guard !Task.isCancelled else { return }
-        await load()
-    }
-
-    private func load() async {
-        guard image == nil, !isLoading else { return }
-        errorMessage = nil
-        isLoading = true
-        defer { isLoading = false }
-        do {
-            let data = try await storage.decryptData(
-                identifier: media.storageIdentifier,
-                location: media.isTrashed ? .trash : .media,
-                maximumByteCount: 512 * 1_024 * 1_024
-            )
-            try Task.checkCancellation()
-            let decoded: UIImage? = await Task.detached(priority: .userInitiated) { () -> UIImage? in
-                guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-                      let image = CGImageSourceCreateThumbnailAtIndex(
-                        source,
-                        0,
-                        [
-                            kCGImageSourceCreateThumbnailFromImageAlways: true,
-                            kCGImageSourceCreateThumbnailWithTransform: true,
-                            kCGImageSourceThumbnailMaxPixelSize: 4_096,
-                            kCGImageSourceShouldCacheImmediately: true
-                        ] as CFDictionary
-                      ) else { return nil }
-                return UIImage(cgImage: image)
-            }.value
-            guard let decoded else { throw VaultError.corruptedFile }
-            guard !Task.isCancelled, shouldPrepare else { return }
-            image = decoded
-        } catch is CancellationError {
-            return
-        } catch VaultError.importCancelled {
-            return
-        } catch {
-            guard !Task.isCancelled, shouldPrepare else { return }
-            errorMessage = (error as? VaultError)?.localizedDescription
-                ?? VaultError.corruptedFile.localizedDescription
-        }
     }
 }
 
@@ -178,7 +127,6 @@ private struct SecureVideoPage: View {
                         guard isActive else { return }
                         guard playbackStatus != status else { return }
                         playbackStatus = status
-                        onPlaybackChanged(status != .paused)
                     }
             } else if let errorMessage {
                 ContentUnavailableView(
@@ -204,14 +152,20 @@ private struct SecureVideoPage: View {
                     .accessibilityAddTraits(.isButton)
             }
         }
-        .task(id: playbackLifecycleID) {
-            if !shouldPrepare {
+        .task(id: playbackLifecycle) {
+            switch videoPageAction(shouldPrepare: shouldPrepare, isActive: isActive, scenePhase: scenePhase) {
+            case .cleanup:
                 cleanup()
-            } else if scenePhase == .active {
-                await loadWhenReady()
-            } else {
+            case .pause:
                 pausePlayback()
+            case .load:
+                await loadWhenReady()
+            case .idle:
+                break
             }
+        }
+        .task(id: playbackStatus) {
+            await reportPlaybackStatus()
         }
         .onChange(of: isActive) { _, isActive in
             if !isActive { pausePlayback() }
@@ -272,6 +226,25 @@ private struct SecureVideoPage: View {
         }
     }
 
+    private func reportPlaybackStatus() async {
+        guard isActive else { return }
+        if playbackStatus == .paused {
+            // AVKit holds the rate at zero while scrubbing, so report a pause only once the playhead settles.
+            var lastTime = player?.currentTime() ?? .zero
+            while true {
+                do {
+                    try await Task.sleep(nanoseconds: 400_000_000)
+                } catch {
+                    return
+                }
+                let currentTime = player?.currentTime() ?? .zero
+                if CMTimeCompare(currentTime, lastTime) == 0 { break }
+                lastTime = currentTime
+            }
+        }
+        onPlaybackChanged(playbackStatus != .paused)
+    }
+
     private func startPlayback() {
         guard isActive else { return }
         shouldPlayWhenReady = true
@@ -285,14 +258,14 @@ private struct SecureVideoPage: View {
         onPlaybackChanged(false)
     }
 
-    private var playbackLifecycleID: Int {
-        guard shouldPrepare else { return 0 }
-        switch scenePhase {
-        case .active: return 1
-        case .inactive: return 2
-        case .background: return 3
-        @unknown default: return 4
-        }
+    private struct PlaybackLifecycle: Equatable {
+        let isActive: Bool
+        let scenePhase: ScenePhase
+    }
+
+    private var playbackLifecycle: PlaybackLifecycle? {
+        guard shouldPrepare else { return nil }
+        return PlaybackLifecycle(isActive: isActive, scenePhase: scenePhase)
     }
 
     private func cleanup() {

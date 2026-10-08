@@ -57,6 +57,7 @@ final class AppDependencies {
         )
         let mediaExportService = MediaExportService(
             storage: secureStorage,
+            repository: repository,
             operationGate: operationGate
         )
         let storageAnalysisService = StorageAnalysisService(

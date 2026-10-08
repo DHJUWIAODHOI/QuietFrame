@@ -5,6 +5,22 @@ func mediaPageState(pageIndex: Int, selectedIndex: Int) -> (isActive: Bool, shou
     (pageIndex == selectedIndex, abs(pageIndex - selectedIndex) <= 1)
 }
 
+/// Page indexes to prepare, most urgent first: the selected page, then the next and previous pages.
+func mediaPreparationOrder(selectedIndex: Int, count: Int) -> [Int] {
+    guard (0..<count).contains(selectedIndex) else { return [] }
+    return [selectedIndex, selectedIndex + 1, selectedIndex - 1].filter { (0..<count).contains($0) }
+}
+
+/// The new controls visibility after a page's video starts or stops playing, or nil when nothing changes.
+func viewerControlsVisibility(
+    afterPlaybackChange isPlaying: Bool,
+    isSelectedPage: Bool,
+    controlsAreVisible: Bool
+) -> Bool? {
+    guard isSelectedPage, controlsAreVisible == isPlaying else { return nil }
+    return !isPlaying
+}
+
 struct MediaViewer: View {
     let items: [VaultMedia]
     let dependencies: AppDependencies
@@ -15,6 +31,7 @@ struct MediaViewer: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Query(sort: \VaultAlbum.position) private var albums: [VaultAlbum]
     @State private var selectedMediaID: UUID
+    @State private var photoLoader: ViewerPhotoLoader
     @State private var controlsAreVisible = true
     @State private var selectedPhotoIsZoomed = false
     @State private var informationMedia: VaultMedia?
@@ -29,16 +46,33 @@ struct MediaViewer: View {
         self.items = items
         self.dependencies = dependencies
         _selectedMediaID = State(initialValue: initialMediaID)
+        _photoLoader = State(initialValue: ViewerPhotoLoader(storage: dependencies.secureStorage))
     }
 
     private var selectedMedia: VaultMedia? {
         items.first { $0.id == selectedMediaID }
     }
 
+    private var selectedIndex: Int {
+        items.firstIndex { $0.id == selectedMediaID } ?? items.startIndex
+    }
+
+    private var photoRequests: [ViewerPhotoRequest] {
+        mediaPreparationOrder(selectedIndex: selectedIndex, count: items.count)
+            .map { items[$0] }
+            .filter { $0.mediaType == .photo }
+            .map { ViewerPhotoRequest(media: $0) }
+    }
+
     var body: some View {
         viewerContent
         .statusBarHidden(!controlsAreVisible)
         .persistentSystemOverlays(controlsAreVisible ? .automatic : .hidden)
+        .onAppear { photoLoader.prepare(photoRequests) }
+        .onDisappear { photoLoader.releaseAll() }
+        .onChange(of: photoRequests) { _, requests in
+            photoLoader.prepare(requests)
+        }
         .onChange(of: selectedMediaID) { _, _ in
             selectedPhotoIsZoomed = false
             controlsAreVisible = true
@@ -105,7 +139,7 @@ struct MediaViewer: View {
     }
 
     private var mediaPager: some View {
-        let selectedIndex = items.firstIndex { $0.id == selectedMediaID } ?? items.startIndex
+        let selectedIndex = self.selectedIndex
         return TabView(selection: $selectedMediaID) {
             ForEach(Array(items.enumerated()), id: \.element.id) { pageIndex, media in
                 let pageState = mediaPageState(pageIndex: pageIndex, selectedIndex: selectedIndex)
@@ -114,6 +148,7 @@ struct MediaViewer: View {
                     isActive: pageState.isActive,
                     shouldPrepare: pageState.shouldPrepare,
                     storage: dependencies.secureStorage,
+                    photoLoader: photoLoader,
                     onPhotoTap: togglePhotoControls,
                     onPhotoZoomChanged: { updatePhotoZoom($0, mediaID: media.id) },
                     onVideoPlaybackChanged: { updateVideoPlayback($0, mediaID: media.id) }
@@ -268,9 +303,13 @@ struct MediaViewer: View {
     }
 
     private func updateVideoPlayback(_ isPlaying: Bool, mediaID: UUID) {
-        guard mediaID == selectedMediaID, isPlaying else { return }
+        guard let visibility = viewerControlsVisibility(
+            afterPlaybackChange: isPlaying,
+            isSelectedPage: mediaID == selectedMediaID,
+            controlsAreVisible: controlsAreVisible
+        ) else { return }
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
-            controlsAreVisible = false
+            controlsAreVisible = visibility
         }
     }
 
@@ -296,7 +335,7 @@ struct MediaViewer: View {
         isWorking = true
         Task {
             do {
-                shareLease = try await dependencies.mediaExportService.prepareForSharing(media: [media])
+                shareLease = try await dependencies.mediaExportService.prepareForSharing(mediaIDs: [media.id])
             } catch {
                 userMessage = (error as? VaultError)?.localizedDescription
                     ?? VaultError.exportFailed.localizedDescription
@@ -310,7 +349,7 @@ struct MediaViewer: View {
         isWorking = true
         Task {
             do {
-                try await dependencies.mediaExportService.saveToPhotos(media: [media])
+                try await dependencies.mediaExportService.saveToPhotos(mediaIDs: [media.id])
                 userMessage = "Saved to Photos."
             } catch {
                 userMessage = (error as? VaultError)?.localizedDescription
