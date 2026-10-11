@@ -27,6 +27,9 @@ struct SecureMediaPage: View {
     let onPhotoTap: () -> Void
     let onPhotoZoomChanged: (Bool) -> Void
     let onVideoPlaybackChanged: (Bool) -> Void
+    var thumbnailService: ThumbnailService?
+    /// A dismiss drag is lifting this page out of the viewer, so only the media itself is drawn.
+    var isLifted = false
 
     var body: some View {
         switch media.mediaType {
@@ -35,6 +38,8 @@ struct SecureMediaPage: View {
                 media: media,
                 isActive: isActive,
                 photoLoader: photoLoader,
+                thumbnailService: thumbnailService,
+                isLifted: isLifted,
                 onTap: onPhotoTap,
                 onZoomChanged: onPhotoZoomChanged
             )
@@ -44,6 +49,7 @@ struct SecureMediaPage: View {
                 isActive: isActive,
                 shouldPrepare: shouldPrepare,
                 storage: storage,
+                thumbnailService: thumbnailService,
                 onPlaybackChanged: onVideoPlaybackChanged
             )
         }
@@ -54,12 +60,15 @@ private struct SecurePhotoPage: View {
     let media: VaultMedia
     let isActive: Bool
     let photoLoader: ViewerPhotoLoader
+    let thumbnailService: ThumbnailService?
+    let isLifted: Bool
     let onTap: () -> Void
     let onZoomChanged: (Bool) -> Void
 
     var body: some View {
         ZStack {
             QuietFrameTheme.background
+                .opacity(isLifted ? 0 : 1)
             if let image = photoLoader.image(for: media.id) {
                 if isActive {
                     ZoomablePhotoView(
@@ -67,6 +76,15 @@ private struct SecurePhotoPage: View {
                         accessibilityLabel: media.accessibilitySummary,
                         onZoomChanged: onZoomChanged
                     )
+                    .opacity(isLifted ? 0 : 1)
+                    .overlay {
+                        if isLifted {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFit()
+                                .accessibilityHidden(true)
+                        }
+                    }
                 } else {
                     Image(uiImage: image)
                         .resizable()
@@ -80,6 +98,19 @@ private struct SecurePhotoPage: View {
                     description: Text(errorMessage)
                 )
                 .foregroundStyle(QuietFrameTheme.ink, QuietFrameTheme.quietInk)
+            } else if let thumbnail = thumbnailService?.cachedImage(for: media) {
+                Image(uiImage: thumbnail)
+                    .resizable()
+                    .scaledToFit()
+                    .accessibilityHidden(true)
+                    .overlay {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(QuietFrameTheme.ink)
+                            .padding(10)
+                            .background(QuietFrameTheme.background.opacity(0.6), in: Circle())
+                            .accessibilityLabel("Decrypting photo")
+                    }
             } else {
                 ProgressView()
                     .tint(QuietFrameTheme.ink)
@@ -96,6 +127,7 @@ private struct SecureVideoPage: View {
     let isActive: Bool
     let shouldPrepare: Bool
     let storage: any SecureFileStoring
+    let thumbnailService: ThumbnailService?
     let onPlaybackChanged: (Bool) -> Void
 
     @Environment(\.scenePhase) private var scenePhase
@@ -135,6 +167,21 @@ private struct SecureVideoPage: View {
                     description: Text(errorMessage)
                 )
                 .foregroundStyle(QuietFrameTheme.ink, QuietFrameTheme.quietInk)
+            } else if let thumbnail = thumbnailService?.cachedImage(for: media) {
+                Image(uiImage: thumbnail)
+                    .resizable()
+                    .scaledToFit()
+                    .accessibilityHidden(true)
+                    .overlay {
+                        if isLoading {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(QuietFrameTheme.ink)
+                                .padding(10)
+                                .background(QuietFrameTheme.background.opacity(0.6), in: Circle())
+                                .accessibilityLabel("Preparing encrypted video")
+                        }
+                    }
             } else if isLoading {
                 ProgressView()
                     .tint(QuietFrameTheme.ink)

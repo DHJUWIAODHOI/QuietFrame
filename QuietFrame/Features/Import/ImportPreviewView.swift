@@ -14,6 +14,11 @@ struct ImportPreviewView: View {
     @State private var destinationAlbumID: UUID?
     @State private var showsAlbumPicker = false
     @State private var assignmentAnnouncement: String?
+    @State private var pendingAssignment: PendingAssignment?
+
+    private struct PendingAssignment {
+        let albumID: UUID?
+    }
 
     private var columns: [GridItem] {
         [GridItem(
@@ -71,7 +76,7 @@ struct ImportPreviewView: View {
         .onChange(of: albumIDs, initial: true) { _, ids in
             viewModel.discardAlbumAssignments(notIn: Set(ids))
         }
-        .sheet(isPresented: $showsAlbumPicker, onDismiss: { announceAssignment() }) { albumPicker }
+        .sheet(isPresented: $showsAlbumPicker, onDismiss: { finishAlbumAssignment() }) { albumPicker }
         .onDisappear { viewModel.cleanupIfIdle() }
     }
 
@@ -89,7 +94,7 @@ struct ImportPreviewView: View {
             createAlbum: { try dependencies.albumService.createAlbum(name: $0).id }
         ) { albumID in
             assignmentAnnouncement = assignmentMessage(for: albumID)
-            viewModel.assignSelection(toAlbumID: albumID)
+            pendingAssignment = PendingAssignment(albumID: albumID)
             showsAlbumPicker = false
         }
         .presentationDetents([.medium, .large])
@@ -194,43 +199,62 @@ struct ImportPreviewView: View {
     }
 
     private var importingView: some View {
-        ScrollView {
-            VStack(spacing: QuietFrameTheme.sectionSpacing) {
-                ApertureIris(
-                    closure: CGFloat(irisFraction),
-                    filledBlades: Int((irisFraction * 6).rounded(.down)),
-                    size: dynamicTypeSize.isAccessibilitySize ? 112 : 152
-                )
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: irisFraction)
-                .accessibilityHidden(true)
-                VStack(spacing: QuietFrameTheme.contentSpacing) {
-                    Text("Encrypting \(min(viewModel.progress.completedItems + 1, viewModel.progress.totalItems)) of \(viewModel.progress.totalItems)")
-                        .font(QuietFrameTheme.titleFont.monospacedDigit())
-                        .foregroundStyle(QuietFrameTheme.ink)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityAddTraits(.isHeader)
-                    ProgressView(value: viewModel.progress.overallFraction)
-                        .progressViewStyle(.linear)
-                        .tint(QuietFrameTheme.accent)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: QuietFrameTheme.contentSpacing) {
+                    VStack(alignment: .leading, spacing: QuietFrameTheme.compactSpacing) {
+                        Text("Encrypting \(min(viewModel.progress.completedItems + 1, viewModel.progress.totalItems)) of \(viewModel.progress.totalItems)")
+                            .font(QuietFrameTheme.titleFont.monospacedDigit())
+                            .foregroundStyle(QuietFrameTheme.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.isHeader)
+                        Text("You can cancel safely. A partially encrypted item is removed before the import stops.")
+                            .font(.subheadline)
+                            .foregroundStyle(QuietFrameTheme.quietInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    ImportSealProgressBar(fraction: importFraction)
+                        .animation(reduceMotion ? nil : ImportReviewMotion.progress, value: importFraction)
+                        .accessibilityElement(children: .ignore)
                         .accessibilityLabel("Import progress")
                         .accessibilityValue(Text(viewModel.progress.overallFraction, format: .percent))
+                        .accessibilityAddTraits(.updatesFrequently)
+
+                    LazyVGrid(columns: columns, spacing: QuietFrameTheme.gridSpacing) {
+                        ForEach(Array(viewModel.candidates.enumerated()), id: \.element.id) { index, candidate in
+                            ImportSealingCell(
+                                candidate: candidate,
+                                albumName: albumName(for: candidate.id),
+                                state: sealState(at: index)
+                            )
+                            .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+                            .id(candidate.id)
+                        }
+                    }
                 }
-                Text("You can cancel safely. A partially encrypted item is removed before the import stops.")
-                    .font(.body)
-                    .foregroundStyle(QuietFrameTheme.quietInk)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: QuietFrameTheme.readableWidth)
+                .padding(.horizontal, QuietFrameTheme.pagePadding)
+                .padding(.top, QuietFrameTheme.contentSpacing)
+                .padding(.bottom, QuietFrameTheme.pagePadding)
+                .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: QuietFrameTheme.readableWidth)
-            .padding(QuietFrameTheme.pagePadding)
-            .padding(.vertical, QuietFrameTheme.contentSpacing)
-            .frame(maxWidth: .infinity)
+            .onChange(of: sealingCandidateID) { _, candidateID in
+                guard let candidateID else { return }
+                if reduceMotion {
+                    proxy.scrollTo(candidateID)
+                } else {
+                    withAnimation(ImportReviewMotion.scroll) {
+                        proxy.scrollTo(candidateID)
+                    }
+                }
+            }
         }
     }
 
     private var previewGrid: some View {
-        ScrollView {
+        let delays = labelDelays
+        return ScrollView {
             VStack(alignment: .leading, spacing: QuietFrameTheme.contentSpacing) {
                 if dynamicTypeSize.isAccessibilitySize {
                     if let headerTitle {
@@ -251,6 +275,7 @@ struct ImportPreviewView: View {
                             albumName: albumName(for: candidate.id),
                             isSelected: viewModel.albumAssignments.isSelected(candidate.id),
                             selectionMode: viewModel.albumAssignments.hasSelection,
+                            labelDelay: delays[candidate.id] ?? 0,
                             toggleSelection: { viewModel.toggleSelection(id: candidate.id) }
                         ) {
                             viewModel.removeCandidate(id: candidate.id)
@@ -577,6 +602,14 @@ struct ImportPreviewView: View {
         return "\(items) added to \(name)"
     }
 
+    private func finishAlbumAssignment() {
+        if let pending = pendingAssignment {
+            pendingAssignment = nil
+            viewModel.assignSelection(toAlbumID: pending.albumID)
+        }
+        announceAssignment()
+    }
+
     private func announceAssignment() {
         guard let message = assignmentAnnouncement else { return }
         assignmentAnnouncement = nil
@@ -607,9 +640,39 @@ struct ImportPreviewView: View {
         showsVaultGround ? QuietFrameTheme.background : QuietFrameTheme.elevated
     }
 
-    private var irisFraction: Double {
+    private var importFraction: Double {
         let value = viewModel.progress.overallFraction
         return value.isFinite ? min(max(value, 0), 1) : 0
+    }
+
+    private var sealingFraction: Double {
+        let value = viewModel.progress.currentItemFraction / 0.9
+        return value.isFinite ? min(max(value, 0), 1) : 0
+    }
+
+    private func sealState(at index: Int) -> ImportSealState {
+        let completedItems = viewModel.progress.completedItems
+        if index < completedItems { return .sealed }
+        if index == completedItems { return .sealing(sealingFraction) }
+        return .waiting
+    }
+
+    private var sealingCandidateID: UUID? {
+        let index = viewModel.progress.completedItems
+        guard viewModel.candidates.indices.contains(index) else { return nil }
+        return viewModel.candidates[index].id
+    }
+
+    private var labelDelays: [UUID: Double] {
+        let assignedIDs = viewModel.albumAssignments.lastAssignedIDs
+        var delays: [UUID: Double] = [:]
+        for candidate in viewModel.candidates where assignedIDs.contains(candidate.id) {
+            delays[candidate.id] = min(
+                Double(delays.count) * ImportReviewMotion.labelStagger,
+                ImportReviewMotion.labelStaggerLimit
+            )
+        }
+        return delays
     }
 
     private func resultDescription(_ summary: ImportSummary) -> String {
@@ -647,24 +710,172 @@ private struct ImportNotice: View {
     }
 }
 
+private enum ImportReviewMotion {
+    static func easeOut(_ duration: Double) -> Animation {
+        .timingCurve(0.23, 1, 0.32, 1, duration: duration)
+    }
+
+    static let selectionIn = easeOut(0.14)
+    static let selectionOut = easeOut(0.1)
+    static let labelIn = easeOut(0.22)
+    static let labelOut = easeOut(0.1)
+    static let labelStagger = 0.04
+    static let labelStaggerLimit = 0.4
+    static let lockIn = easeOut(0.16)
+    static let sealFade = Animation.timingCurve(0.25, 0.1, 0.25, 1, duration: 0.22)
+    static let progress = Animation.linear(duration: 0.15)
+    static let scroll = Animation.timingCurve(0.32, 0.72, 0, 1, duration: 0.35)
+}
+
+private extension ImportPreviewCandidate {
+    var videoDuration: TimeInterval? {
+        source.metadata.mediaType == .video ? source.metadata.duration : nil
+    }
+
+    static func formattedDuration(_ duration: TimeInterval) -> String {
+        let seconds = max(0, Int(duration.rounded()))
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
+    func accessibilityParts(albumName: String?) -> [String] {
+        var parts = [source.metadata.originalFilename ?? source.metadata.mediaType.title]
+        if let videoDuration {
+            parts.append("video duration \(Self.formattedDuration(videoDuration))")
+        }
+        parts.append(albumName.map { "album \($0)" } ?? "unassigned")
+        return parts
+    }
+}
+
+private struct ImportTileArtwork: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let candidate: ImportPreviewCandidate
+    let albumName: String?
+    var labelDelay: Double = 0
+    var animatesLabel = true
+
+    static let badgeInset: CGFloat = 6
+
+    static var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: QuietFrameTheme.tileCornerRadius, style: .continuous)
+    }
+
+    var body: some View {
+        Rectangle()
+            .fill(QuietFrameTheme.inset)
+            .aspectRatio(1, contentMode: .fit)
+            .overlay {
+                preview
+            }
+            .overlay(alignment: .bottom) {
+                bottomBadges
+            }
+    }
+
+    @ViewBuilder
+    private var preview: some View {
+        if let image = candidate.previewImage {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+        } else {
+            Image(systemName: candidate.source.metadata.mediaType.symbolName)
+                .font(.title)
+                .foregroundStyle(QuietFrameTheme.quietInk)
+        }
+    }
+
+    private var bottomBadges: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .bottom, spacing: 4) {
+                albumLabel
+                Spacer(minLength: 0)
+                if let videoDuration = candidate.videoDuration {
+                    durationText(videoDuration)
+                        .layoutPriority(1)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                albumLabel
+                if let videoDuration = candidate.videoDuration {
+                    durationText(videoDuration)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(Self.badgeInset)
+        .animation(labelAnimation, value: albumName)
+    }
+
+    private var albumLabel: some View {
+        ZStack(alignment: .bottomLeading) {
+            if let albumName {
+                albumBadge(albumName)
+                    .transition(labelTransition)
+                    .id(albumName)
+            }
+        }
+    }
+
+    private var labelAnimation: Animation? {
+        guard animatesLabel else { return nil }
+        guard albumName != nil else { return ImportReviewMotion.labelOut }
+        return ImportReviewMotion.labelIn.delay(labelDelay)
+    }
+
+    private var labelTransition: AnyTransition {
+        guard animatesLabel else { return .identity }
+        let insertion: AnyTransition = reduceMotion
+            ? .opacity
+            : AnyTransition.move(edge: .bottom).combined(with: .opacity)
+        return .asymmetric(
+            insertion: insertion,
+            removal: AnyTransition.opacity.animation(ImportReviewMotion.labelOut)
+        )
+    }
+
+    private func durationText(_ duration: TimeInterval) -> some View {
+        Text(ImportPreviewCandidate.formattedDuration(duration))
+            .font(.caption.weight(.medium).monospacedDigit())
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(QuietFrameTheme.background.opacity(0.78), in: Capsule())
+            .foregroundStyle(QuietFrameTheme.ink)
+    }
+
+    private func albumBadge(_ name: String) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 3) {
+                Image(systemName: "rectangle.stack")
+                    .font(.caption2.weight(.semibold))
+                Text(name)
+            }
+            Text(name)
+        }
+        .font(.caption.weight(.medium))
+        .lineLimit(1)
+        .truncationMode(.tail)
+        .foregroundStyle(QuietFrameTheme.ink)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 2)
+        .background(QuietFrameTheme.background.opacity(0.78), in: Capsule())
+    }
+}
+
 private struct ImportPreviewCell: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ScaledMetric(relativeTo: .body) private var badgeSize: CGFloat = 26
     let candidate: ImportPreviewCandidate
     let albumName: String?
     let isSelected: Bool
     let selectionMode: Bool
+    let labelDelay: Double
     let toggleSelection: () -> Void
     let remove: () -> Void
-
-    private static let badgeInset: CGFloat = 6
-
-    private var tileShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: QuietFrameTheme.tileCornerRadius, style: .continuous)
-    }
-
-    private var videoDuration: TimeInterval? {
-        candidate.source.metadata.mediaType == .video ? candidate.source.metadata.duration : nil
-    }
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -702,127 +913,157 @@ private struct ImportPreviewCell: View {
     }
 
     private var tile: some View {
-        Rectangle()
-            .fill(QuietFrameTheme.inset)
-            .aspectRatio(1, contentMode: .fit)
+        ImportTileArtwork(candidate: candidate, albumName: albumName, labelDelay: labelDelay)
             .overlay {
-                if let image = candidate.previewImage {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    Image(systemName: candidate.source.metadata.mediaType.symbolName)
-                        .font(.title)
-                        .foregroundStyle(QuietFrameTheme.quietInk)
-                }
-            }
-            .clipShape(tileShape)
-            .overlay {
-                if isSelected {
-                    tileShape
-                        .strokeBorder(QuietFrameTheme.accent, lineWidth: 3)
-                }
+                ImportTileArtwork.shape
+                    .strokeBorder(QuietFrameTheme.accent, lineWidth: 3)
+                    .opacity(isSelected ? 1 : 0)
+                    .animation(selectionAnimation, value: isSelected)
             }
             .overlay(alignment: .topTrailing) {
-                if isSelected || selectionMode {
-                    selectionBadge
-                        .padding(Self.badgeInset)
-                }
+                selectionBadge
+                    .padding(ImportTileArtwork.badgeInset)
+                    .animation(selectionAnimation, value: isSelected)
             }
-            .overlay(alignment: .bottom) {
-                bottomBadges
-            }
-            .contentShape(tileShape)
+            .clipShape(ImportTileArtwork.shape)
+            .contentShape(ImportTileArtwork.shape)
     }
 
-    @ViewBuilder
+    private var selectionAnimation: Animation {
+        isSelected ? ImportReviewMotion.selectionIn : ImportReviewMotion.selectionOut
+    }
+
     private var selectionBadge: some View {
-        if isSelected {
-            Image(systemName: "checkmark")
-                .font(.system(size: badgeSize * 0.46, weight: .bold))
-                .foregroundStyle(QuietFrameTheme.background)
-                .frame(width: badgeSize, height: badgeSize)
-                .background(QuietFrameTheme.accent, in: Circle())
-        } else {
+        ZStack {
             Circle()
                 .fill(QuietFrameTheme.background.opacity(0.55))
                 .overlay {
                     Circle().strokeBorder(QuietFrameTheme.ink, lineWidth: 1.5)
                 }
+                .opacity(selectionMode && !isSelected ? 1 : 0)
+            Image(systemName: "checkmark")
+                .font(.system(size: badgeSize * 0.46, weight: .bold))
+                .foregroundStyle(QuietFrameTheme.background)
                 .frame(width: badgeSize, height: badgeSize)
+                .background(QuietFrameTheme.accent, in: Circle())
+                .scaleEffect(isSelected || reduceMotion ? 1 : 0.9)
+                .opacity(isSelected ? 1 : 0)
         }
-    }
-
-    @ViewBuilder
-    private var bottomBadges: some View {
-        if albumName != nil || videoDuration != nil {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .bottom, spacing: 4) {
-                    if let albumName {
-                        albumBadge(albumName)
-                    }
-                    Spacer(minLength: 0)
-                    if let videoDuration {
-                        durationText(videoDuration)
-                            .layoutPriority(1)
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    if let albumName {
-                        albumBadge(albumName)
-                    }
-                    if let videoDuration {
-                        durationText(videoDuration)
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(Self.badgeInset)
-        }
-    }
-
-    private func durationText(_ duration: TimeInterval) -> some View {
-        Text(formattedDuration(duration))
-            .font(.caption.weight(.medium).monospacedDigit())
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2)
-            .background(QuietFrameTheme.background.opacity(0.78), in: Capsule())
-            .foregroundStyle(QuietFrameTheme.ink)
-    }
-
-    private func albumBadge(_ name: String) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 3) {
-                Image(systemName: "rectangle.stack")
-                    .font(.caption2.weight(.semibold))
-                Text(name)
-            }
-            Text(name)
-        }
-        .font(.caption.weight(.medium))
-        .lineLimit(1)
-        .truncationMode(.tail)
-        .foregroundStyle(QuietFrameTheme.ink)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 2)
-        .background(QuietFrameTheme.background.opacity(0.78), in: Capsule())
+        .frame(width: badgeSize, height: badgeSize)
     }
 
     private var tileAccessibilityLabel: String {
-        var parts = [candidate.source.metadata.originalFilename ?? candidate.source.metadata.mediaType.title]
-        if let videoDuration {
-            parts.append("video duration \(formattedDuration(videoDuration))")
-        }
-        parts.append(albumName.map { "album \($0)" } ?? "unassigned")
-        return parts.joined(separator: ", ")
+        candidate.accessibilityParts(albumName: albumName).joined(separator: ", ")
+    }
+}
+
+private enum ImportSealState: Equatable {
+    case waiting
+    case sealing(Double)
+    case sealed
+}
+
+private struct ImportSealingCell: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let candidate: ImportPreviewCandidate
+    let albumName: String?
+    let state: ImportSealState
+
+    var body: some View {
+        ImportTileArtwork(candidate: candidate, albumName: albumName, animatesLabel: false)
+            .overlay {
+                sweep
+            }
+            .overlay {
+                Rectangle()
+                    .fill(QuietFrameTheme.background.opacity(0.58))
+                    .opacity(isSealed ? 1 : 0)
+                    .animation(ImportReviewMotion.sealFade, value: isSealed)
+            }
+            .overlay {
+                lock
+            }
+            .clipShape(ImportTileArtwork.shape)
+            .opacity(isWaiting ? 0.75 : 1)
+            .animation(ImportReviewMotion.sealFade, value: isWaiting)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityText)
     }
 
-    private func formattedDuration(_ duration: TimeInterval) -> String {
-        let seconds = max(0, Int(duration.rounded()))
-        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    @ViewBuilder
+    private var sweep: some View {
+        if reduceMotion {
+            Rectangle()
+                .fill(QuietFrameTheme.accent)
+                .opacity(isSealing ? 0.35 : 0)
+                .animation(ImportReviewMotion.sealFade, value: isSealing)
+        } else {
+            Rectangle()
+                .fill(QuietFrameTheme.accent)
+                .scaleEffect(x: CGFloat(sweepFraction), y: 1, anchor: .leading)
+                .animation(ImportReviewMotion.progress, value: sweepFraction)
+                .opacity(isSealing ? 1 : 0)
+                .animation(ImportReviewMotion.sealFade, value: isSealing)
+        }
+    }
+
+    private var lock: some View {
+        Image(systemName: "lock.fill")
+            .font(.title3.weight(.semibold))
+            .foregroundStyle(QuietFrameTheme.ink)
+            .scaleEffect(isSealed || reduceMotion ? 1 : 0.9)
+            .opacity(isSealed ? 1 : 0)
+            .animation(ImportReviewMotion.lockIn, value: isSealed)
+    }
+
+    private var isWaiting: Bool {
+        state == .waiting
+    }
+
+    private var isSealed: Bool {
+        state == .sealed
+    }
+
+    private var isSealing: Bool {
+        switch state {
+        case .sealing: true
+        case .waiting, .sealed: false
+        }
+    }
+
+    private var sweepFraction: Double {
+        switch state {
+        case .waiting: 0
+        case .sealing(let fraction): fraction
+        case .sealed: 1
+        }
+    }
+
+    private var statusText: String {
+        switch state {
+        case .waiting: "waiting"
+        case .sealing: "encrypting"
+        case .sealed: "done"
+        }
+    }
+
+    private var accessibilityText: String {
+        (candidate.accessibilityParts(albumName: albumName) + [statusText]).joined(separator: ", ")
+    }
+}
+
+private struct ImportSealProgressBar: View {
+    let fraction: Double
+
+    var body: some View {
+        Capsule()
+            .fill(QuietFrameTheme.inset)
+            .frame(height: 4)
+            .overlay(alignment: .leading) {
+                Rectangle()
+                    .fill(QuietFrameTheme.accent)
+                    .scaleEffect(x: CGFloat(fraction), y: 1, anchor: .leading)
+            }
+            .clipShape(Capsule())
     }
 }

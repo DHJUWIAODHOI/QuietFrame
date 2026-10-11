@@ -8,6 +8,8 @@ struct GalleryGridView: View {
     let emptyDescription: String
     var emptyActionTitle: String?
     var emptyAction: (() -> Void)?
+    var tileFrames: MediaTileFrames?
+    var hiddenMediaID: UUID?
     let open: (VaultMedia) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -57,6 +59,8 @@ struct GalleryGridView: View {
                                 )
                             }
                             .buttonStyle(.plain)
+                            .opacity(media.id == hiddenMediaID ? 0 : 1)
+                            .background { tileFrameReporter(for: media.id) }
                             .contentShape(.contextMenuPreview, tileShape)
                             .onLongPressGesture(minimumDuration: 0.35) {
                                 viewModel.beginSelection(with: media.id)
@@ -91,10 +95,40 @@ struct GalleryGridView: View {
                     }
                 }
                 .refreshable { await viewModel.loadInitial() }
+                .background { viewportReporter }
             }
         }
         .background(QuietFrameTheme.background)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: viewModel.items.count)
+    }
+
+    @ViewBuilder
+    private func tileFrameReporter(for mediaID: UUID) -> some View {
+        if let tileFrames {
+            GeometryReader { proxy in
+                let tileFrame = proxy.frame(in: .global)
+                Color.clear
+                    .onAppear { tileFrames.set(tileFrame, for: mediaID) }
+                    .onChange(of: tileFrame) { _, newFrame in tileFrames.set(newFrame, for: mediaID) }
+                    .onDisappear { tileFrames.remove(mediaID) }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var viewportReporter: some View {
+        if let tileFrames {
+            GeometryReader { proxy in
+                let viewport = unobscuredViewport(
+                    frame: proxy.frame(in: .global),
+                    topInset: proxy.safeAreaInsets.top,
+                    bottomInset: proxy.safeAreaInsets.bottom
+                )
+                Color.clear
+                    .onAppear { tileFrames.viewport = viewport }
+                    .onChange(of: viewport) { _, newViewport in tileFrames.viewport = newViewport }
+            }
+        }
     }
 
     private var loadingGrid: some View {

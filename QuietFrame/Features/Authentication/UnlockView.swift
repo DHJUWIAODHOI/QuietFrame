@@ -9,6 +9,8 @@ struct UnlockView: View {
     @State private var currentDate = Date()
     @State private var confirmsForgottenPasscode = false
     @State private var showsRecoveryReset = false
+    @State private var isShowingError = false
+    @State private var shakeTrigger = 0
 
     var body: some View {
         AuthenticationLayout { isCompactHeight in
@@ -30,11 +32,14 @@ struct UnlockView: View {
                 label: "Six-digit QuietFrame passcode",
                 passcode: $passcode,
                 isDisabled: coordinator.isWorking || isLockedOut,
-                irisSize: irisSize(isCompactHeight: isCompactHeight)
+                irisSize: irisSize(isCompactHeight: isCompactHeight),
+                isShowingError: isShowingError,
+                shakeTrigger: shakeTrigger,
+                hidesIris: coordinator.state == .unlocked && !reduceMotion
             ) {
                 Task {
                     await coordinator.unlock(passcode: passcode)
-                    if coordinator.state != .unlocked { passcode = "" }
+                    if coordinator.state != .unlocked { await showWrongPasscodeFeedback() }
                 }
             }
 
@@ -154,6 +159,17 @@ struct UnlockView: View {
         .multilineTextAlignment(.center)
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityElement(children: .combine)
+    }
+
+    private func showWrongPasscodeFeedback() async {
+        isShowingError = true
+        if !reduceMotion { shakeTrigger += 1 }
+        try? await Task.sleep(for: .milliseconds(240))
+        passcode = ""
+        if !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(260))
+        }
+        isShowingError = false
     }
 
     private func irisSize(isCompactHeight: Bool) -> CGFloat {

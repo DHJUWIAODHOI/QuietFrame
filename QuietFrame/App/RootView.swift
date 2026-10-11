@@ -64,9 +64,13 @@ private struct VaultProblemView<Actions: View>: View {
 
 private struct AuthenticatedRootView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var sceneIsObscured = true
     @State private var screenIsCaptured = false
     @State private var lifecycleTask: Task<Void, Never>?
+    @State private var irisSnapshot: PasscodeIrisSnapshot?
+    @State private var unlockFlourish: UnlockFlourish?
+    @State private var isFinishingOnboarding = false
 
     let dependencies: AppDependencies
 
@@ -77,6 +81,14 @@ private struct AuthenticatedRootView: View {
             protectedContent
                 .allowsHitTesting(!isShielded)
                 .accessibilityHidden(isShielded)
+
+            if let flourish = unlockFlourish {
+                UnlockIrisFlourish(snapshot: flourish.snapshot) {
+                    finishUnlockFlourish(flourish.id)
+                }
+                .id(flourish.id)
+                .zIndex(50)
+            }
 
             if isShielded {
                 PrivacyShieldView(isScreenCaptured: screenIsCaptured)
@@ -102,6 +114,21 @@ private struct AuthenticatedRootView: View {
                 dependencies.thumbnailService.clearCache()
             }
         }
+        .onPreferenceChange(PasscodeIrisPreferenceKey.self) { snapshot in
+            guard coordinator.state != .unlocked else { return }
+            irisSnapshot = snapshot
+        }
+        .onChange(of: coordinator.state) { oldState, newState in
+            if newState == .unlocked {
+                beginUnlockFlourish(isFirstOpen: oldState == .needsOnboarding || isFinishingOnboarding)
+            } else {
+                unlockFlourish = nil
+            }
+            isFinishingOnboarding = oldState == .needsOnboarding && newState == .locked
+        }
+        .onChange(of: coordinator.isWorking) { _, isWorking in
+            if !isWorking, coordinator.state == .locked { isFinishingOnboarding = false }
+        }
     }
 
     @ViewBuilder
@@ -109,16 +136,21 @@ private struct AuthenticatedRootView: View {
         switch coordinator.state {
         case .loading:
             LaunchView()
+                .transition(gateTransition)
         case .needsOnboarding:
             OnboardingView(coordinator: coordinator)
+                .transition(gateTransition)
         case .locked:
             if coordinator.authenticationMode == .none {
                 LaunchView()
+                    .transition(lockedTransition)
             } else {
                 UnlockView(coordinator: coordinator)
+                    .transition(lockedTransition)
             }
         case .unlocked:
             MainTabView()
+                .transition(vaultTransition)
         case .retryRequired:
             RetryRequiredView(coordinator: coordinator)
         case .recoveryRequired:
@@ -128,6 +160,39 @@ private struct AuthenticatedRootView: View {
 
     private var isShielded: Bool {
         sceneIsObscured || screenIsCaptured
+    }
+
+    private var vaultTransition: AnyTransition {
+        guard !reduceMotion else {
+            return .asymmetric(insertion: .opacity.animation(.easeOut(duration: 0.2)), removal: .identity)
+        }
+        return .asymmetric(
+            insertion: .opacity.combined(with: .scale(scale: 0.97))
+                .animation(.timingCurve(0.23, 1, 0.32, 1, duration: 0.32).delay(0.08)),
+            removal: .identity
+        )
+    }
+
+    private var gateTransition: AnyTransition {
+        .asymmetric(
+            insertion: .identity,
+            removal: .opacity.animation(.easeOut(duration: reduceMotion ? 0.2 : 0.16))
+        )
+    }
+
+    private var lockedTransition: AnyTransition {
+        isFinishingOnboarding ? .identity : gateTransition
+    }
+
+    private func beginUnlockFlourish(isFirstOpen: Bool) {
+        if !reduceMotion, !isFirstOpen, let irisSnapshot {
+            unlockFlourish = UnlockFlourish(snapshot: irisSnapshot)
+        }
+        irisSnapshot = nil
+    }
+
+    private func finishUnlockFlourish(_ id: UUID) {
+        if unlockFlourish?.id == id { unlockFlourish = nil }
     }
 
     private func handle(_ phase: ScenePhase) async {
@@ -167,6 +232,55 @@ private struct AuthenticatedRootView: View {
         }
     }
 
+}
+
+private struct UnlockFlourish: Identifiable {
+    let id = UUID()
+    let snapshot: PasscodeIrisSnapshot
+}
+
+/// The passcode iris lifted out of the unlock screen as it opens onto the vault.
+private struct UnlockIrisFlourish: View {
+    let snapshot: PasscodeIrisSnapshot
+    let onFinish: () -> Void
+    @State private var isOpen = false
+
+    var body: some View {
+        GeometryReader { proxy in
+            let origin = proxy.frame(in: .global).origin
+            ApertureIris(
+                closure: isOpen ? 0 : startClosure,
+                filledBlades: startFilledBlades,
+                size: snapshot.size
+            )
+            .scaleEffect(isOpen ? 1.4 : 1)
+            .rotationEffect(.degrees(isOpen ? 35 : 0))
+            .opacity(isOpen ? 0 : 1)
+            .position(x: snapshot.frame.midX - origin.x, y: snapshot.frame.midY - origin.y)
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .onAppear {
+            withAnimation(.timingCurve(0.23, 1, 0.32, 1, duration: 0.42)) {
+                isOpen = true
+            } completion: {
+                onFinish()
+            }
+        }
+    }
+
+    private var isSealed: Bool {
+        snapshot.filledBlades >= 6
+    }
+
+    private var startClosure: CGFloat {
+        isSealed ? 1 : snapshot.closure
+    }
+
+    private var startFilledBlades: Int {
+        isSealed ? 6 : snapshot.filledBlades
+    }
 }
 
 private struct RetryRequiredView: View {

@@ -104,13 +104,14 @@ struct ApertureBladeShape: Shape {
     }
 }
 
-/// The six-blade aperture: Aperture's signature. Filled blades are brass with night seams;
-/// empty blades are dusk outlined in mist. Callers either label it or hide it from accessibility.
+/// The six-blade aperture: Aperture's signature. Filled blades take `fillColor` (brass by default)
+/// with night seams; empty blades are dusk outlined in mist. Callers either label it or hide it from accessibility.
 struct ApertureIris: View {
     var closure: CGFloat
     var filledBlades: Int
     var size: CGFloat = 192
     var showsRing = true
+    var fillColor: Color = QuietFrameTheme.accent
 
     var body: some View {
         let scale = size / 200
@@ -123,7 +124,7 @@ struct ApertureIris: View {
             ForEach(0..<6, id: \.self) { index in
                 let isFilled = index < filledBlades
                 ApertureBladeShape(closure: closure)
-                    .fill(isFilled ? QuietFrameTheme.accent : QuietFrameTheme.elevated)
+                    .fill(isFilled ? fillColor : QuietFrameTheme.elevated)
                     .overlay {
                         ApertureBladeShape(closure: closure)
                             .stroke(

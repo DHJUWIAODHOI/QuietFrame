@@ -118,6 +118,11 @@ QuietFrame/
   - Type: New York serif for titles (`screenTitleFont`, `titleFont`, `sectionTitleFont`, or `.quietScreenTitle()`), SF Pro for everything else, `.monospacedDigit()` for numbers.
   - Components: `.aperturePrimary` / `.apertureSecondary` / `.apertureDestructive` pill buttons; `.quietFormStyle()` on lists plus `.quietRows()` on sections; `.quietCard()`; sheets use `presentationBackground(QuietFrameTheme.elevated)` and `presentationCornerRadius(QuietFrameTheme.sheetCornerRadius)`.
   - The signature element is `ApertureIris` / `ApertureMark` (`Components/ApertureIris.swift`): six blades that close as `closure` goes 0→1. `SixDigitPasscodeField` shows it above an on-screen keypad, one blade per digit. Keep the iris rare: passcode entry, welcome, launch and privacy cover.
+  - Motion (from the approved "QuietFrame Motion Studies" prototypes): custom curves only, mainly `.timingCurve(0.23, 1, 0.32, 1, …)` (strong ease-out) and `.timingCurve(0.32, 0.72, 0, 1, …)` (drawer); UI motion stays at or under about 400ms; exits are faster than entrances; nothing scales from 0; Reduce Motion means no movement or scale, only short fades and colour changes. Locking is always instant: vault content never fades out over a locked state.
+  - The three app animations:
+    - **Unlock iris:** `RootView` plays the flourish from `PasscodeIrisSnapshot` (published by `SixDigitPasscodeField`). A wrong code gives the ember blades and a shake in `UnlockView`.
+    - **Photo zoom:** `MediaViewer` flies a thumbnail between the grid tile and the viewer. `MediaTileFrames` tracks tile frames, the geometry helpers are in `Features/Viewer/ViewerZoomTransition.swift`, and the cover is presented without the system slide and with a clear background.
+    - **Import sort and seal:** album labels stagger in from `ImportAlbumAssignments.lastAssignedIDs`, and tiles seal in `ImportPreviewView` from `ImportProgress`.
   - Support Dynamic Type (branch on `isAccessibilitySize`, use `ViewThatFits`) and Reduce Motion, and keep layouts scrollable on a 375×667 iPhone SE. For VoiceOver, use `accessibilityAction(named:)` to mirror long-press and context-menu actions.
   - The HTML prototypes that defined this look live on the "QuietFrame Redesign Prototypes" canvas (direction B, Aperture).
 - Accessibility identifiers are kebab-case (`onboarding`, `unlock-screen`, `main-tabs`, ...), and the UI test depends on them.
@@ -132,7 +137,7 @@ QuietFrame/
 
 - The v1 feature set is implemented. There are no TODO/FIXME markers; open work is in README "Known Limitations" and the unchecked items of the SECURITY.md checklist.
 - `main` and `origin/main` are in sync. CI runs the full test suite and passes (run 37814853905, commit `261e0f4`). The simulator test step must stay ad-hoc signed (`CODE_SIGN_IDENTITY=-`): an unsigned test host has no Keychain access, which fails `KeychainServiceTests` and leaves the UI test on the retry screen. `refactor-ui-fork` (= `fork/main`) is an older branch with a shortened CI test list.
-- **Tests:** 88 unit tests in 19 files, plus 1 UI test. No tests cover reset-journal recovery, thumbnails, metadata extraction, ImportViewModel, biometrics, iterated PBKDF2, or most container tamper cases.
+- **Tests:** 126 unit tests in 21 files, plus 1 UI test. No tests cover reset-journal recovery, thumbnails, metadata extraction, ImportViewModel, biometrics, iterated PBKDF2, or most container tamper cases.
 - **Stale docs:**
   - README: says 28 tests and a V1 schema, and claims CI doesn't run the tests.
   - SECURITY.md:26: says Apple has no PBKDF2 API.

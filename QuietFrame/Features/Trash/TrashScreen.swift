@@ -15,6 +15,8 @@ private struct TrashScreenContent: View {
     let dependencies: AppDependencies
     @State private var viewModel: GalleryViewModel
     @State private var viewerRequest: MediaViewerRequest?
+    @State private var tileFrames: MediaTileFrames
+    @State private var hiddenMediaID: UUID?
     @State private var confirmsPermanentDeletion = false
     @State private var confirmsEmptyTrash = false
     @State private var userMessage: String?
@@ -30,6 +32,7 @@ private struct TrashScreenContent: View {
                 includesTrash: true
             )
         ))
+        _tileFrames = State(initialValue: MediaTileFrames())
     }
 
     var body: some View {
@@ -43,7 +46,9 @@ private struct TrashScreenContent: View {
                 minimumCellWidth: CGFloat(settingsRecords.first?.thumbnailSize.minimumWidth ?? 120),
                 emptyTitle: "Trash is empty",
                 emptyDescription: "Deleted media remains encrypted here until it expires.",
-                open: { media in viewerRequest = MediaViewerRequest(mediaID: media.id) }
+                tileFrames: tileFrames,
+                hiddenMediaID: hiddenMediaID,
+                open: { media in presentViewer(for: media) }
             )
         }
         .background(QuietFrameTheme.background)
@@ -62,13 +67,19 @@ private struct TrashScreenContent: View {
             await viewModel.loadInitial()
         }
         .fullScreenCover(item: $viewerRequest, onDismiss: {
-            Task { await viewModel.loadInitial() }
+            Task {
+                await viewModel.loadInitial()
+                if viewerRequest == nil { hiddenMediaID = nil }
+            }
         }) { request in
             MediaViewer(
                 items: viewModel.items,
                 initialMediaID: request.mediaID,
-                dependencies: dependencies
+                dependencies: dependencies,
+                tileFrames: tileFrames,
+                onCurrentMediaChange: { hiddenMediaID = $0 }
             )
+            .presentationBackground(Color.clear)
         }
         .confirmationDialog(
             "Permanently delete selected media?",
@@ -242,6 +253,14 @@ private struct TrashScreenContent: View {
 
     private var messageIsPresented: Binding<Bool> {
         Binding(get: { userMessage != nil }, set: { if !$0 { userMessage = nil } })
+    }
+
+    private func presentViewer(for media: VaultMedia) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            viewerRequest = MediaViewerRequest(mediaID: media.id)
+        }
     }
 
     private func restoreSelection() {

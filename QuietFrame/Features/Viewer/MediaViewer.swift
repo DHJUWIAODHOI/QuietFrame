@@ -1,5 +1,6 @@
 import SwiftData
 import SwiftUI
+import UIKit
 
 func mediaPageState(pageIndex: Int, selectedIndex: Int) -> (isActive: Bool, shouldPrepare: Bool) {
     (pageIndex == selectedIndex, abs(pageIndex - selectedIndex) <= 1)
@@ -22,8 +23,16 @@ func viewerControlsVisibility(
 }
 
 struct MediaViewer: View {
+    private enum LiftPhase {
+        case idle
+        case tracking
+        case rejected
+    }
+
     let items: [VaultMedia]
     let dependencies: AppDependencies
+    let tileFrames: MediaTileFrames?
+    let onCurrentMediaChange: ((UUID?) -> Void)?
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -41,10 +50,34 @@ struct MediaViewer: View {
     @State private var confirmsPermanentDeletion = false
     @State private var isWorking = false
     @State private var userMessage: String?
+    @State private var viewerFrame = CGRect.zero
+    @State private var viewerOpacity = 0.0
+    @State private var backdropLevel = 0.0
+    @State private var chromeOpacity = 0.0
+    @State private var pagerIsHidden = true
+    @State private var flight: ViewerZoomFlight?
+    @State private var transitionFallback: Task<Void, Never>?
+    @State private var hasBegunOpening = false
+    @State private var closesWhenOpened = false
+    @State private var isDismissing = false
+    @State private var hasDismissed = false
+    @State private var liftPhase = LiftPhase.idle
+    @State private var liftOrigin: CGFloat = 0
+    @State private var liftTranslation: CGFloat = 0
+    @State private var mediaIsLifted = false
+    @GestureState private var dismissDragIsActive = false
 
-    init(items: [VaultMedia], initialMediaID: UUID, dependencies: AppDependencies) {
+    init(
+        items: [VaultMedia],
+        initialMediaID: UUID,
+        dependencies: AppDependencies,
+        tileFrames: MediaTileFrames? = nil,
+        onCurrentMediaChange: ((UUID?) -> Void)? = nil
+    ) {
         self.items = items
         self.dependencies = dependencies
+        self.tileFrames = tileFrames
+        self.onCurrentMediaChange = onCurrentMediaChange
         _selectedMediaID = State(initialValue: initialMediaID)
         _photoLoader = State(initialValue: ViewerPhotoLoader(storage: dependencies.secureStorage))
     }
@@ -65,17 +98,32 @@ struct MediaViewer: View {
     }
 
     var body: some View {
-        viewerContent
+        GeometryReader { proxy in
+            let windowFrame = proxy.frame(in: .global)
+            viewerContent(in: windowFrame)
+                .onAppear { viewerFrame = windowFrame }
+                .onChange(of: windowFrame) { _, newFrame in viewerFrame = newFrame }
+        }
+        .opacity(viewerOpacity)
         .statusBarHidden(!controlsAreVisible)
         .persistentSystemOverlays(controlsAreVisible ? .automatic : .hidden)
         .onAppear { photoLoader.prepare(photoRequests) }
+        .onAppear {
+            onCurrentMediaChange?(selectedMediaID)
+            beginOpening()
+        }
         .onDisappear { photoLoader.releaseAll() }
+        .onDisappear { transitionFallback?.cancel() }
         .onChange(of: photoRequests) { _, requests in
             photoLoader.prepare(requests)
         }
-        .onChange(of: selectedMediaID) { _, _ in
+        .onChange(of: selectedMediaID) { _, mediaID in
             selectedPhotoIsZoomed = false
             controlsAreVisible = true
+            onCurrentMediaChange?(mediaID)
+        }
+        .onChange(of: dismissDragIsActive) { _, isActive in
+            if !isActive { Task { liftDidStop() } }
         }
         .sheet(item: $informationMedia) { media in
             MediaInfoView(media: media)
@@ -129,19 +177,45 @@ struct MediaViewer: View {
             Text(userMessage ?? "The action could not be completed.")
         }
         .accessibilityIdentifier("media-viewer")
-        .accessibilityAction(named: "Close Viewer") { dismiss() }
+        .accessibilityAction(named: "Close Viewer") { closeViewer() }
     }
 
-    private var viewerContent: some View {
-        ZStack {
-            QuietFrameTheme.background.ignoresSafeArea()
+    private func viewerContent(in windowFrame: CGRect) -> some View {
+        let liftProgress = dismissProgress(translation: liftTranslation, height: windowFrame.height)
+        return ZStack {
+            QuietFrameTheme.background
+                .opacity(backdropLevel * backdropOpacity(translation: liftTranslation, height: windowFrame.height))
+                .ignoresSafeArea()
+
             mediaPager
+                .scaleEffect(dragScale(progress: liftProgress, reduceMotion: reduceMotion))
+                .offset(y: dismissDragOffset(translation: liftTranslation))
+                .opacity(pagerIsHidden ? 0 : 1)
+
+            if let flight {
+                ViewerZoomFlyer(
+                    image: flight.image,
+                    from: flight.from.rect(imageSize: flight.image.size, viewerFrame: windowFrame),
+                    to: flight.to.rect(imageSize: flight.image.size, viewerFrame: windowFrame),
+                    fromCornerRadius: flight.fromCornerRadius,
+                    toCornerRadius: flight.toCornerRadius,
+                    fadesOut: flight.fadesOut,
+                    animation: flight.animation
+                ) {
+                    finishFlight(flight.id)
+                }
+                .id(flight.id)
+                .transition(.identity)
+            }
 
             if controlsAreVisible {
                 controls
+                    .opacity(chromeOpacity)
+                    .allowsHitTesting(chromeOpacity > 0)
                     .transition(.opacity)
             }
         }
+        .allowsHitTesting(!isDismissing)
     }
 
     private var mediaPager: some View {
@@ -157,7 +231,9 @@ struct MediaViewer: View {
                     photoLoader: photoLoader,
                     onPhotoTap: togglePhotoControls,
                     onPhotoZoomChanged: { updatePhotoZoom($0, mediaID: media.id) },
-                    onVideoPlaybackChanged: { updateVideoPlayback($0, mediaID: media.id) }
+                    onVideoPlaybackChanged: { updateVideoPlayback($0, mediaID: media.id) },
+                    thumbnailService: dependencies.thumbnailService,
+                    isLifted: pageState.isActive && mediaIsLifted
                 )
                 .tag(media.id)
             }
@@ -170,7 +246,7 @@ struct MediaViewer: View {
         VStack {
             HStack(spacing: QuietFrameTheme.compactSpacing) {
                 Button {
-                    dismiss()
+                    closeViewer()
                 } label: {
                     chromeIcon("xmark")
                 }
@@ -317,15 +393,254 @@ struct MediaViewer: View {
 
     private var dismissGesture: some Gesture {
         DragGesture(minimumDistance: 24, coordinateSpace: .global)
-            .onEnded { value in
-                let translation = value.translation
-                let predicted = value.predictedEndTranslation
-                guard !selectedPhotoIsZoomed,
-                      translation.height > 80,
-                      predicted.height > 160,
-                      abs(predicted.height) > abs(predicted.width) * 1.2 else { return }
-                dismiss()
+            .updating($dismissDragIsActive) { _, isActive, _ in isActive = true }
+            .onChanged { value in updateLift(value) }
+            .onEnded { value in endLift(value) }
+    }
+
+    private var presentsModal: Bool {
+        informationMedia != nil || movingMedia != nil || shareLease != nil
+            || confirmsTrash || confirmsPermanentDeletion || userMessage != nil
+    }
+
+    private var canLiftMedia: Bool {
+        !selectedPhotoIsZoomed && !isWorking && !isDismissing && flight == nil && !presentsModal
+    }
+
+    private func updateLift(_ value: DragGesture.Value) {
+        switch liftPhase {
+        case .rejected:
+            return
+        case .idle:
+            let translation = value.translation
+            guard abs(translation.height) > abs(translation.width), canLiftMedia else {
+                liftPhase = .rejected
+                return
             }
+            liftPhase = .tracking
+            liftOrigin = translation.height
+            mediaIsLifted = true
+            withAnimation(.easeOut(duration: 0.1)) { chromeOpacity = 0 }
+        case .tracking:
+            break
+        }
+        liftTranslation = value.translation.height - liftOrigin
+    }
+
+    private func endLift(_ value: DragGesture.Value) {
+        let phase = liftPhase
+        liftPhase = .idle
+        guard phase == .tracking else { return }
+        if !selectedPhotoIsZoomed,
+           shouldDismiss(translation: value.translation.height, velocity: value.velocity.height) {
+            closeViewer()
+        } else {
+            settleLift()
+        }
+    }
+
+    private func liftDidStop() {
+        let phase = liftPhase
+        liftPhase = .idle
+        if phase == .tracking, !isDismissing {
+            settleLift()
+        }
+    }
+
+    private func settleLift() {
+        withAnimation(.easeOut(duration: 0.16)) { chromeOpacity = 1 }
+        guard liftTranslation != 0 else {
+            mediaIsLifted = false
+            return
+        }
+        withAnimation(.spring(duration: 0.26, bounce: 0)) {
+            liftTranslation = 0
+        } completion: {
+            if liftPhase != .tracking, !isDismissing {
+                withoutAnimation { mediaIsLifted = false }
+            }
+        }
+    }
+
+    private func beginOpening() {
+        guard !hasBegunOpening else { return }
+        hasBegunOpening = true
+        guard !reduceMotion,
+              let media = selectedMedia,
+              let tileFrame = tileFrames?.frame(for: media.id),
+              let thumbnail = dependencies.thumbnailService.cachedImage(for: media) else {
+            backdropLevel = 1
+            chromeOpacity = 1
+            pagerIsHidden = false
+            withAnimation(.easeOut(duration: ViewerZoomMotion.fadeDuration)) { viewerOpacity = 1 }
+            return
+        }
+        viewerOpacity = 1
+        launch(ViewerZoomFlight(
+            purpose: .opening,
+            image: thumbnail,
+            from: .window(tileFrame),
+            to: .fitted,
+            fromCornerRadius: QuietFrameTheme.tileCornerRadius,
+            toCornerRadius: 0,
+            duration: ViewerZoomMotion.openDuration,
+            animation: ViewerZoomMotion.drawer(duration: ViewerZoomMotion.openDuration)
+        ))
+        withAnimation(ViewerZoomMotion.easeOut(duration: ViewerZoomMotion.backdropDuration)) {
+            backdropLevel = 1
+        }
+        withAnimation(.easeOut(duration: 0.16).delay(0.12)) { chromeOpacity = 1 }
+    }
+
+    private func closeViewer() {
+        guard !isDismissing else { return }
+        if flight?.purpose == .opening {
+            closesWhenOpened = true
+            withAnimation(.easeOut(duration: 0.1)) { chromeOpacity = 0 }
+            return
+        }
+        let viewerBounds = CGRect(origin: .zero, size: viewerFrame.size)
+        guard !reduceMotion,
+              !selectedPhotoIsZoomed,
+              !viewerBounds.isEmpty,
+              let media = selectedMedia,
+              let image = zoomImage(for: media) else {
+            fadeOutAndDismiss(revealsTile: true)
+            return
+        }
+        isDismissing = true
+        let fitted = aspectFitRect(imageSize: image.size, in: viewerBounds)
+        let start = dismissDragRect(
+            fitting: fitted,
+            in: viewerBounds,
+            translation: liftTranslation,
+            reduceMotion: reduceMotion
+        )
+        pagerIsHidden = true
+        withAnimation(.easeOut(duration: 0.1)) { chromeOpacity = 0 }
+
+        if let tileFrame = visibleTileFrame(for: media.id, in: viewerBounds) {
+            launch(ViewerZoomFlight(
+                purpose: .closing,
+                image: image,
+                from: .viewer(start),
+                to: .viewer(tileFrame),
+                fromCornerRadius: 0,
+                toCornerRadius: QuietFrameTheme.tileCornerRadius,
+                duration: ViewerZoomMotion.returnDuration,
+                animation: ViewerZoomMotion.easeOut(duration: ViewerZoomMotion.returnDuration)
+            ))
+            withAnimation(ViewerZoomMotion.easeOut(duration: ViewerZoomMotion.backdropDuration)) {
+                backdropLevel = 0
+            }
+        } else {
+            launch(ViewerZoomFlight(
+                purpose: .closing,
+                image: image,
+                from: .viewer(start),
+                to: .viewer(start.offsetBy(dx: 0, dy: 80)),
+                fromCornerRadius: 0,
+                toCornerRadius: 0,
+                fadesOut: true,
+                duration: ViewerZoomMotion.slideAwayDuration,
+                animation: ViewerZoomMotion.easeOut(duration: ViewerZoomMotion.slideAwayDuration)
+            ))
+            withAnimation(ViewerZoomMotion.easeOut(duration: ViewerZoomMotion.slideAwayDuration)) {
+                backdropLevel = 0
+            }
+        }
+    }
+
+    /// Used when the item leaves the grid or the media has no place to zoom back to.
+    private func fadeOutAndDismiss(revealsTile: Bool) {
+        guard !isDismissing else { return }
+        isDismissing = true
+        if revealsTile {
+            onCurrentMediaChange?(nil)
+        }
+        withAnimation(.easeOut(duration: ViewerZoomMotion.fadeDuration)) {
+            viewerOpacity = 0
+        } completion: {
+            dismissWithoutAnimation(revealingTile: false)
+        }
+        scheduleTransitionFallback(after: ViewerZoomMotion.fadeDuration)
+    }
+
+    private func zoomImage(for media: VaultMedia) -> UIImage? {
+        if let image = photoLoader.image(for: media.id) {
+            return image
+        }
+        if media.mediaType == .photo, photoLoader.failureMessage(for: media.id) != nil {
+            return nil
+        }
+        return dependencies.thumbnailService.cachedImage(for: media)
+    }
+
+    private func visibleTileFrame(for mediaID: UUID, in viewerBounds: CGRect) -> CGRect? {
+        guard let windowFrame = tileFrames?.frame(for: mediaID),
+              isLandableTileFrame(windowFrame, viewport: tileFrames?.viewport) else { return nil }
+        let tileFrame = windowFrame.offsetBy(dx: -viewerFrame.minX, dy: -viewerFrame.minY)
+        return tileFrame.intersects(viewerBounds) ? tileFrame : nil
+    }
+
+    private func launch(_ newFlight: ViewerZoomFlight) {
+        flight = newFlight
+        scheduleTransitionFallback(after: newFlight.duration)
+    }
+
+    private func finishFlight(_ id: UUID) {
+        guard let flight, flight.id == id else { return }
+        switch flight.purpose {
+        case .opening:
+            transitionFallback?.cancel()
+            transitionFallback = nil
+            withoutAnimation {
+                pagerIsHidden = false
+                self.flight = nil
+            }
+            if closesWhenOpened {
+                closesWhenOpened = false
+                closeViewer()
+            }
+        case .closing:
+            dismissWithoutAnimation(revealingTile: true)
+        }
+    }
+
+    /// Finishes a transition whose animation completion never arrives, so the viewer can't get stuck.
+    private func scheduleTransitionFallback(after duration: TimeInterval) {
+        transitionFallback?.cancel()
+        let delay = UInt64((duration + 0.3) * 1_000_000_000)
+        transitionFallback = Task {
+            do {
+                try await Task.sleep(nanoseconds: delay)
+            } catch {
+                return
+            }
+            if let flight {
+                finishFlight(flight.id)
+            } else if isDismissing {
+                dismissWithoutAnimation(revealingTile: false)
+            }
+        }
+    }
+
+    private func dismissWithoutAnimation(revealingTile: Bool) {
+        guard !hasDismissed else { return }
+        hasDismissed = true
+        transitionFallback?.cancel()
+        withoutAnimation {
+            if revealingTile {
+                onCurrentMediaChange?(nil)
+            }
+            dismiss()
+        }
+    }
+
+    private func withoutAnimation(_ changes: () -> Void) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction, changes)
     }
 
     private func togglePhotoControls() {
@@ -402,7 +717,7 @@ struct MediaViewer: View {
         Task {
             do {
                 try await dependencies.trashService.moveToTrash(ids: [selectedMedia.id])
-                dismiss()
+                fadeOutAndDismiss(revealsTile: false)
             } catch {
                 userMessage = (error as? VaultError)?.localizedDescription
                     ?? VaultError.fileOperationFailed.localizedDescription
@@ -417,7 +732,7 @@ struct MediaViewer: View {
         Task {
             do {
                 try await dependencies.trashService.restore(ids: [selectedMedia.id])
-                dismiss()
+                fadeOutAndDismiss(revealsTile: false)
             } catch {
                 userMessage = (error as? VaultError)?.localizedDescription
                     ?? VaultError.fileOperationFailed.localizedDescription
@@ -433,7 +748,7 @@ struct MediaViewer: View {
             do {
                 try await dependencies.trashService.permanentlyDelete(ids: [selectedMedia.id])
                 dependencies.thumbnailService.clearCache()
-                dismiss()
+                fadeOutAndDismiss(revealsTile: false)
             } catch {
                 userMessage = (error as? VaultError)?.localizedDescription
                     ?? VaultError.fileOperationFailed.localizedDescription

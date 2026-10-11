@@ -48,6 +48,11 @@ final class ThumbnailService {
         return image
     }
 
+    func cachedImage(for media: VaultMedia) -> UIImage? {
+        guard let identifier = media.thumbnailIdentifier else { return nil }
+        return cache.object(forKey: identifier as NSString)
+    }
+
     func clearCache() {
         generation &+= 1
         tasks.values.forEach { $0.cancel() }

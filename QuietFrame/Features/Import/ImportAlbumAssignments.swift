@@ -5,6 +5,8 @@ import Foundation
 struct ImportAlbumAssignments: Equatable {
     private(set) var selectedIDs: Set<UUID> = []
     private(set) var albumIDs: [UUID: UUID] = [:]
+    /// The items changed by the most recent `assignSelection(to:)`.
+    private(set) var lastAssignedIDs: Set<UUID> = []
 
     var hasSelection: Bool { !selectedIDs.isEmpty }
     var hasAssignments: Bool { !albumIDs.isEmpty }
@@ -50,12 +52,14 @@ struct ImportAlbumAssignments: Equatable {
         for itemID in selectedIDs {
             albumIDs[itemID] = albumID
         }
+        lastAssignedIDs = selectedIDs
         selectedIDs.removeAll()
     }
 
     mutating func remove(_ itemID: UUID) {
         selectedIDs.remove(itemID)
         albumIDs[itemID] = nil
+        lastAssignedIDs.remove(itemID)
     }
 
     /// Drops assignments to albums that no longer exist, so those items fall back to the default.
@@ -66,5 +70,6 @@ struct ImportAlbumAssignments: Equatable {
     mutating func reset() {
         selectedIDs.removeAll()
         albumIDs.removeAll()
+        lastAssignedIDs.removeAll()
     }
 }

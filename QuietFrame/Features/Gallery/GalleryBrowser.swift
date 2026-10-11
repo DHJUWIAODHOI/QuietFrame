@@ -37,6 +37,8 @@ private struct GalleryBrowserContent: View {
     @State private var showsImportPreview = false
     @State private var showsAlbumDestinations = false
     @State private var viewerRequest: MediaViewerRequest?
+    @State private var tileFrames: MediaTileFrames
+    @State private var hiddenMediaID: UUID?
     @State private var shareLease: MediaExportLease?
     @State private var confirmsMoveToTrash = false
     @State private var showsPhotosAccessWarning = false
@@ -64,6 +66,7 @@ private struct GalleryBrowserContent: View {
             importer: dependencies.mediaImportService,
             photoLibrary: dependencies.photoLibraryService
         ))
+        _tileFrames = State(initialValue: MediaTileFrames())
     }
 
     private var thumbnailWidth: CGFloat {
@@ -80,9 +83,11 @@ private struct GalleryBrowserContent: View {
                 ? "Import photos and videos to protect them on this device."
                 : "Items matching this collection will appear here.",
             emptyActionTitle: allowsImport ? "Choose media" : nil,
-            emptyAction: allowsImport ? beginImportSelection : nil
+            emptyAction: allowsImport ? beginImportSelection : nil,
+            tileFrames: tileFrames,
+            hiddenMediaID: hiddenMediaID
         ) { media in
-            viewerRequest = MediaViewerRequest(mediaID: media.id)
+            presentViewer(for: media)
         }
         .safeAreaInset(edge: .top, spacing: 0) { filterBar }
         .navigationTitle(title)
@@ -128,13 +133,19 @@ private struct GalleryBrowserContent: View {
             .presentationDragIndicator(.visible)
         }
         .fullScreenCover(item: $viewerRequest, onDismiss: {
-            Task { await galleryViewModel.loadInitial() }
+            Task {
+                await galleryViewModel.loadInitial()
+                if viewerRequest == nil { hiddenMediaID = nil }
+            }
         }) { request in
             MediaViewer(
                 items: galleryViewModel.items,
                 initialMediaID: request.mediaID,
-                dependencies: dependencies
+                dependencies: dependencies,
+                tileFrames: tileFrames,
+                onCurrentMediaChange: { hiddenMediaID = $0 }
             )
+            .presentationBackground(Color.clear)
         }
         .sheet(item: $shareLease, onDismiss: {
             shareLease?.cleanup()
@@ -392,6 +403,14 @@ private struct GalleryBrowserContent: View {
 
     private var selectedItems: [VaultMedia] {
         galleryViewModel.items.filter { galleryViewModel.selectedIDs.contains($0.id) }
+    }
+
+    private func presentViewer(for media: VaultMedia) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            viewerRequest = MediaViewerRequest(mediaID: media.id)
+        }
     }
 
     private func selectFilter(_ filter: MediaFilter) {

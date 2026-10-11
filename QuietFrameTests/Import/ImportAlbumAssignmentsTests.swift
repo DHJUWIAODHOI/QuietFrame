@@ -122,5 +122,48 @@ final class ImportAlbumAssignmentsTests: XCTestCase {
         assignments.reset()
 
         XCTAssertEqual(assignments, ImportAlbumAssignments())
+        XCTAssertTrue(assignments.lastAssignedIDs.isEmpty)
+    }
+
+    func testAssigningSelectionRecordsOnlyTheItemsJustAssigned() {
+        let items = (0..<3).map { _ in UUID() }
+        var assignments = ImportAlbumAssignments()
+        XCTAssertTrue(assignments.lastAssignedIDs.isEmpty)
+
+        assignments.select([items[0], items[1]])
+        assignments.assignSelection(to: family)
+        XCTAssertEqual(assignments.lastAssignedIDs, Set([items[0], items[1]]))
+
+        assignments.toggleSelection(items[2])
+        assignments.assignSelection(to: documents)
+        XCTAssertEqual(assignments.lastAssignedIDs, Set([items[2]]))
+
+        assignments.toggleSelection(items[0])
+        assignments.assignSelection(to: nil)
+        XCTAssertEqual(assignments.lastAssignedIDs, Set([items[0]]))
+    }
+
+    func testSelectingAndClearingKeepTheLastAssignedItems() {
+        let items = (0..<2).map { _ in UUID() }
+        var assignments = ImportAlbumAssignments()
+        assignments.toggleSelection(items[0])
+        assignments.assignSelection(to: family)
+
+        assignments.toggleSelection(items[1])
+        XCTAssertEqual(assignments.lastAssignedIDs, Set([items[0]]))
+
+        assignments.clearSelection()
+        XCTAssertEqual(assignments.lastAssignedIDs, Set([items[0]]))
+    }
+
+    func testRemovingAnItemDropsItFromTheLastAssignedItems() {
+        let items = (0..<2).map { _ in UUID() }
+        var assignments = ImportAlbumAssignments()
+        assignments.select(items)
+        assignments.assignSelection(to: family)
+
+        assignments.remove(items[0])
+
+        XCTAssertEqual(assignments.lastAssignedIDs, Set([items[1]]))
     }
 }
