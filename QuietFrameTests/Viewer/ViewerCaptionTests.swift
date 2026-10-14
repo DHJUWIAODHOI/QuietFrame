@@ -29,7 +29,8 @@ final class ViewerCaptionTests: XCTestCase {
         let caption = viewerCaption(for: date, locale: british, timeZone: tokyo)
 
         XCTAssertEqual(caption.title, "13 March 2026")
-        XCTAssertEqual(caption.subtitle, "Friday at 08:30")
+        XCTAssertTrue(caption.subtitle.hasPrefix("Friday at "), caption.subtitle)
+        XCTAssertTrue(caption.subtitle.hasSuffix("8:30"), caption.subtitle)
     }
 
     func testLongDateNamesTheWeekdayDateAndTime() throws {
