@@ -121,10 +121,11 @@ QuietFrame/
   - Motion (from the approved "QuietFrame Motion Studies" prototypes): custom curves only, mainly `.timingCurve(0.23, 1, 0.32, 1, …)` (strong ease-out) and `.timingCurve(0.32, 0.72, 0, 1, …)` (drawer); UI motion stays at or under about 400ms; exits are faster than entrances; nothing scales from 0; Reduce Motion means no movement or scale, only short fades and colour changes. Locking is always instant: vault content never fades out over a locked state.
   - The three app animations:
     - **Unlock iris:** `RootView` plays the flourish from `PasscodeIrisSnapshot` (published by `SixDigitPasscodeField`). A wrong code gives the ember blades and a shake in `UnlockView`.
-    - **Photo zoom:** `MediaViewer` flies a thumbnail between the grid tile and the viewer. `MediaTileFrames` tracks tile frames, the geometry helpers are in `Features/Viewer/ViewerZoomTransition.swift`, and the cover is presented without the system slide and with a clear background.
+    - **Photo zoom:** `MediaViewer` flies a thumbnail between the grid tile and the viewer. `MediaTileFrames` tracks tile frames, the geometry helpers are in `Features/Viewer/ViewerZoomTransition.swift`, and the cover is presented without the system slide and with a clear background. Closing with the details panel open flies back from the raised media.
     - **Import sort and seal:** album labels stagger in from `ImportAlbumAssignments.lastAssignedIDs`, and tiles seal in `ImportPreviewView` from `ImportProgress`.
+  - The viewer is the "Edge" design (`Features/Viewer/`): `ViewerChrome` puts a top bar (chevron close, capture-date title from `viewerCaption`, info toggle) and the bottom controls on night scrims, never boxes. Photos get the brass-marked `ViewerFilmstrip` (a computed `filmstripWindow`, not a ScrollView); videos get the `ViewerScrubber` frame strip and a play button in `ViewerActionRow`, driven by `ViewerVideoPlayback` over a control-less `AVPlayerLayer` (frames decoded in memory only). The info button or a swipe up opens `ViewerDetailsPanel` and raises the media onto it (`detailsMediaOffset`); a tap or swipe down on the media closes it. With VoiceOver or Switch Control the chrome stays up while a video plays, and a magic tap toggles playback.
   - Support Dynamic Type (branch on `isAccessibilitySize`, use `ViewThatFits`) and Reduce Motion, and keep layouts scrollable on a 375×667 iPhone SE. For VoiceOver, use `accessibilityAction(named:)` to mirror long-press and context-menu actions.
-  - The HTML prototypes that defined this look live on the "QuietFrame Redesign Prototypes" canvas (direction B, Aperture).
+  - The HTML prototypes that defined this look live on the "QuietFrame Redesign Prototypes" canvas (direction B, Aperture); the viewer's are on the "QuietFrame Viewer Prototypes" canvas (direction A, Edge).
 - Accessibility identifiers are kebab-case (`onboarding`, `unlock-screen`, `main-tabs`, ...), and the UI test depends on them.
 - Comments are rare; write self-explanatory code.
 - **Tests:**
@@ -137,7 +138,7 @@ QuietFrame/
 
 - The v1 feature set is implemented. There are no TODO/FIXME markers; open work is in README "Known Limitations" and the unchecked items of the SECURITY.md checklist.
 - `main` and `origin/main` are in sync. CI runs the full test suite and passes (run 37814853905, commit `261e0f4`). The simulator test step must stay ad-hoc signed (`CODE_SIGN_IDENTITY=-`): an unsigned test host has no Keychain access, which fails `KeychainServiceTests` and leaves the UI test on the retry screen. `refactor-ui-fork` (= `fork/main`) is an older branch with a shortened CI test list.
-- **Tests:** 130 unit tests in 21 files, plus 1 UI test. No tests cover reset-journal recovery, thumbnails, metadata extraction, ImportViewModel, biometrics, iterated PBKDF2, or most container tamper cases.
+- **Tests:** 167 unit tests in 25 files, plus 1 UI test. No tests cover reset-journal recovery, thumbnails, metadata extraction, ImportViewModel, biometrics, iterated PBKDF2, or most container tamper cases.
 - **Stale docs:**
   - README: says 28 tests and a V1 schema, and claims CI doesn't run the tests.
   - SECURITY.md:26: says Apple has no PBKDF2 API.

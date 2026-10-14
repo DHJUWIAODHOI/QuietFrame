@@ -1,7 +1,6 @@
 import AVFoundation
-import AVKit
-import Combine
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 enum VideoPageAction: Equatable {
@@ -24,9 +23,9 @@ struct SecureMediaPage: View {
     let shouldPrepare: Bool
     let storage: any SecureFileStoring
     let photoLoader: ViewerPhotoLoader
-    let onPhotoTap: () -> Void
+    let playback: ViewerVideoPlayback
+    let onTap: () -> Void
     let onPhotoZoomChanged: (Bool) -> Void
-    let onVideoPlaybackChanged: (Bool) -> Void
     var thumbnailService: ThumbnailService?
     /// A dismiss drag is lifting this page out of the viewer, so only the media itself is drawn.
     var isLifted = false
@@ -40,7 +39,7 @@ struct SecureMediaPage: View {
                 photoLoader: photoLoader,
                 thumbnailService: thumbnailService,
                 isLifted: isLifted,
-                onTap: onPhotoTap,
+                onTap: onTap,
                 onZoomChanged: onPhotoZoomChanged
             )
         case .video:
@@ -50,7 +49,8 @@ struct SecureMediaPage: View {
                 shouldPrepare: shouldPrepare,
                 storage: storage,
                 thumbnailService: thumbnailService,
-                onPlaybackChanged: onVideoPlaybackChanged
+                playback: playback,
+                onTap: onTap
             )
         }
     }
@@ -128,7 +128,8 @@ private struct SecureVideoPage: View {
     let shouldPrepare: Bool
     let storage: any SecureFileStoring
     let thumbnailService: ThumbnailService?
-    let onPlaybackChanged: (Bool) -> Void
+    let playback: ViewerVideoPlayback
+    let onTap: () -> Void
 
     @Environment(\.scenePhase) private var scenePhase
 
@@ -137,68 +138,42 @@ private struct SecureVideoPage: View {
     @State private var playerLooper: AVPlayerLooper?
     @State private var errorMessage: String?
     @State private var isLoading = false
-    @State private var shouldPlayWhenReady = false
-    @State private var playbackStatus: AVPlayer.TimeControlStatus = .paused
 
     var body: some View {
         ZStack {
             QuietFrameTheme.background
-            if let player {
-                SecureVideoPlayerView(
-                    player: player,
-                    showsPlaybackControls: isActive,
-                    onContentTap: startPlayback
-                )
-                    .allowsHitTesting(isActive)
-                    .accessibilityHidden(!isActive)
-                    .accessibilityLabel(media.accessibilitySummary)
-                    .onReceive(player.publisher(
-                        for: \.timeControlStatus,
-                        options: [.initial, .new]
-                    ).receive(on: RunLoop.main)) { status in
-                        guard isActive else { return }
-                        guard playbackStatus != status else { return }
-                        playbackStatus = status
-                    }
-            } else if let errorMessage {
+            if let errorMessage {
                 ContentUnavailableView(
                     "Video unavailable",
                     systemImage: "video.slash",
                     description: Text(errorMessage)
                 )
                 .foregroundStyle(QuietFrameTheme.ink, QuietFrameTheme.quietInk)
-            } else if let thumbnail = thumbnailService?.cachedImage(for: media) {
-                Image(uiImage: thumbnail)
-                    .resizable()
-                    .scaledToFit()
-                    .accessibilityHidden(true)
-                    .overlay {
-                        if isLoading {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(QuietFrameTheme.ink)
-                                .padding(10)
-                                .background(QuietFrameTheme.background.opacity(0.6), in: Circle())
-                                .accessibilityLabel("Preparing encrypted video")
-                        }
-                    }
-            } else if isLoading {
-                ProgressView()
-                    .tint(QuietFrameTheme.ink)
-                    .accessibilityLabel("Preparing encrypted video")
+            } else {
+                if let thumbnail = thumbnailService?.cachedImage(for: media) {
+                    Image(uiImage: thumbnail)
+                        .resizable()
+                        .scaledToFit()
+                        .accessibilityLabel(media.accessibilitySummary)
+                        .accessibilityHidden(player != nil || !isActive)
+                }
+                if let player {
+                    SecureVideoPlayerView(player: player)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(media.accessibilitySummary)
+                        .accessibilityHidden(!isActive)
+                } else if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(QuietFrameTheme.ink)
+                        .padding(10)
+                        .background(QuietFrameTheme.background.opacity(0.6), in: Circle())
+                        .accessibilityLabel("Preparing encrypted video")
+                }
             }
         }
-        .overlay {
-            if player == nil, errorMessage == nil {
-                Color.clear
-                    .contentShape(Rectangle())
-                    .onTapGesture(perform: startPlayback)
-                    .allowsHitTesting(isActive)
-                    .accessibilityHidden(!isActive)
-                    .accessibilityLabel("Play video")
-                    .accessibilityAddTraits(.isButton)
-            }
-        }
+        .contentShape(Rectangle())
+        .simultaneousGesture(TapGesture().onEnded { if isActive { onTap() } })
         .task(id: playbackLifecycle) {
             switch videoPageAction(shouldPrepare: shouldPrepare, isActive: isActive, scenePhase: scenePhase) {
             case .cleanup:
@@ -207,15 +182,13 @@ private struct SecureVideoPage: View {
                 pausePlayback()
             case .load:
                 await loadWhenReady()
+                attachIfActive()
             case .idle:
                 break
             }
         }
-        .task(id: playbackStatus) {
-            await reportPlaybackStatus()
-        }
         .onChange(of: isActive) { _, isActive in
-            if !isActive { pausePlayback() }
+            if !isActive { detachPlayback() }
         }
         .onDisappear { cleanup() }
     }
@@ -256,53 +229,32 @@ private struct SecureVideoPage: View {
             lease = newLease
             playerLooper = newLooper
             player = newPlayer
-            if shouldPlayWhenReady {
-                newPlayer.play()
-            }
         } catch is CancellationError {
             return
         } catch VaultError.importCancelled {
             return
         } catch {
             guard !Task.isCancelled, shouldPrepare else { return }
-            shouldPlayWhenReady = false
-            playbackStatus = .paused
-            onPlaybackChanged(false)
+            if isActive { playback.pause() }
+            playback.markUnavailable(mediaID: media.id)
             errorMessage = (error as? VaultError)?.localizedDescription
                 ?? VaultError.corruptedFile.localizedDescription
         }
     }
 
-    private func reportPlaybackStatus() async {
-        guard isActive else { return }
-        if playbackStatus == .paused {
-            // AVKit holds the rate at zero while scrubbing, so report a pause only once the playhead settles.
-            var lastTime = player?.currentTime() ?? .zero
-            while true {
-                do {
-                    try await Task.sleep(nanoseconds: 400_000_000)
-                } catch {
-                    return
-                }
-                let currentTime = player?.currentTime() ?? .zero
-                if CMTimeCompare(currentTime, lastTime) == 0 { break }
-                lastTime = currentTime
-            }
-        }
-        onPlaybackChanged(playbackStatus != .paused)
-    }
-
-    private func startPlayback() {
-        guard isActive else { return }
-        shouldPlayWhenReady = true
-        player?.play()
+    private func attachIfActive() {
+        guard !Task.isCancelled, isActive, scenePhase == .active, let player, let lease else { return }
+        playback.attach(player: player, url: lease.url, mediaID: media.id, fallbackDuration: media.duration)
     }
 
     private func pausePlayback() {
-        shouldPlayWhenReady = false
         player?.pause()
-        playbackStatus = .paused
-        onPlaybackChanged(false)
+        if isActive { playback.pause() }
+    }
+
+    private func detachPlayback() {
+        player?.pause()
+        playback.detach(mediaID: media.id)
     }
 
     private struct PlaybackLifecycle: Equatable {
@@ -316,7 +268,7 @@ private struct SecureVideoPage: View {
     }
 
     private func cleanup() {
-        pausePlayback()
+        detachPlayback()
         playerLooper?.disableLooping()
         playerLooper = nil
         player?.removeAllItems()
@@ -327,76 +279,51 @@ private struct SecureVideoPage: View {
     }
 }
 
-private struct SecureVideoPlayerView: UIViewControllerRepresentable {
+/// Draws the player's video aspect-fit with no controls and no gestures of its own,
+/// so taps, paging and the dismiss drag reach the viewer.
+private struct SecureVideoPlayerView: UIViewRepresentable {
     let player: AVPlayer
-    let showsPlaybackControls: Bool
-    let onContentTap: () -> Void
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onContentTap: onContentTap)
+    func makeUIView(context: Context) -> SecureVideoLayerView {
+        let view = SecureVideoLayerView()
+        view.player = player
+        return view
     }
 
-    func makeUIViewController(context: Context) -> AVPlayerViewController {
-        let controller = AVPlayerViewController()
-        controller.view.backgroundColor = QuietFrameTheme.nightUI
-        controller.player = player
-        controller.showsPlaybackControls = showsPlaybackControls
-
-        let tapGesture = UITapGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handleContentTap)
-        )
-        tapGesture.cancelsTouchesInView = false
-        tapGesture.delegate = context.coordinator
-        controller.view.addGestureRecognizer(tapGesture)
-        return controller
+    func updateUIView(_ view: SecureVideoLayerView, context: Context) {
+        if view.player !== player {
+            view.player = player
+        }
     }
 
-    func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
-        controller.player = player
-        controller.showsPlaybackControls = showsPlaybackControls
-        context.coordinator.onContentTap = onContentTap
+    static func dismantleUIView(_ view: SecureVideoLayerView, coordinator: ()) {
+        view.player = nil
+    }
+}
+
+private final class SecureVideoLayerView: UIView {
+    override class var layerClass: AnyClass {
+        AVPlayerLayer.self
     }
 
-    static func dismantleUIViewController(
-        _ controller: AVPlayerViewController,
-        coordinator: Coordinator
-    ) {
-        controller.player = nil
+    var player: AVPlayer? {
+        get { (layer as? AVPlayerLayer)?.player }
+        set { (layer as? AVPlayerLayer)?.player = newValue }
     }
 
-    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
-        var onContentTap: () -> Void
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        configure()
+    }
 
-        init(onContentTap: @escaping () -> Void) {
-            self.onContentTap = onContentTap
-        }
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configure()
+    }
 
-        @objc func handleContentTap() {
-            onContentTap()
-        }
-
-        func gestureRecognizer(
-            _ gestureRecognizer: UIGestureRecognizer,
-            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
-        ) -> Bool {
-            true
-        }
-
-        func gestureRecognizer(
-            _ gestureRecognizer: UIGestureRecognizer,
-            shouldReceive touch: UITouch
-        ) -> Bool {
-            var view = touch.view
-            while let currentView = view {
-                if currentView is UIControl
-                    || currentView.accessibilityTraits.contains(.button)
-                    || currentView.accessibilityTraits.contains(.adjustable) {
-                    return false
-                }
-                view = currentView.superview
-            }
-            return true
-        }
+    private func configure() {
+        isUserInteractionEnabled = false
+        backgroundColor = .clear
+        (layer as? AVPlayerLayer)?.videoGravity = .resizeAspect
     }
 }

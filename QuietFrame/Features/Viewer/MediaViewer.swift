@@ -36,14 +36,17 @@ struct MediaViewer: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverIsEnabled
+    @Environment(\.accessibilitySwitchControlEnabled) private var switchControlIsEnabled
+    @AccessibilityFocusState private var infoButtonIsFocused: Bool
     @Query(sort: \VaultAlbum.position) private var albums: [VaultAlbum]
     @State private var selectedMediaID: UUID
     @State private var photoLoader: ViewerPhotoLoader
+    @State private var playback: ViewerVideoPlayback
     @State private var controlsAreVisible = true
+    @State private var detailsAreOpen = false
+    @State private var mediaIsRaised = false
     @State private var selectedPhotoIsZoomed = false
-    @State private var informationMedia: VaultMedia?
     @State private var movingMedia: VaultMedia?
     @State private var shareLease: MediaExportLease?
     @State private var confirmsTrash = false
@@ -80,6 +83,7 @@ struct MediaViewer: View {
         self.onCurrentMediaChange = onCurrentMediaChange
         _selectedMediaID = State(initialValue: initialMediaID)
         _photoLoader = State(initialValue: ViewerPhotoLoader(storage: dependencies.secureStorage))
+        _playback = State(initialValue: ViewerVideoPlayback())
     }
 
     private var selectedMedia: VaultMedia? {
@@ -100,7 +104,7 @@ struct MediaViewer: View {
     var body: some View {
         GeometryReader { proxy in
             let windowFrame = proxy.frame(in: .global)
-            viewerContent(in: windowFrame)
+            viewerContent(in: windowFrame, safeAreaInsets: proxy.safeAreaInsets)
                 .onAppear { viewerFrame = windowFrame }
                 .onChange(of: windowFrame) { _, newFrame in viewerFrame = newFrame }
         }
@@ -112,7 +116,10 @@ struct MediaViewer: View {
             onCurrentMediaChange?(selectedMediaID)
             beginOpening()
         }
-        .onDisappear { photoLoader.releaseAll() }
+        .onDisappear {
+            photoLoader.releaseAll()
+            playback.release()
+        }
         .onDisappear { transitionFallback?.cancel() }
         .onChange(of: photoRequests) { _, requests in
             photoLoader.prepare(requests)
@@ -120,17 +127,15 @@ struct MediaViewer: View {
         .onChange(of: selectedMediaID) { _, mediaID in
             selectedPhotoIsZoomed = false
             controlsAreVisible = true
+            setDetails(open: false, animated: false)
+            playback.pause()
             onCurrentMediaChange?(mediaID)
+        }
+        .onChange(of: playback.isPlaying) { _, isPlaying in
+            updateVideoPlayback(isPlaying)
         }
         .onChange(of: dismissDragIsActive) { _, isActive in
             if !isActive { Task { liftDidStop() } }
-        }
-        .sheet(item: $informationMedia) { media in
-            MediaInfoView(media: media)
-                .presentationDetents([.medium, .large])
-                .presentationBackground(QuietFrameTheme.elevated)
-                .presentationCornerRadius(QuietFrameTheme.sheetCornerRadius)
-                .presentationDragIndicator(.visible)
         }
         .sheet(item: $movingMedia) { media in
             AlbumDestinationPicker(albums: albums, currentAlbumID: media.album?.id) { albumID in
@@ -178,10 +183,14 @@ struct MediaViewer: View {
         }
         .accessibilityIdentifier("media-viewer")
         .accessibilityAction(named: "Close Viewer") { closeViewer() }
+        .accessibilityAction(.magicTap) { togglePlayback() }
     }
 
-    private func viewerContent(in windowFrame: CGRect) -> some View {
+    private func viewerContent(in windowFrame: CGRect, safeAreaInsets: EdgeInsets) -> some View {
+        let viewerBounds = CGRect(origin: .zero, size: windowFrame.size)
         let liftProgress = dismissProgress(translation: liftTranslation, height: windowFrame.height)
+        let panelTop = detailsPanelTop(viewerHeight: windowFrame.height, topBarBottom: QuietFrameTheme.controlHeight)
+        let raisedOffset = selectedMediaDetailsOffset(viewerBounds: viewerBounds, panelTop: panelTop)
         return ZStack {
             QuietFrameTheme.background
                 .opacity(backdropLevel * backdropOpacity(translation: liftTranslation, height: windowFrame.height))
@@ -189,8 +198,15 @@ struct MediaViewer: View {
 
             mediaPager
                 .scaleEffect(dragScale(progress: liftProgress, reduceMotion: reduceMotion))
-                .offset(y: dismissDragOffset(translation: liftTranslation))
+                .offset(y: dismissDragOffset(translation: liftTranslation) + raisedOffset)
                 .opacity(pagerIsHidden ? 0 : 1)
+                .allowsHitTesting(!detailsAreOpen)
+                .accessibilityHidden(detailsAreOpen)
+
+            if detailsAreOpen {
+                detailsBackdrop(panelTop: panelTop)
+                    .transition(.opacity)
+            }
 
             if let flight {
                 ViewerZoomFlyer(
@@ -209,10 +225,32 @@ struct MediaViewer: View {
             }
 
             if controlsAreVisible {
-                controls
-                    .opacity(chromeOpacity)
-                    .allowsHitTesting(chromeOpacity > 0)
-                    .transition(.opacity)
+                ViewerChrome(
+                    media: selectedMedia,
+                    items: items,
+                    thumbnailService: dependencies.thumbnailService,
+                    playback: playback,
+                    isWorking: isWorking,
+                    detailsAreOpen: detailsAreOpen,
+                    safeAreaInsets: safeAreaInsets,
+                    infoButtonFocus: $infoButtonIsFocused,
+                    onClose: closeViewer,
+                    onToggleDetails: { setDetails(open: !detailsAreOpen) },
+                    onSelect: { selectedMediaID = $0 },
+                    onAction: perform
+                )
+                .opacity(chromeOpacity)
+                .allowsHitTesting(chromeOpacity > 0)
+                .transition(.opacity)
+            }
+
+            if detailsAreOpen, let selectedMedia {
+                ViewerDetailsPanel(media: selectedMedia, displaySize: displaySize(for: selectedMedia)) {
+                    closeDetailsFromPanel()
+                }
+                .frame(height: max(windowFrame.height - panelTop, 0))
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .transition(detailsPanelTransition)
             }
         }
         .allowsHitTesting(!isDismissing)
@@ -229,9 +267,9 @@ struct MediaViewer: View {
                     shouldPrepare: pageState.shouldPrepare,
                     storage: dependencies.secureStorage,
                     photoLoader: photoLoader,
-                    onPhotoTap: togglePhotoControls,
+                    playback: playback,
+                    onTap: toggleControls,
                     onPhotoZoomChanged: { updatePhotoZoom($0, mediaID: media.id) },
-                    onVideoPlaybackChanged: { updateVideoPlayback($0, mediaID: media.id) },
                     thumbnailService: dependencies.thumbnailService,
                     isLifted: pageState.isActive && mediaIsLifted
                 )
@@ -242,149 +280,43 @@ struct MediaViewer: View {
         .simultaneousGesture(dismissGesture)
     }
 
-    private var controls: some View {
-        VStack {
-            HStack(spacing: QuietFrameTheme.compactSpacing) {
-                Button {
-                    closeViewer()
-                } label: {
-                    chromeIcon("xmark")
-                }
-                .accessibilityLabel("Close viewer")
-                Spacer()
-                if let selectedMedia {
-                    Text(selectedMedia.displayName)
-                        .font(.subheadline.weight(.medium))
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
-                        .truncationMode(.middle)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 6)
-                        .frame(minHeight: QuietFrameTheme.controlHeight)
-                        .viewerChrome(
-                            RoundedRectangle(cornerRadius: QuietFrameTheme.controlHeight / 2, style: .continuous)
-                        )
-                        .accessibilityAddTraits(.isHeader)
-                }
-                Spacer()
-                Button {
-                    informationMedia = selectedMedia
-                } label: {
-                    chromeIcon("info.circle")
-                }
-                .accessibilityLabel("Media information")
-            }
-            .padding(.horizontal, QuietFrameTheme.contentSpacing)
-            .padding(.top, QuietFrameTheme.compactSpacing)
-
-            Spacer()
-
-            if let selectedMedia {
-                LazyVGrid(
-                    columns: Array(
-                        repeating: GridItem(.flexible(), spacing: QuietFrameTheme.compactSpacing),
-                        count: usesTwoColumnActions ? 2 : (selectedMedia.isTrashed ? 3 : 4)
-                    ),
-                    spacing: QuietFrameTheme.compactSpacing
-                ) {
-                    if selectedMedia.isTrashed {
-                        viewerButton(title: "Restore", symbol: "arrow.uturn.backward") {
-                            restoreSelectedMedia()
-                        }
-                        viewerButton(title: "Delete", symbol: "trash.slash", color: QuietFrameTheme.destructive) {
-                            confirmsPermanentDeletion = true
-                        }
-                    } else {
-                        viewerButton(
-                            title: selectedMedia.isFavorite ? "Unfavorite" : "Favorite",
-                            symbol: selectedMedia.isFavorite ? "heart.fill" : "heart",
-                            symbolColor: selectedMedia.isFavorite ? QuietFrameTheme.accent : nil
-                        ) {
-                            favorite(selectedMedia)
-                        }
-                        viewerButton(title: "Move", symbol: "folder") {
-                            movingMedia = selectedMedia
-                        }
-                    }
-                    Menu {
-                        Button("Share", systemImage: "square.and.arrow.up") { share(selectedMedia) }
-                        Button("Save to Photos", systemImage: "photo.badge.arrow.down") { saveToPhotos(selectedMedia) }
-                    } label: {
-                        viewerActionLabel(title: "Export", symbol: "square.and.arrow.up")
-                    }
-                    .disabled(isWorking)
-                    .opacity(isWorking ? 0.45 : 1)
-                    if !selectedMedia.isTrashed {
-                        viewerButton(title: "Trash", symbol: "trash", color: QuietFrameTheme.destructive) {
-                            confirmsTrash = true
-                        }
-                    }
-                }
-                .padding(.horizontal, QuietFrameTheme.compactSpacing)
-                .padding(.vertical, 4)
-                .frame(maxWidth: QuietFrameTheme.readableWidth)
-                .viewerChrome(actionBarShape, fill: QuietFrameTheme.elevated.opacity(0.94))
-                .padding(.horizontal, QuietFrameTheme.contentSpacing)
-                .padding(.bottom, QuietFrameTheme.compactSpacing)
-            }
+    /// Catches taps and downward drags on the raised media to put it back, and fades it into the panel.
+    private func detailsBackdrop(panelTop: CGFloat) -> some View {
+        let fadeHeight = min(100, panelTop)
+        return VStack(spacing: 0) {
+            Color.clear
+                .frame(height: panelTop - fadeHeight)
+            LinearGradient(
+                stops: [
+                    .init(color: QuietFrameTheme.night.opacity(0), location: 0),
+                    .init(color: QuietFrameTheme.night.opacity(0.55), location: 0.55),
+                    .init(color: QuietFrameTheme.night, location: 1)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: fadeHeight)
+            Spacer(minLength: 0)
         }
-        .foregroundStyle(QuietFrameTheme.ink)
-        .tint(QuietFrameTheme.ink)
-        .environment(\.colorScheme, .dark)
-    }
-
-    private var usesTwoColumnActions: Bool {
-        dynamicTypeSize.isAccessibilitySize && verticalSizeClass != .compact
-    }
-
-    private var actionBarShape: RoundedRectangle {
-        RoundedRectangle(
-            cornerRadius: usesTwoColumnActions ? QuietFrameTheme.cornerRadius : 32,
-            style: .continuous
-        )
-    }
-
-    private func chromeIcon(_ systemName: String) -> some View {
-        Image(systemName: systemName)
-            .font(.body.weight(.medium))
-            .padding(dynamicTypeSize.isAccessibilitySize ? 6 : 0)
-            .frame(minWidth: QuietFrameTheme.controlHeight, minHeight: QuietFrameTheme.controlHeight)
-            .viewerChrome(Circle())
-            .contentShape(Rectangle())
-    }
-
-    private func viewerButton(
-        title: String,
-        symbol: String,
-        color: Color = QuietFrameTheme.ink,
-        symbolColor: Color? = nil,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            viewerActionLabel(title: title, symbol: symbol, color: color, symbolColor: symbolColor)
-        }
-    }
-
-    private func viewerActionLabel(
-        title: String,
-        symbol: String,
-        color: Color = QuietFrameTheme.ink,
-        symbolColor: Color? = nil
-    ) -> some View {
-        VStack(spacing: 4) {
-            Image(systemName: symbol)
-                .font(.title3)
-                .foregroundStyle(symbolColor ?? color)
-                .accessibilityHidden(true)
-            Text(title)
-                .font(.caption.weight(.medium))
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .foregroundStyle(color)
-        .padding(.vertical, 6)
-        .frame(minWidth: QuietFrameTheme.controlHeight, maxWidth: .infinity, minHeight: QuietFrameTheme.controlHeight)
         .contentShape(Rectangle())
+        .onTapGesture { setDetails(open: false) }
+        .gesture(detailsDismissGesture)
+        .accessibilityHidden(true)
+    }
+
+    private var detailsPanelTransition: AnyTransition {
+        reduceMotion ? AnyTransition.opacity : AnyTransition.opacity.combined(with: .offset(y: 28))
+    }
+
+    /// A zoomed photo fills the viewer, so it stays put and the panel covers its lower part.
+    private func selectedMediaDetailsOffset(viewerBounds: CGRect, panelTop: CGFloat) -> CGFloat {
+        guard mediaIsRaised, !selectedPhotoIsZoomed, let media = selectedMedia else { return 0 }
+        return detailsMediaOffset(mediaSize: displaySize(for: media), viewerBounds: viewerBounds, panelTop: panelTop)
+    }
+
+    /// The decoded image's size when there is one, since stored photo dimensions ignore EXIF orientation.
+    private func displaySize(for media: VaultMedia) -> CGSize {
+        zoomImage(for: media)?.size ?? CGSize(width: media.pixelWidth, height: media.pixelHeight)
     }
 
     private var messageIsPresented: Binding<Bool> {
@@ -398,13 +330,22 @@ struct MediaViewer: View {
             .onEnded { value in endLift(value) }
     }
 
+    private var detailsDismissGesture: some Gesture {
+        DragGesture(minimumDistance: 24, coordinateSpace: .global)
+            .onEnded { value in
+                guard shouldCloseDetails(translation: value.translation.height, velocity: value.velocity.height)
+                else { return }
+                setDetails(open: false)
+            }
+    }
+
     private var presentsModal: Bool {
-        informationMedia != nil || movingMedia != nil || shareLease != nil
+        movingMedia != nil || shareLease != nil
             || confirmsTrash || confirmsPermanentDeletion || userMessage != nil
     }
 
     private var canLiftMedia: Bool {
-        !selectedPhotoIsZoomed && !isWorking && !isDismissing && flight == nil && !presentsModal
+        !selectedPhotoIsZoomed && !isWorking && !isDismissing && flight == nil && !presentsModal && !detailsAreOpen
     }
 
     private func updateLift(_ value: DragGesture.Value) {
@@ -420,23 +361,29 @@ struct MediaViewer: View {
             liftPhase = .tracking
             liftOrigin = translation.height
             mediaIsLifted = true
-            withAnimation(.easeOut(duration: 0.1)) { chromeOpacity = 0 }
         case .tracking:
             break
         }
         liftTranslation = value.translation.height - liftOrigin
+        if liftTranslation > 0, chromeOpacity > 0 {
+            withAnimation(.easeOut(duration: 0.1)) { chromeOpacity = 0 }
+        }
     }
 
     private func endLift(_ value: DragGesture.Value) {
         let phase = liftPhase
         liftPhase = .idle
         guard phase == .tracking else { return }
-        if !selectedPhotoIsZoomed,
-           shouldDismiss(translation: value.translation.height, velocity: value.velocity.height) {
+        let translation = value.translation.height
+        let velocity = value.velocity.height
+        if !selectedPhotoIsZoomed, shouldDismiss(translation: translation, velocity: velocity) {
             closeViewer()
-        } else {
-            settleLift()
+            return
         }
+        if !selectedPhotoIsZoomed, shouldOpenDetails(translation: translation, velocity: velocity) {
+            setDetails(open: true)
+        }
+        settleLift()
     }
 
     private func liftDidStop() {
@@ -460,6 +407,34 @@ struct MediaViewer: View {
                 withoutAnimation { mediaIsLifted = false }
             }
         }
+    }
+
+    /// Opening raises the media and brings the panel up; closing is faster. Reduce Motion only fades the panel.
+    private func setDetails(open isOpen: Bool, animated: Bool = true) {
+        guard detailsAreOpen != isOpen || mediaIsRaised != isOpen else { return }
+        guard animated else {
+            withoutAnimation {
+                showDetails(isOpen)
+                mediaIsRaised = isOpen
+            }
+            return
+        }
+        if reduceMotion {
+            withoutAnimation { mediaIsRaised = isOpen }
+            withAnimation(ViewerZoomMotion.easeOut(duration: 0.2)) { showDetails(isOpen) }
+        } else {
+            withAnimation(ViewerZoomMotion.easeOut(duration: isOpen ? 0.3 : 0.2)) {
+                showDetails(isOpen)
+                mediaIsRaised = isOpen
+            }
+        }
+    }
+
+    private func showDetails(_ isOpen: Bool) {
+        if isOpen {
+            controlsAreVisible = true
+        }
+        detailsAreOpen = isOpen
     }
 
     private func beginOpening() {
@@ -510,12 +485,18 @@ struct MediaViewer: View {
         }
         isDismissing = true
         let fitted = aspectFitRect(imageSize: image.size, in: viewerBounds)
+        let panelTop = detailsPanelTop(viewerHeight: viewerBounds.height, topBarBottom: QuietFrameTheme.controlHeight)
+        let raisedOffset = mediaIsRaised
+            ? detailsMediaOffset(mediaSize: image.size, viewerBounds: viewerBounds, panelTop: panelTop)
+            : 0
         let start = dismissDragRect(
             fitting: fitted,
             in: viewerBounds,
             translation: liftTranslation,
             reduceMotion: reduceMotion
         )
+        .offsetBy(dx: 0, dy: raisedOffset)
+        setDetails(open: false, animated: false)
         pagerIsHidden = true
         withAnimation(.easeOut(duration: 0.1)) { chromeOpacity = 0 }
 
@@ -643,9 +624,31 @@ struct MediaViewer: View {
         withTransaction(transaction, changes)
     }
 
-    private func togglePhotoControls() {
-        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
+    private func toggleControls() {
+        guard !detailsAreOpen else {
+            setDetails(open: false)
+            return
+        }
+        withAnimation(controlsAnimation(showing: !controlsAreVisible)) {
             controlsAreVisible.toggle()
+        }
+    }
+
+    /// The chrome leaves faster than it arrives; with Reduce Motion it just appears and disappears.
+    private func controlsAnimation(showing: Bool) -> Animation? {
+        reduceMotion ? nil : ViewerZoomMotion.easeOut(duration: showing ? 0.26 : 0.18)
+    }
+
+    /// The panel's own close actions hand VoiceOver focus back to the info button once the panel has gone.
+    private func closeDetailsFromPanel() {
+        setDetails(open: false)
+        Task {
+            do {
+                try await Task.sleep(nanoseconds: 250_000_000)
+            } catch {
+                return
+            }
+            infoButtonIsFocused = true
         }
     }
 
@@ -654,14 +657,45 @@ struct MediaViewer: View {
         selectedPhotoIsZoomed = isZoomed
     }
 
-    private func updateVideoPlayback(_ isPlaying: Bool, mediaID: UUID) {
+    /// VoiceOver and Switch Control keep the chrome while a video plays, since it holds the only Pause control.
+    private func updateVideoPlayback(_ isPlaying: Bool) {
+        let keepsControls = playback.isScrubbing || detailsAreOpen || voiceOverIsEnabled || switchControlIsEnabled
+        guard !isPlaying || !keepsControls else { return }
         guard let visibility = viewerControlsVisibility(
             afterPlaybackChange: isPlaying,
-            isSelectedPage: mediaID == selectedMediaID,
+            isSelectedPage: selectedMedia?.mediaType == .video,
             controlsAreVisible: controlsAreVisible
         ) else { return }
-        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
+        withAnimation(controlsAnimation(showing: visibility)) {
             controlsAreVisible = visibility
+        }
+    }
+
+    private func togglePlayback() {
+        guard let selectedMedia, selectedMedia.mediaType == .video,
+              playback.unavailableMediaID != selectedMedia.id else { return }
+        playback.togglePlayback()
+    }
+
+    private func perform(_ action: ViewerAction) {
+        guard let selectedMedia else { return }
+        switch action {
+        case .favorite:
+            favorite(selectedMedia)
+        case .share:
+            share(selectedMedia)
+        case .saveToPhotos:
+            saveToPhotos(selectedMedia)
+        case .move:
+            movingMedia = selectedMedia
+        case .moveToTrash:
+            confirmsTrash = true
+        case .restore:
+            restoreSelectedMedia()
+        case .deletePermanently:
+            confirmsPermanentDeletion = true
+        case .togglePlayback:
+            togglePlayback()
         }
     }
 
@@ -755,15 +789,5 @@ struct MediaViewer: View {
                 isWorking = false
             }
         }
-    }
-}
-
-private extension View {
-    func viewerChrome<ChromeShape: InsettableShape>(
-        _ shape: ChromeShape,
-        fill: Color = QuietFrameTheme.background.opacity(0.72)
-    ) -> some View {
-        background(fill, in: shape)
-            .overlay { shape.strokeBorder(QuietFrameTheme.separator, lineWidth: 1) }
     }
 }
