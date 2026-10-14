@@ -79,7 +79,7 @@ struct GalleryGridView: View {
                             .accessibilityAction(named: "Select") {
                                 viewModel.beginSelection(with: media.id)
                             }
-                            .task {
+                            .task(id: loadsNextPage(from: media)) {
                                 await viewModel.loadNextIfNeeded(currentItem: media)
                             }
                         }
@@ -100,6 +100,11 @@ struct GalleryGridView: View {
         }
         .background(QuietFrameTheme.background)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: viewModel.items.count)
+    }
+
+    /// A tile already on screen re-runs its paging task when a refresh makes it the last loaded item.
+    private func loadsNextPage(from media: VaultMedia) -> Bool {
+        viewModel.hasMore && media.id == viewModel.items.last?.id
     }
 
     @ViewBuilder

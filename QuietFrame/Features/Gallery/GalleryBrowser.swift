@@ -96,6 +96,10 @@ private struct GalleryBrowserContent: View {
         .toolbar { galleryToolbar }
         .safeAreaInset(edge: .bottom) { selectionBar }
         .task {
+            guard !galleryViewModel.hasLoaded else {
+                await galleryViewModel.refreshLoadedItems()
+                return
+            }
             if initialQuery.albumID != nil {
                 galleryViewModel.query.dateSortDirection = settingsRecords.first?.albumMediaDateSortDirection
                     ?? .newestFirst
@@ -113,7 +117,7 @@ private struct GalleryBrowserContent: View {
         }
         .sheet(isPresented: $showsImportPreview, onDismiss: {
             importViewModel.cleanupIfIdle()
-            Task { await galleryViewModel.loadInitial() }
+            Task { await galleryViewModel.refreshLoadedItems() }
         }) {
             ImportPreviewView(viewModel: importViewModel) {
                 showsImportPreview = false
@@ -134,7 +138,7 @@ private struct GalleryBrowserContent: View {
         }
         .fullScreenCover(item: $viewerRequest, onDismiss: {
             Task {
-                await galleryViewModel.loadInitial()
+                await galleryViewModel.refreshLoadedItems()
                 if viewerRequest == nil { hiddenMediaID = nil }
             }
         }) { request in
@@ -422,7 +426,7 @@ private struct GalleryBrowserContent: View {
         do {
             try dependencies.albumService.moveMedia(ids: galleryViewModel.selectedIDs, toAlbumID: albumID)
             galleryViewModel.endSelection()
-            Task { await galleryViewModel.loadInitial() }
+            Task { await galleryViewModel.refreshLoadedItems() }
         } catch {
             actionMessage = (error as? VaultError)?.localizedDescription
                 ?? VaultError.persistenceFailure.localizedDescription
@@ -477,7 +481,7 @@ private struct GalleryBrowserContent: View {
             do {
                 try await dependencies.trashService.moveToTrash(ids: ids)
                 galleryViewModel.endSelection()
-                await galleryViewModel.loadInitial()
+                await galleryViewModel.refreshLoadedItems()
             } catch {
                 actionMessage = (error as? VaultError)?.localizedDescription
                     ?? VaultError.fileOperationFailed.localizedDescription

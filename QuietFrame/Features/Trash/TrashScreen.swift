@@ -64,11 +64,11 @@ private struct TrashScreenContent: View {
                 userMessage = (error as? VaultError)?.localizedDescription
                     ?? VaultError.fileOperationFailed.localizedDescription
             }
-            await viewModel.loadInitial()
+            await viewModel.refreshLoadedItems()
         }
         .fullScreenCover(item: $viewerRequest, onDismiss: {
             Task {
-                await viewModel.loadInitial()
+                await viewModel.refreshLoadedItems()
                 if viewerRequest == nil { hiddenMediaID = nil }
             }
         }) { request in
@@ -291,7 +291,7 @@ private struct TrashScreenContent: View {
                 try await operation()
                 viewModel.endSelection()
                 dependencies.thumbnailService.clearCache()
-                await viewModel.loadInitial()
+                await viewModel.refreshLoadedItems()
                 HapticFeedback.success()
             } catch {
                 userMessage = (error as? VaultError)?.localizedDescription

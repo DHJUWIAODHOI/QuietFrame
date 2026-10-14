@@ -7,6 +7,7 @@ final class GalleryViewModel {
     private(set) var items: [VaultMedia] = []
     private(set) var isLoading = false
     private(set) var hasMore = true
+    private(set) var hasLoaded = false
     private(set) var errorMessage: String?
     var query: GalleryQuery
     var selectedIDs: Set<UUID> = []
@@ -40,6 +41,34 @@ final class GalleryViewModel {
             guard loadGeneration == generation else { return }
             items = []
             hasMore = false
+            errorMessage = (error as? VaultError)?.localizedDescription
+                ?? VaultError.persistenceFailure.localizedDescription
+        }
+        if loadGeneration == generation {
+            isLoading = false
+            hasLoaded = true
+        }
+    }
+
+    /// Re-fetches as many items as are already loaded, so the grid keeps its scroll depth
+    /// while items that left the query drop out and the selection keeps the ones that remain.
+    func refreshLoadedItems() async {
+        guard hasLoaded else {
+            await loadInitial()
+            return
+        }
+        let generation = UUID()
+        loadGeneration = generation
+
+        do {
+            let page = try repository.fetchMedia(query: query, offset: 0, limit: max(items.count, pageSize))
+            guard loadGeneration == generation else { return }
+            items = page.items
+            hasMore = page.hasMore
+            errorMessage = nil
+            selectedIDs.formIntersection(page.items.map(\.id))
+        } catch {
+            guard loadGeneration == generation else { return }
             errorMessage = (error as? VaultError)?.localizedDescription
                 ?? VaultError.persistenceFailure.localizedDescription
         }

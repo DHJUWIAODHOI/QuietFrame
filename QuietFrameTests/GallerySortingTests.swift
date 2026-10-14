@@ -186,6 +186,118 @@ final class GallerySortingTests: XCTestCase {
         XCTAssertTrue(viewModel.hasMore)
     }
 
+    func testRefreshKeepsEveryLoadedPage() async throws {
+        let fixture = try makeFixture([
+            ("1", 100, 100),
+            ("2", 200, 200),
+            ("3", 300, 300),
+            ("4", 400, 400),
+            ("5", 500, 500)
+        ])
+        let viewModel = GalleryViewModel(
+            repository: fixture.repository,
+            query: albumQuery(fixture, sort: .importedAt, direction: .newestFirst),
+            pageSize: 2
+        )
+
+        await viewModel.loadInitial()
+        await viewModel.loadNextIfNeeded(currentItem: try XCTUnwrap(viewModel.items.last))
+        await viewModel.refreshLoadedItems()
+
+        XCTAssertEqual(viewModel.items.map(\.storageIdentifier), ["5", "4", "3", "2"])
+        XCTAssertTrue(viewModel.hasMore)
+        XCTAssertFalse(viewModel.isLoading)
+    }
+
+    func testRefreshDropsItemsThatLeftTheQueryAndKeepsTheRestSelected() async throws {
+        let fixture = try makeFixture([
+            ("1", 100, 100),
+            ("2", 200, 200),
+            ("3", 300, 300),
+            ("4", 400, 400),
+            ("5", 500, 500)
+        ])
+        let viewModel = GalleryViewModel(
+            repository: fixture.repository,
+            query: albumQuery(fixture, sort: .importedAt, direction: .newestFirst),
+            pageSize: 2
+        )
+        await viewModel.loadInitial()
+        await viewModel.loadNextIfNeeded(currentItem: try XCTUnwrap(viewModel.items.last))
+        let trashed = try XCTUnwrap(viewModel.items.first { $0.storageIdentifier == "4" })
+        let kept = try XCTUnwrap(viewModel.items.first { $0.storageIdentifier == "5" })
+        viewModel.beginSelection(with: trashed.id)
+        viewModel.beginSelection(with: kept.id)
+        trashed.trashedAt = Date(timeIntervalSince1970: 600)
+        try fixture.container.mainContext.save()
+
+        await viewModel.refreshLoadedItems()
+
+        XCTAssertEqual(viewModel.items.map(\.storageIdentifier), ["5", "3", "2", "1"])
+        XCTAssertFalse(viewModel.hasMore)
+        XCTAssertEqual(viewModel.selectedIDs, [kept.id])
+    }
+
+    func testRefreshAfterANewerItemArrivesLetsTheLastItemLoadTheRest() async throws {
+        let fixture = try makeFixture([
+            ("1", 100, 100),
+            ("2", 200, 200),
+            ("3", 300, 300)
+        ])
+        let viewModel = GalleryViewModel(
+            repository: fixture.repository,
+            query: albumQuery(fixture, sort: .importedAt, direction: .newestFirst),
+            pageSize: 2
+        )
+        await viewModel.loadInitial()
+        await viewModel.loadNextIfNeeded(currentItem: try XCTUnwrap(viewModel.items.last))
+        XCTAssertFalse(viewModel.hasMore)
+        fixture.container.mainContext.insert(VaultMedia(
+            storageIdentifier: "4",
+            contentFingerprint: "fingerprint-4",
+            metadata: MediaMetadata(
+                mediaType: .photo,
+                contentTypeIdentifier: "public.jpeg",
+                originalFilename: "4.jpg",
+                originalCreationDate: Date(timeIntervalSince1970: 400),
+                pixelWidth: 100,
+                pixelHeight: 100,
+                duration: nil,
+                byteCount: 100
+            ),
+            importedAt: Date(timeIntervalSince1970: 400),
+            album: fixture.album
+        ))
+        try fixture.container.mainContext.save()
+
+        await viewModel.refreshLoadedItems()
+        XCTAssertEqual(viewModel.items.map(\.storageIdentifier), ["4", "3", "2"])
+        XCTAssertTrue(viewModel.hasMore)
+
+        await viewModel.loadNextIfNeeded(currentItem: try XCTUnwrap(viewModel.items.last))
+        XCTAssertEqual(viewModel.items.map(\.storageIdentifier), ["4", "3", "2", "1"])
+        XCTAssertFalse(viewModel.hasMore)
+    }
+
+    func testRefreshBeforeAnyLoadLoadsTheFirstPage() async throws {
+        let fixture = try makeFixture([
+            ("1", 100, 100),
+            ("2", 200, 200),
+            ("3", 300, 300)
+        ])
+        let viewModel = GalleryViewModel(
+            repository: fixture.repository,
+            query: albumQuery(fixture, sort: .importedAt, direction: .newestFirst),
+            pageSize: 2
+        )
+
+        await viewModel.refreshLoadedItems()
+
+        XCTAssertEqual(viewModel.items.map(\.storageIdentifier), ["3", "2"])
+        XCTAssertTrue(viewModel.hasMore)
+        XCTAssertTrue(viewModel.hasLoaded)
+    }
+
     func testViewerReceivesItemsInSelectedOrder() async throws {
         let fixture = try makeFixture([
             ("old", 100, 100),

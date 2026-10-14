@@ -137,7 +137,7 @@ QuietFrame/
 
 - The v1 feature set is implemented. There are no TODO/FIXME markers; open work is in README "Known Limitations" and the unchecked items of the SECURITY.md checklist.
 - `main` and `origin/main` are in sync. CI runs the full test suite and passes (run 37814853905, commit `261e0f4`). The simulator test step must stay ad-hoc signed (`CODE_SIGN_IDENTITY=-`): an unsigned test host has no Keychain access, which fails `KeychainServiceTests` and leaves the UI test on the retry screen. `refactor-ui-fork` (= `fork/main`) is an older branch with a shortened CI test list.
-- **Tests:** 126 unit tests in 21 files, plus 1 UI test. No tests cover reset-journal recovery, thumbnails, metadata extraction, ImportViewModel, biometrics, iterated PBKDF2, or most container tamper cases.
+- **Tests:** 130 unit tests in 21 files, plus 1 UI test. No tests cover reset-journal recovery, thumbnails, metadata extraction, ImportViewModel, biometrics, iterated PBKDF2, or most container tamper cases.
 - **Stale docs:**
   - README: says 28 tests and a V1 schema, and claims CI doesn't run the tests.
   - SECURITY.md:26: says Apple has no PBKDF2 API.
