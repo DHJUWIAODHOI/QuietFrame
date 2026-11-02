@@ -17,40 +17,44 @@ final class GallerySearchMatcherTests: XCTestCase {
         let dayCount: Int
     }
 
-    private let configurations = [
-        Configuration(localeIdentifier: "en_US", timeZoneIdentifier: "America/Los_Angeles"),
-        Configuration(localeIdentifier: "en_GB", timeZoneIdentifier: "Europe/London"),
-        Configuration(localeIdentifier: "de_DE", timeZoneIdentifier: "Europe/Berlin"),
-        Configuration(localeIdentifier: "ja_JP@calendar=japanese", timeZoneIdentifier: "Asia/Tokyo"),
-        Configuration(localeIdentifier: "zh_CN@calendar=chinese", timeZoneIdentifier: "Asia/Shanghai"),
-        Configuration(localeIdentifier: "he_IL@calendar=hebrew", timeZoneIdentifier: "Asia/Jerusalem"),
-        Configuration(localeIdentifier: "ar_SA", timeZoneIdentifier: "Asia/Riyadh"),
-        Configuration(localeIdentifier: "fa_IR", timeZoneIdentifier: "Asia/Tehran"),
-        Configuration(localeIdentifier: "th_TH", timeZoneIdentifier: "Asia/Bangkok"),
-        Configuration(localeIdentifier: "hi_IN", timeZoneIdentifier: "Asia/Kolkata"),
-        Configuration(localeIdentifier: "en_NZ", timeZoneIdentifier: "Pacific/Chatham"),
-        Configuration(localeIdentifier: "en_AU", timeZoneIdentifier: "Australia/Lord_Howe"),
-        Configuration(localeIdentifier: "pt_BR", timeZoneIdentifier: "America/Sao_Paulo"),
-        Configuration(localeIdentifier: "en_WS", timeZoneIdentifier: "Pacific/Apia"),
-        Configuration(localeIdentifier: "en_CA", timeZoneIdentifier: "America/St_Johns")
-    ]
+    private var configurations: [Configuration] {
+        [
+            Configuration(localeIdentifier: "en_US", timeZoneIdentifier: "America/Los_Angeles"),
+            Configuration(localeIdentifier: "en_GB", timeZoneIdentifier: "Europe/London"),
+            Configuration(localeIdentifier: "de_DE", timeZoneIdentifier: "Europe/Berlin"),
+            Configuration(localeIdentifier: "ja_JP@calendar=japanese", timeZoneIdentifier: "Asia/Tokyo"),
+            Configuration(localeIdentifier: "zh_CN@calendar=chinese", timeZoneIdentifier: "Asia/Shanghai"),
+            Configuration(localeIdentifier: "he_IL@calendar=hebrew", timeZoneIdentifier: "Asia/Jerusalem"),
+            Configuration(localeIdentifier: "ar_SA", timeZoneIdentifier: "Asia/Riyadh"),
+            Configuration(localeIdentifier: "fa_IR", timeZoneIdentifier: "Asia/Tehran"),
+            Configuration(localeIdentifier: "th_TH", timeZoneIdentifier: "Asia/Bangkok"),
+            Configuration(localeIdentifier: "hi_IN", timeZoneIdentifier: "Asia/Kolkata"),
+            Configuration(localeIdentifier: "en_NZ", timeZoneIdentifier: "Pacific/Chatham"),
+            Configuration(localeIdentifier: "en_AU", timeZoneIdentifier: "Australia/Lord_Howe"),
+            Configuration(localeIdentifier: "pt_BR", timeZoneIdentifier: "America/Sao_Paulo"),
+            Configuration(localeIdentifier: "en_WS", timeZoneIdentifier: "Pacific/Apia"),
+            Configuration(localeIdentifier: "en_CA", timeZoneIdentifier: "America/St_Johns")
+        ]
+    }
 
     /// New Year, days that time-zone changes start late or skip (Samoa, 30 December 2011; Sao Paulo's midnight
     /// changes), daylight saving changes, the Japanese era change, and new years in other calendars.
-    private let sampleRanges = [
-        SampleRange(year: 2011, month: 12, day: 28, dayCount: 5),
-        SampleRange(year: 2018, month: 11, day: 3, dayCount: 3),
-        SampleRange(year: 2018, month: 12, day: 30, dayCount: 4),
-        SampleRange(year: 2019, month: 2, day: 3, dayCount: 4),
-        SampleRange(year: 2019, month: 2, day: 15, dayCount: 3),
-        SampleRange(year: 2019, month: 3, day: 9, dayCount: 3),
-        SampleRange(year: 2019, month: 3, day: 20, dayCount: 3),
-        SampleRange(year: 2019, month: 3, day: 30, dayCount: 3),
-        SampleRange(year: 2019, month: 4, day: 5, dayCount: 4),
-        SampleRange(year: 2019, month: 4, day: 29, dayCount: 4),
-        SampleRange(year: 2019, month: 9, day: 28, dayCount: 4),
-        SampleRange(year: 2024, month: 2, day: 28, dayCount: 3)
-    ]
+    private var sampleRanges: [SampleRange] {
+        [
+            SampleRange(year: 2011, month: 12, day: 28, dayCount: 5),
+            SampleRange(year: 2018, month: 11, day: 3, dayCount: 3),
+            SampleRange(year: 2018, month: 12, day: 30, dayCount: 4),
+            SampleRange(year: 2019, month: 2, day: 3, dayCount: 4),
+            SampleRange(year: 2019, month: 2, day: 15, dayCount: 3),
+            SampleRange(year: 2019, month: 3, day: 9, dayCount: 3),
+            SampleRange(year: 2019, month: 3, day: 20, dayCount: 3),
+            SampleRange(year: 2019, month: 3, day: 30, dayCount: 3),
+            SampleRange(year: 2019, month: 4, day: 5, dayCount: 4),
+            SampleRange(year: 2019, month: 4, day: 29, dayCount: 4),
+            SampleRange(year: 2019, month: 9, day: 28, dayCount: 4),
+            SampleRange(year: 2024, month: 2, day: 28, dayCount: 3)
+        ]
+    }
 
     func testDateMatchesAgreeWithFormattingEveryDate() throws {
         var failures: [String] = []
@@ -164,10 +168,12 @@ final class GallerySearchMatcherTests: XCTestCase {
 
     /// Filenames, album names and tags that overlap with month names and numbers, so every field decides some
     /// matches, and year-like searches that only an exact year spelling should match.
-    private let fieldSearches = [
-        "IMG_1", "holiday", "Beach", "sunset 1", "may", "MAR", "Family", "2019", "2020", "1", "31", "36",
-        "02019", "+2019", "-1", "1440", "2562", "zzz"
-    ]
+    private var fieldSearches: [String] {
+        [
+            "IMG_1", "holiday", "Beach", "sunset 1", "may", "MAR", "Family", "2019", "2020", "1", "31", "36",
+            "02019", "+2019", "-1", "1440", "2562", "zzz"
+        ]
+    }
 
     private func makeLibrary(in container: ModelContainer) throws -> Library {
         let context = container.mainContext
