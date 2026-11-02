@@ -10,9 +10,27 @@ final class AlbumCounts {
     private(set) var recentCount = 0
     private(set) var favoriteCount = 0
     private(set) var albumCounts: [UUID: Int] = [:]
+    @ObservationIgnored private var screenIsVisible = false
 
     func count(forAlbum albumID: UUID) -> Int {
         albumCounts[albumID] ?? 0
+    }
+
+    /// Counts on every appearance, not only after a skipped change: Recently Added moves with the clock, and not
+    /// every edit (reconciliation, for one) moves the library change counter.
+    func screenDidAppear(in context: ModelContext, albumIDs: [UUID], now: Date = Date()) {
+        screenIsVisible = true
+        refresh(in: context, albumIDs: albumIDs, now: now)
+    }
+
+    func screenDidDisappear() {
+        screenIsVisible = false
+    }
+
+    /// Nothing shows the counts while the screen is hidden, so they wait for its next appearance.
+    func libraryDidChange(in context: ModelContext, albumIDs: [UUID], now: Date = Date()) {
+        guard screenIsVisible else { return }
+        refresh(in: context, albumIDs: albumIDs, now: now)
     }
 
     /// Recently Added covers the 30 days before `now`, matching the Recently Added collection.

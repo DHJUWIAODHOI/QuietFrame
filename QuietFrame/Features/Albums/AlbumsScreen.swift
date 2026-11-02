@@ -19,6 +19,12 @@ struct AlbumsScreen: View {
     @State private var showsAlbumReorder = false
     @State private var userMessage: String?
 
+    /// The album list and the change counter in one value, so a save that changes both counts only once.
+    private struct CountInputs: Equatable {
+        let albumIDs: [UUID]
+        let libraryGeneration: Int
+    }
+
     private var sortedAlbums: [VaultAlbum] {
         switch settingsRecords.first?.albumSort ?? .modifiedDate {
         case .manual:
@@ -40,9 +46,14 @@ struct AlbumsScreen: View {
         .listStyle(.insetGrouped)
         .quietFormStyle()
         .navigationTitle("Albums")
-        .onAppear { refreshCounts() }
-        .onChange(of: albums.map(\.id)) { refreshCounts() }
-        .onChange(of: dependencies.repository.changes.generation) { refreshCounts() }
+        .onAppear { counts.screenDidAppear(in: modelContext, albumIDs: albums.map(\.id)) }
+        .onDisappear { counts.screenDidDisappear() }
+        .onChange(of: CountInputs(
+            albumIDs: albums.map(\.id),
+            libraryGeneration: dependencies.repository.changes.generation
+        )) { _, inputs in
+            counts.libraryDidChange(in: modelContext, albumIDs: inputs.albumIDs)
+        }
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
@@ -233,10 +244,6 @@ struct AlbumsScreen: View {
         case .creationDate: "Date created"
         case .modifiedDate: "Last modified"
         }
-    }
-
-    private func refreshCounts() {
-        counts.refresh(in: modelContext, albumIDs: albums.map(\.id))
     }
 
     private var albumSortBinding: Binding<AlbumSortOption> {
