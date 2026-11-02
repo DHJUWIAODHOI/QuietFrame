@@ -16,6 +16,11 @@ final class LatestValueRelay<Value: Sendable>: Sendable {
         }
     }
 
+    /// A relay dropped without `finish()` still applies its last value, and its task ends instead of waiting forever.
+    deinit {
+        continuation.finish()
+    }
+
     func send(_ value: Value) {
         continuation.yield(value)
     }
