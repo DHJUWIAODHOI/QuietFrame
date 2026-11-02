@@ -48,6 +48,55 @@ final class ImportPreparationTests: XCTestCase {
         XCTAssertGreaterThan(maximumConcurrentReads, 1)
         XCTAssertLessThanOrEqual(maximumConcurrentReads, 3)
     }
+
+    func testImportProgressNeverWaitsForTheMainThread() async throws {
+        let directory = try Benchmark.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let importer = ProgressReportingImporter(updateCount: 200)
+        let viewModel = try await makePreparedViewModel(importer: importer, directory: directory)
+        defer { viewModel.cancelPreparation() }
+
+        viewModel.startImport()
+        await fulfillment(of: [importer.started], timeout: 30)
+        let reportedWhileMainWasBlocked = blockMainThread(until: importer.finishedReporting)
+
+        XCTAssertTrue(reportedWhileMainWasBlocked, "Encryption must not wait for the main thread to show its progress.")
+        for _ in 0..<1_000 where viewModel.isImporting {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertFalse(viewModel.isImporting)
+        XCTAssertEqual(viewModel.progress, ImportProgress(completedItems: 1, totalItems: 1, currentItemFraction: 0))
+        XCTAssertEqual(viewModel.summary?.importedCount, 1)
+    }
+
+    private func makePreparedViewModel(importer: any MediaImporting, directory: URL) async throws -> ImportViewModel {
+        let url = directory.appendingPathComponent("photo.jpg")
+        try Benchmark.photoJPEG(width: 64, height: 48, seed: 9).write(to: url)
+        let provider = try XCTUnwrap(NSItemProvider(contentsOf: url))
+        let viewModel = ImportViewModel(
+            metadataReader: DelayedMetadataReader(delays: [0]),
+            thumbnailGenerator: FixedThumbnailGenerator(failingData: Data()),
+            importer: importer,
+            photoLibrary: IdlePhotoLibrary()
+        )
+        viewModel.prepare(selections: [PhotoLibrarySelection(
+            itemProvider: provider,
+            typeIdentifier: "public.jpeg",
+            mediaType: .photo,
+            originalFilename: "photo.jpg",
+            sourceLocalIdentifier: "asset-0"
+        )])
+        for _ in 0..<1_000 where viewModel.isPreparing {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertEqual(viewModel.candidates.count, 1)
+        return viewModel
+    }
+
+    /// Holds the main thread, as a long render would, until `semaphore` is signalled or 20 seconds pass.
+    private func blockMainThread(until semaphore: DispatchSemaphore) -> Bool {
+        semaphore.wait(timeout: .now() + 20) == .success
+    }
 }
 
 private actor DelayedMetadataReader: MediaMetadataReading {
@@ -112,4 +161,44 @@ private actor IdlePhotoLibrary: PhotoLibraryServing {
     }
 
     func deleteOriginals(localIdentifiers: [String]) async throws {}
+}
+
+/// Reports a run of progress values from off the main thread, then succeeds. It signals when it starts and when it
+/// has reported everything, so a test can hold the main thread in between.
+private final class ProgressReportingImporter: MediaImporting, @unchecked Sendable {
+    let started = XCTestExpectation(description: "The import started")
+    let finishedReporting = DispatchSemaphore(value: 0)
+    private let updateCount: Int
+
+    init(updateCount: Int) {
+        self.updateCount = updateCount
+    }
+
+    func importMedia(
+        _ sources: [ImportSource],
+        albumID: UUID?,
+        preflightFailureCount: Int,
+        preflightThumbnailFailureCount: Int,
+        progress: (@Sendable (ImportProgress) async -> Void)?
+    ) async throws -> ImportSummary {
+        sources.forEach { IncomingMediaFileStore.remove($0.temporaryURL) }
+        started.fulfill()
+        for update in 1...updateCount {
+            await progress?(ImportProgress(
+                completedItems: 0,
+                totalItems: sources.count,
+                currentItemFraction: 0.9 * Double(update) / Double(updateCount)
+            ))
+        }
+        await progress?(ImportProgress(completedItems: sources.count, totalItems: sources.count, currentItemFraction: 0))
+        finishedReporting.signal()
+        var summary = ImportSummary()
+        summary.importedCount = sources.count
+        summary.importedSourceLocalIdentifiers = sources.compactMap(\.sourceLocalIdentifier)
+        return summary
+    }
+
+    func cleanupAbandonedIncomingFiles() async {}
+
+    func cancelAllOperations() async {}
 }

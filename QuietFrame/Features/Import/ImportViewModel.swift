@@ -249,14 +249,7 @@ final class ImportViewModel {
         importTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let result = try await importer.importMedia(
-                    sources,
-                    albumID: albumID,
-                    preflightFailureCount: preparationFailureCount,
-                    preflightThumbnailFailureCount: preparationThumbnailFailureCount
-                ) { [weak self] value in
-                    await MainActor.run { self?.progress = value }
-                }
+                let result = try await runImport(sources, albumID: albumID)
                 summary = result
                 candidates = []
                 albumAssignments.reset()
@@ -274,6 +267,37 @@ final class ImportViewModel {
 
     func cancelImport() {
         importTask?.cancel()
+    }
+
+    /// Encryption hands each progress value over without waiting for the main thread. While the main thread is busy,
+    /// only the newest value waits to be shown.
+    private func runImport(_ sources: [ImportSource], albumID: UUID?) async throws -> ImportSummary {
+        let (updates, continuation) = AsyncStream.makeStream(
+            of: ImportProgress.self,
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        let showingProgress = Task {
+            for await value in updates where value != progress {
+                progress = value
+            }
+        }
+        do {
+            let summary = try await importer.importMedia(
+                sources,
+                albumID: albumID,
+                preflightFailureCount: preparationFailureCount,
+                preflightThumbnailFailureCount: preparationThumbnailFailureCount
+            ) { value in
+                continuation.yield(value)
+            }
+            continuation.finish()
+            await showingProgress.value
+            return summary
+        } catch {
+            continuation.finish()
+            await showingProgress.value
+            throw error
+        }
     }
 
     func cancelPreparation() {
