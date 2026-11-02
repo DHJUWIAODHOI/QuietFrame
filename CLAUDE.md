@@ -141,9 +141,7 @@ QuietFrame/
 - **Tests:** 167 unit tests in 25 files, plus 1 UI test. No tests cover reset-journal recovery, thumbnails, metadata extraction, ImportViewModel, biometrics, iterated PBKDF2, or most container tamper cases.
 - **Stale docs:**
   - README: says 28 tests and a V1 schema, and claims CI doesn't run the tests.
-  - SECURITY.md:26: says Apple has no PBKDF2 API.
-  - SECURITY.md:63: says no operation gate exists.
-  - PHASE_REPORT.md:114: says the viewer decrypts only the active page. Photos are now prepared for the selected page and its neighbours, one at a time, by `ViewerPhotoLoader`; videos are decrypted only for the active page.
+  - PHASE_REPORT.md:114: says the viewer decrypts only the active page. Photos are now prepared for the selected page and its neighbours, one at a time, at screen size by `ViewerPhotoLoader`; videos stream from their encrypted files for the active page.
 - **Half-finished:**
   - Tags can be searched, but nothing creates them.
   - `ImportRecord` is never read.
@@ -152,8 +150,7 @@ QuietFrame/
   - No bulk unfavorite.
 
 ### Known issues (verified; remove each one when it is fixed)
-- With the default "Immediately", auto-lock fires on the app's own system prompts: Face ID enable, Photos permission, the delete confirmation, Save to Photos (`App/VaultLockCoordinator.swift:324`).
-- Backgrounding during an in-flight unlock leaves the vault unlocked past the auto-lock grace period (`VaultLockCoordinator.swift:324-358`).
-- Any reconcile or purge failure blocks unlock, and the user sees an authentication error (`App/AppDependencies.swift:95`).
+- With the default "Immediately", auto-lock fires on the app's own system prompts: Face ID enable, Photos permission, the delete confirmation, Save to Photos (`App/VaultLockCoordinator.swift:348`).
+- Backgrounding during an in-flight unlock leaves the vault unlocked past the auto-lock grace period (`VaultLockCoordinator.swift:348-382`).
 - App Store: the app icon is SVG only (~30 MB `Assets.car`, alpha risk); convert it to PNG. The `ITSAppUsesNonExemptEncryption` key is missing.
 - Hosted reset tests write the real reset-journal marker. An aborted run on a device could wipe that device's vault on the next launch.

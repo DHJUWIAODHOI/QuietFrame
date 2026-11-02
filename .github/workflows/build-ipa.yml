@@ -325,4 +325,13 @@ jobs:
         timeout-minutes: 30
         run: |
           set -o pipefail
-          xcodebuild             -project QuietFrame.xcodeproj             -scheme QuietFrame             -configuration Debug             -sdk iphonesimulator             -destination "id=$IOS17_SIMULATOR"             -destination-timeout 180             -only-testing:QuietFrameTests/LibraryQueryTests             -only-testing:QuietFrameTests/GallerySortingTests             -only-testing:QuietFrameTests/AlbumServiceTests             -only-testing:QuietFrameTests/TrashServiceTests             -only-testing:QuietFrameTests/StorageReconciliationServiceTests             -only-testing:QuietFrameTests/MediaExportServiceTests             CODE_SIGN_STYLE=Manual             CODE_SIGN_IDENTITY=-             DEVELOPMENT_TEAM=             PROVISIONING_PROFILE_SPECIFIER=             test
+          xcodebuild             -project QuietFrame.xcodeproj             -scheme QuietFrame             -configuration Debug             -sdk iphonesimulator             -destination "id=$IOS17_SIMULATOR"             -destination-timeout 180             -parallel-testing-enabled NO             -resultBundlePath "$RUNNER_TEMP/SwiftDataIOS17.xcresult"             -only-testing:QuietFrameTests/LibraryQueryTests             -only-testing:QuietFrameTests/GallerySortingTests             -only-testing:QuietFrameTests/AlbumServiceTests             -only-testing:QuietFrameTests/TrashServiceTests             -only-testing:QuietFrameTests/StorageReconciliationServiceTests             -only-testing:QuietFrameTests/MediaExportServiceTests             CODE_SIGN_STYLE=Manual             CODE_SIGN_IDENTITY=-             DEVELOPMENT_TEAM=             PROVISIONING_PROFILE_SPECIFIER=             test
+
+      - name: Upload iOS 17 results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuietFrame-swiftdata-ios17
+          path: ${{ runner.temp }}/SwiftDataIOS17.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
