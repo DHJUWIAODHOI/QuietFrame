@@ -13,7 +13,10 @@ jobs:
   build:
     name: Archive QuietFrame
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 60
+
+    env:
+      BENCHMARK_CLASSES: CryptoBenchmarks ThumbnailBenchmarks LibraryBenchmarks ViewerBenchmarks ImportBenchmarks
 
     steps:
       - name: Check out repository
@@ -24,10 +27,15 @@ jobs:
 
       # Simulator apps need an (ad-hoc) code signature for Keychain access;
       # an unsigned test host fails every SecItem call.
+      # The benchmarks are skipped here and run on their own in an optimized build below.
       - name: Run full tests
         timeout-minutes: 30
         run: |
           set -o pipefail
+          SKIP_BENCHMARKS=()
+          for class in $BENCHMARK_CLASSES; do
+            SKIP_BENCHMARKS+=("-skip-testing:QuietFrameTests/$class")
+          done
           xcodebuild \
             -project QuietFrame.xcodeproj \
             -scheme QuietFrame \
@@ -36,6 +44,7 @@ jobs:
             -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=latest' \
             -destination-timeout 120 \
             -resultBundlePath "$RUNNER_TEMP/QuietFrameTests.xcresult" \
+            "${SKIP_BENCHMARKS[@]}" \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY=- \
             DEVELOPMENT_TEAM= \
@@ -43,13 +52,75 @@ jobs:
             test \
             | tee "$RUNNER_TEMP/xctest.log"
 
+      # Serial and optimized like a Release build, so timings are not skewed by parallel
+      # simulator clones or -Onone. Compare runs only on matching runner hardware.
+      - name: Run performance benchmarks
+        timeout-minutes: 25
+        run: |
+          set -o pipefail
+          ONLY_BENCHMARKS=()
+          for class in $BENCHMARK_CLASSES; do
+            ONLY_BENCHMARKS+=("-only-testing:QuietFrameTests/$class")
+          done
+          xcodebuild \
+            -project QuietFrame.xcodeproj \
+            -scheme QuietFrame \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=latest' \
+            -destination-timeout 120 \
+            -derivedDataPath "$RUNNER_TEMP/BenchmarkDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/QuietFrameBenchmarks.xcresult" \
+            -parallel-testing-enabled NO \
+            "${ONLY_BENCHMARKS[@]}" \
+            SWIFT_OPTIMIZATION_LEVEL=-O \
+            SWIFT_COMPILATION_MODE=wholemodule \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY=- \
+            DEVELOPMENT_TEAM= \
+            PROVISIONING_PROFILE_SPECIFIER= \
+            test \
+            | tee "$RUNNER_TEMP/benchmarks.log"
+
+      - name: Summarize benchmarks
+        if: always()
+        run: |
+          LOG="$RUNNER_TEMP/benchmarks.log"
+          {
+            echo "## Benchmarks"
+            echo
+            echo "Runner: $(sysctl -n machdep.cpu.brand_string), $(sysctl -n hw.ncpu) CPUs, $(( $(sysctl -n hw.memsize) / 1073741824 )) GB"
+            echo "Xcode: $(xcodebuild -version | tr '\n' ' ')"
+            echo "Commit: $GITHUB_SHA"
+            echo
+            echo "| Class | Test | Metric | Average | RSD | Values |"
+            echo "| --- | --- | --- | --- | --- | --- |"
+            if [ -f "$LOG" ]; then
+              grep -E "measured \[" "$LOG" \
+                | sed -E "s/.*-\[QuietFrameTests\.([A-Za-z0-9_]+) ([A-Za-z0-9_]+)\]' measured \[([^]]+)\] average: ([0-9.]+), relative standard deviation: ([0-9.]+%), values: \[([^]]*)\].*/| \1 | \2 | \3 | \4 | \5 | \6 |/" \
+                || true
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuietFrame-benchmarks
+          path: |
+            ${{ runner.temp }}/benchmarks.log
+            ${{ runner.temp }}/QuietFrameBenchmarks.xcresult
+          if-no-files-found: ignore
+          retention-days: 30
+
       - name: Summarize test failures
         if: failure() || cancelled()
         run: |
-          RESULT="$RUNNER_TEMP/QuietFrameTests.xcresult"
-          if [ -d "$RESULT" ]; then
-            xcrun xcresulttool get test-results summary --path "$RESULT" || true
-          fi
+          for RESULT in "$RUNNER_TEMP/QuietFrameTests.xcresult" "$RUNNER_TEMP/QuietFrameBenchmarks.xcresult"; do
+            if [ -d "$RESULT" ]; then
+              xcrun xcresulttool get test-results summary --path "$RESULT" || true
+            fi
+          done
           grep -E -A8 '^(CodeSign|ProcessProductPackaging) .*QuietFrame\.app' "$RUNNER_TEMP/xctest.log" | head -80 || true
 
       - name: Archive without signing
