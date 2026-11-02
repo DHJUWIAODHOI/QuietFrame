@@ -284,7 +284,7 @@ private struct TrashScreenContent: View {
         }
     }
 
-    /// A failed Empty Trash does not say which items it removed, so it empties the whole cache, as before.
+    /// A failed Empty Trash does not say which items it removed, so it empties the whole cache.
     private func emptyTrash() {
         perform(evictingOnFailure: .allThumbnails) {
             let emptied = try await dependencies.trashService.emptyTrash()
@@ -292,7 +292,6 @@ private struct TrashScreenContent: View {
         }
     }
 
-    /// Thumbnails of permanently deleted media leave the memory cache with them.
     private enum ThumbnailEviction {
         case none
         case thumbnails([String])

@@ -69,8 +69,7 @@ struct PhotoLibraryPickedItem {
 }
 
 extension PhotoLibraryPickerOutput {
-    /// Sorts picked items into photos and videos in pick order and counts the rest as failures. Only in-memory checks
-    /// run here; deletion eligibility is resolved later, off the main thread.
+    /// Only in-memory checks run here; deletion eligibility is resolved later, off the main thread.
     init(picked items: [PhotoLibraryPickedItem], allowsOriginalDeletion: Bool) {
         var selections: [PhotoLibrarySelection] = []
         var pickerFailureCount = 0

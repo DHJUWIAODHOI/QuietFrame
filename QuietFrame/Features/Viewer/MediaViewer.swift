@@ -23,8 +23,7 @@ func viewerControlsVisibility(
     return !isPlaying
 }
 
-/// How far a dismiss drag has pulled the media. Only the backdrop and the lift effect read it, so a drag frame
-/// re-renders those two instead of the whole viewer and its pager.
+/// A dismiss drag's pull. Only the backdrop and lift effect read it, so a drag frame never re-renders the viewer.
 @MainActor
 @Observable
 final class ViewerLift {
@@ -144,8 +143,6 @@ struct MediaViewer: View {
         zoomedMediaID == selectedMediaID
     }
 
-    /// Photos decode at the size the viewer's window shows them, and the selected photo again at the zoom size once
-    /// zoomed. Nothing is requested until the window size is known.
     private var photoRequests: [ViewerPhotoRequest] {
         guard viewerWindowSize.width > 0, viewerWindowSize.height > 0 else { return [] }
         let viewerPixelSize = CGSize(
@@ -352,8 +349,7 @@ struct MediaViewer: View {
         .simultaneousGesture(dismissGesture)
     }
 
-    /// Every ID in `itemIDs` has a position. The fallback only spares the pager an optional page, which would make
-    /// SwiftUI build every page just to count them.
+    /// The fallback is never used; an optional page would make SwiftUI build every page just to count them.
     private func mediaPage(for mediaID: UUID, selectedIndex: Int) -> some View {
         let pageIndex = positions.index(of: mediaID, in: itemIDs) ?? 0
         let pageState = mediaPageState(pageIndex: pageIndex, selectedIndex: selectedIndex)

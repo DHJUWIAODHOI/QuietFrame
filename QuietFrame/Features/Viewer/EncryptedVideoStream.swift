@@ -1,8 +1,7 @@
 import AVFoundation
 import Foundation
 
-/// A video played straight from its encrypted file. AVFoundation asks for byte ranges through a private URL scheme
-/// and gets only those ranges, decrypted in memory, so no plaintext copy is written.
+/// AVFoundation gets only the byte ranges it asks for, decrypted in memory, so no plaintext copy is written.
 @MainActor
 final class EncryptedVideoStream {
     let asset: AVURLAsset
@@ -28,7 +27,6 @@ final class EncryptedVideoStream {
         self.asset = asset
     }
 
-    /// Stops pending reads and closes the file. The asset cannot load anything afterwards.
     func invalidate() {
         asset.cancelLoading()
         loader.invalidate()

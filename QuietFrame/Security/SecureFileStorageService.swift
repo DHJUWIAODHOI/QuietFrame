@@ -35,19 +35,17 @@ protocol SecureFileStoring: Sendable {
         preferredExtension: String?
     ) async throws -> SecureTemporaryFileLease
     func move(identifier: String, from: EncryptedAssetLocation, to: EncryptedAssetLocation) async throws
-    /// Moves the files in order and stops at the first failure; the result has the files moved and the error, unchanged.
     func move(
         identifiers: [String],
         from: EncryptedAssetLocation,
         to: EncryptedAssetLocation
     ) async -> EncryptedFileMoveResult
     func delete(identifier: String, location: EncryptedAssetLocation) async throws
-    /// Deletes each item's files in order. A failure skips the rest of that item only. Returns how many items failed.
     func deleteFiles(ofItems items: [[EncryptedFileReference]]) async -> Int
     func cleanupTemporaryFiles() async
     func removeAllEncryptedData() async throws
     func fileByteCount(identifier: String, location: EncryptedAssetLocation) async throws -> Int64
-    /// Sizes of the regular vault files in one listing. Callers measure anything it leaves out with `fileByteCount`.
+    /// Callers measure anything it leaves out with `fileByteCount`.
     func fileByteCounts(location: EncryptedAssetLocation) async throws -> [String: Int64]
     func allIdentifiers(location: EncryptedAssetLocation) async throws -> Set<String>
     func openEncryptedReader(identifier: String, location: EncryptedAssetLocation) async throws -> EncryptedFileReader
@@ -231,7 +229,6 @@ actor SecureFileStorageService: SecureFileStoring {
         }
     }
 
-    /// Reads an encrypted file in place, decrypting only the ranges asked for; nothing is written to disk.
     func openEncryptedReader(identifier: String, location: EncryptedAssetLocation) async throws -> EncryptedFileReader {
         let url = try encryptedURL(identifier: identifier, location: location)
         guard fileManager.fileExists(atPath: url.path) else { throw VaultError.corruptedFile }
@@ -259,8 +256,7 @@ actor SecureFileStorageService: SecureFileStoring {
         }
     }
 
-    /// Bulk moves and deletes let other work on this actor, such as opening a video stream and the lock's cleanup,
-    /// run after this many files instead of waiting for the whole batch.
+    /// Bulk moves and deletes let other work on this actor, such as the lock's cleanup, run after this many files.
     private static let batchYieldInterval = 32
 
     func move(

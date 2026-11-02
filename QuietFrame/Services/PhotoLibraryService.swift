@@ -7,12 +7,9 @@ enum PhotoLibraryImportAccess: Equatable, Sendable {
     case denied
 }
 
-/// Whether an imported original may later be offered for deletion. The picker records what it knows; PhotoKit is
-/// asked off the main thread while the selection is prepared.
+/// Whether an imported original may later be offered for deletion; PhotoKit is asked off the main thread.
 enum PhotoLibraryDeletionCheck: Sendable, Equatable {
-    /// Decided: the identifier, or nil when deletion will not be offered.
     case resolved(String?)
-    /// Needs PhotoKit: the picker's asset identifier and whether the provider carries a Live Photo.
     case pending(assetIdentifier: String?, providerHasLivePhoto: Bool)
 
     var needsPhotoLibrary: Bool {
@@ -124,7 +121,6 @@ actor PhotoLibraryService: PhotoLibraryServing {
         }
     }
 
-    /// The picker-time rule: PhotoKit is asked only about a non-empty identifier whose provider has no Live Photo.
     static func sourceIdentifier(
         for check: PhotoLibraryDeletionCheck,
         assetProfile: (String) -> PhotoLibraryAssetProfile?

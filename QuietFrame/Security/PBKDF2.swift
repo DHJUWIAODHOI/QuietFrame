@@ -3,8 +3,7 @@ import CryptoKit
 import Foundation
 
 enum PBKDF2 {
-    /// PBKDF2-HMAC-SHA256 through the system implementation. The output is the standard one, so keys derived by
-    /// earlier versions of the app are reproduced exactly.
+    /// Standard PBKDF2-HMAC-SHA256 output, so keys derived by earlier app versions are reproduced exactly.
     static func deriveSHA256Key(
         password: Data,
         salt: Data,

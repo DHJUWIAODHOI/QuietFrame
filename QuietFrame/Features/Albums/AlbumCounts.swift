@@ -26,7 +26,6 @@ final class AlbumCounts {
         screenIsVisible = false
     }
 
-    /// Nothing shows the counts while the screen is hidden, so they wait for its next appearance.
     func libraryDidChange(in context: ModelContext, albumIDs: [UUID], now: Date = Date()) {
         guard screenIsVisible else { return }
         refresh(in: context, albumIDs: albumIDs, now: now)

@@ -5,7 +5,6 @@ extension ModelContext {
     /// Keeps each statement well under SQLite's limit on bound values.
     private static let mediaLookupBatchSize = 500
 
-    /// The media with these IDs, found through the unique ID index instead of loading the whole library.
     func fetchMedia(ids: some Sequence<UUID>) throws -> [VaultMedia] {
         let uniqueIDs = Array(Set(ids))
         var media: [VaultMedia] = []

@@ -21,7 +21,6 @@ struct GalleryGridView: View {
     // Fits the default thumbnail size to three columns on iPhone inside the page margins.
     private static let tileWidthScale: CGFloat = 0.85
     private static let contentSpace = "gallery-grid-content"
-    /// How many tiles ahead of and behind an appearing tile get their thumbnails decoded early.
     private static let prefetchDistance = 12
 
     private var tileShape: RoundedRectangle {
@@ -44,7 +43,6 @@ struct GalleryGridView: View {
         )]
     }
 
-    /// Tile width at the grid's current width; nil until the width is known.
     private var tileWidth: CGFloat? {
         guard gridWidth > 0 else { return nil }
         return adaptiveGridTileWidth(
@@ -264,8 +262,6 @@ private struct HiddenWhileViewed: ViewModifier {
     }
 }
 
-/// The width an adaptive grid column gives each tile: as many columns as fit at the minimum width share the space,
-/// up to the maximum width.
 func adaptiveGridTileWidth(availableWidth: CGFloat, minimum: CGFloat, maximum: CGFloat, spacing: CGFloat) -> CGFloat {
     guard availableWidth > 0, minimum > 0 else { return max(minimum, 1) }
     let columnCount = max(1, Int(((availableWidth + spacing) / (minimum + spacing)).rounded(.down)))

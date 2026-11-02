@@ -1,7 +1,6 @@
 import Foundation
 import SwiftData
 
-/// Media removed for good, with the thumbnails that leave the memory cache with it.
 struct PermanentDeletion: Sendable, Equatable {
     static let nothing = PermanentDeletion(deletedCount: 0, thumbnailIdentifiers: [])
 

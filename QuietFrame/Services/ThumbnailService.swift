@@ -3,12 +3,10 @@ import ImageIO
 import Observation
 import UIKit
 
-/// Decrypts thumbnails and decodes them off the main thread at the pixel size they are drawn at. Decoded images
-/// live only in a memory cache, which is emptied when the vault locks.
+/// Decodes off the main thread; decoded images live only in a memory cache, which is emptied when the vault locks.
 @MainActor
 @Observable
 final class ThumbnailService {
-    /// Import stores thumbnails at this size; asking for it decodes them at full resolution.
     nonisolated static let storedPixelSize = 720
     private nonisolated static let pixelSizeStep = 64
     private nonisolated static let maximumEncryptedByteCount = 16 * 1_048_576
@@ -55,15 +53,12 @@ final class ThumbnailService {
         ProcessInfo.processInfo.physicalMemory >= 4 * 1_073_741_824 ? 96 * 1_048_576 : 48 * 1_048_576
     }
 
-    /// The decode size for an image drawn `points` wide at `scale`, rounded up to a step so nearby sizes share
-    /// cache entries, and never above the stored size.
     nonisolated static func pixelSize(forPoints points: CGFloat, scale: CGFloat) -> Int {
         guard points.isFinite, scale.isFinite, points > 0, scale > 0 else { return storedPixelSize }
         return steppedPixelSize(Int((points * scale).rounded(.up)))
     }
 
-    /// The decode size that lets media of these proportions fill a square `side` points wide: the short side has to
-    /// cover the square, so the long side grows with the aspect ratio.
+    /// The short side has to cover the square, so the long side grows with the aspect ratio.
     nonisolated static func pixelSize(fillingSquareOf side: CGFloat, scale: CGFloat, mediaPixelSize: CGSize) -> Int {
         let long = max(mediaPixelSize.width, mediaPixelSize.height)
         let short = min(mediaPixelSize.width, mediaPixelSize.height)
@@ -94,13 +89,11 @@ final class ThumbnailService {
         }
     }
 
-    /// A decoded image at least this size, if one is cached.
     func cachedImage(for media: VaultMedia, pixelSize: Int) -> UIImage? {
         guard let identifier = media.thumbnailIdentifier else { return nil }
         return cachedImage(identifier: identifier, atLeast: Self.steppedPixelSize(pixelSize))
     }
 
-    /// The sharpest decoded image of this thumbnail, at any size.
     func cachedImage(for media: VaultMedia) -> UIImage? {
         guard let identifier = media.thumbnailIdentifier, let sizes = cachedPixelSizes[identifier] else { return nil }
         for size in sizes.sorted(by: >) {
@@ -111,8 +104,6 @@ final class ThumbnailService {
         return nil
     }
 
-    /// Starts decoding thumbnails that are about to scroll into view, at low priority. Earlier prefetches that are
-    /// no longer wanted and that nothing is waiting for are cancelled.
     func prefetch(_ media: [VaultMedia], pixelSize: (VaultMedia) -> Int) {
         var wanted = Set<CacheKey>()
         for item in media {
@@ -129,7 +120,6 @@ final class ThumbnailService {
         }
     }
 
-    /// Drops every size of these thumbnails, for media whose encrypted files were deleted.
     func removeImages(forThumbnailIdentifiers identifiers: some Sequence<String>) {
         let removed = Set(identifiers)
         guard !removed.isEmpty else { return }
@@ -153,8 +143,6 @@ final class ThumbnailService {
         cache.removeAllObjects()
     }
 
-    /// The smallest cached size that is at least `pixelSize`; a larger image draws just as well. Sizes the cache has
-    /// evicted on its own are dropped from the index on the way.
     private func cachedImage(identifier: String, atLeast pixelSize: Int) -> UIImage? {
         guard let sizes = cachedPixelSizes[identifier] else { return nil }
         var match: UIImage?
@@ -204,7 +192,6 @@ final class ThumbnailService {
         pruneSizeIndexIfNeeded()
     }
 
-    /// A load stops once every request waiting on it has been cancelled, as when its tiles scroll away.
     private func waiterCancelled(on load: Load, key: CacheKey) {
         load.cancelledWaiterCount += 1
         guard load.cancelledWaiterCount >= load.waiterCount, loads[key]?.id == load.id else { return }
@@ -242,8 +229,7 @@ final class ThumbnailService {
         }
     }
 
-    /// Decodes straight to a bitmap no larger than `maximumPixelSize`, so nothing is left to decode when the image
-    /// is first drawn.
+    /// Decodes straight to a bitmap, so nothing is left to decode when the image is first drawn.
     nonisolated static func downsampledImage(from data: Data, maximumPixelSize: Int) -> UIImage? {
         let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
         guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) else { return nil }

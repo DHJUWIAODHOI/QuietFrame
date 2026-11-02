@@ -1,16 +1,14 @@
 import CryptoKit
 import Foundation
 
-/// Random-access reads of one encrypted file, so media can play without a plaintext copy on disk. Every chunk is
-/// authenticated as it is read, and reads stop working as soon as the vault locks.
+/// Random-access reads, so media can play without a plaintext copy on disk; reads fail once the vault locks.
 actor EncryptedFileReader {
     private struct DecryptedChunk {
         let index: UInt32
         let plaintext: Data
     }
 
-    /// Playback and the frame strip read the same video at different offsets, so a few recent chunks are kept rather
-    /// than one; a failed session check or closing drops them all.
+    /// Playback and the frame strip read the same video at different offsets, so a few recent chunks are kept.
     private static let keptChunkLimit = 4
 
     nonisolated let plaintextByteCount: Int64
@@ -49,7 +47,6 @@ actor EncryptedFileReader {
         try? handle.close()
     }
 
-    /// Up to `length` plaintext bytes starting at `offset`; fewer only at the end of the file.
     func read(offset: Int64, length: Int) async throws -> Data {
         guard offset >= 0, length >= 0 else { throw VaultError.invalidInput("The read range is invalid.") }
         let end = min(offset + Int64(length), plaintextByteCount)

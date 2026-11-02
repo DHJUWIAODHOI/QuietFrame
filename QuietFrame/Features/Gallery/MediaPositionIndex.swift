@@ -1,7 +1,6 @@
 import Foundation
 
-/// Positions of media in a list of IDs. The map is rebuilt only when the list changes, so callers that look up
-/// positions on every frame never scan the whole list, not even for an ID that is missing from it.
+/// Positions in a list of IDs, rebuilt only when the list changes, for callers that look them up on every frame.
 @MainActor
 final class MediaPositionIndex {
     private var indexedIDs: [UUID] = []

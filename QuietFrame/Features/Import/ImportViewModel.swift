@@ -14,7 +14,6 @@ struct ImportPreviewCandidate: Identifiable {
 final class ImportViewModel {
     private(set) var candidates: [ImportPreviewCandidate] = []
     private(set) var isPreparing = false
-    /// Items of the current selection that have finished preparing, out of `preparationTotal`.
     private(set) var preparedCount = 0
     private(set) var preparationTotal = 0
     private(set) var isImporting = false
@@ -24,7 +23,6 @@ final class ImportViewModel {
     private(set) var albumAssignments = ImportAlbumAssignments()
     var userMessage: String?
     let previewImages: ImportPreviewImages
-    /// Set by the review screen once it knows where its tiles fall, so the first screen of previews is ready with it.
     @ObservationIgnored var previewLayout: ImportPreviewLayout?
 
     private let metadataReader: any MediaMetadataReading
@@ -37,7 +35,7 @@ final class ImportViewModel {
     private var preparationFailureCount = 0
     private var preparationThumbnailFailureCount = 0
 
-    /// Items prepared at once: enough to overlap copying, reading and preview work without holding many decodes.
+    /// Enough to overlap copying, reading and preview work without holding many decodes.
     private static let preparationConcurrency = 3
 
     private enum PreparationOutcome: Sendable {
@@ -180,8 +178,6 @@ final class ImportViewModel {
         }
     }
 
-    /// Copies, reads and makes the thumbnail for one picked item off the main actor. Its incoming copy is removed when
-    /// it fails.
     private nonisolated static func prepare(
         _ selection: PhotoLibrarySelection,
         metadataReader: any MediaMetadataReading,
@@ -223,8 +219,7 @@ final class ImportViewModel {
         }
     }
 
-    /// One identifier, or nil when deletion will not be offered, per selection and in order. PhotoKit is consulted
-    /// only when the picker left a check to it; a short answer can only withhold deletion.
+    /// One identifier or nil per selection, in order; a short answer from PhotoKit can only withhold deletion.
     private nonisolated static func resolveSourceIdentifiers(
         for checks: [PhotoLibraryDeletionCheck],
         photoLibrary: any PhotoLibraryServing
@@ -317,8 +312,7 @@ final class ImportViewModel {
         importTask?.cancel()
     }
 
-    /// Encryption hands each progress value over without waiting for the main thread. The last value is shown before
-    /// the summary.
+    /// The last progress value is shown before the summary.
     private func runImport(_ sources: [ImportSource], albumID: UUID?) async throws -> ImportSummary {
         let progressRelay = LatestValueRelay<ImportProgress> { [weak self] value in
             guard let self, value != self.progress else { return }

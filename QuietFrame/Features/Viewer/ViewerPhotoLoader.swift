@@ -6,13 +6,11 @@ import UIKit
 private let maximumEncryptedPhotoByteCount = 512 * 1_024 * 1_024
 
 struct ViewerPhotoRequest: Sendable, Equatable {
-    /// The decode size for a zoomed photo, and for any photo whose display size is unknown.
     static let zoomPixelSize = 4_096
 
     let mediaID: UUID
     let storageIdentifier: String
     let location: EncryptedAssetLocation
-    /// The longest side to decode to.
     var pixelSize = ViewerPhotoRequest.zoomPixelSize
 }
 
@@ -28,8 +26,7 @@ extension ViewerPhotoRequest {
     }
 }
 
-/// The longest side a photo needs to fill a viewer at zoom scale 1, in either device orientation and whichever way
-/// its EXIF orientation turns it, so rotating never needs a new decode. Unknown sizes decode at the zoom size.
+/// The longest side that fills the viewer at zoom 1 in any device or EXIF orientation, so rotating never re-decodes.
 func viewerFitPixelSize(photoPixelSize: CGSize, viewerPixelSize: CGSize) -> Int {
     let photoLong = max(photoPixelSize.width, photoPixelSize.height)
     let photoShort = min(photoPixelSize.width, photoPixelSize.height)
@@ -43,8 +40,6 @@ func viewerFitPixelSize(photoPixelSize: CGSize, viewerPixelSize: CGSize) -> Int 
     return min(max(pixels, 1), ViewerPhotoRequest.zoomPixelSize)
 }
 
-/// The longest side to decode a photo to. A zoomed photo decodes again at the zoom size, unless its fitted size
-/// already shows every pixel it has.
 func viewerPhotoPixelSize(photoPixelSize: CGSize, viewerPixelSize: CGSize, isZoomed: Bool) -> Int {
     let fitted = viewerFitPixelSize(photoPixelSize: photoPixelSize, viewerPixelSize: viewerPixelSize)
     guard isZoomed, CGFloat(fitted) < max(photoPixelSize.width, photoPixelSize.height) else { return fitted }
@@ -90,10 +85,7 @@ final class ViewerPhotoLoader {
         failures[mediaID]
     }
 
-    /// `newRequests` is ordered by urgency. The first request is the selected page unless `firstIsSelected` is
-    /// false, as when the selected page is a video. A photo already decoded at least as large as its request is
-    /// kept; a larger request decodes it again and swaps the sharper copy in. A zoomed copy of a photo that is no
-    /// longer selected keeps showing until a display-size copy replaces it.
+    /// `newRequests` is ordered by urgency; the first request is the selected page unless `firstIsSelected` is false.
     func prepare(_ newRequests: [ViewerPhotoRequest], firstIsSelected: Bool = true) {
         requests = newRequests
         selectedMediaID = firstIsSelected ? newRequests.first?.mediaID : nil
@@ -171,8 +163,7 @@ final class ViewerPhotoLoader {
             let loadedPixelSize = loadedPixelSizes[mediaID, default: 0]
             switch result {
             case .loaded(let image):
-                // A sharper copy replaces the shown one only while it is still wanted, and a display-size copy
-                // replaces a zoomed copy the page no longer needs.
+                // Swap in a sharper copy only while still wanted, or a display-size copy for an unneeded zoomed one.
                 if images[mediaID] == nil
                     || (request.pixelSize > loadedPixelSize && wanted.pixelSize > loadedPixelSize)
                     || (request.pixelSize == wanted.pixelSize && keepsOversizedCopy(wanted)) {
@@ -183,7 +174,6 @@ final class ViewerPhotoLoader {
                 if images[mediaID] == nil {
                     failures[mediaID] = message
                 } else if request.pixelSize < loadedPixelSize {
-                    // The zoomed copy keeps showing; a failed smaller copy is not retried.
                     failedShrinks.insert(mediaID)
                 } else {
                     // The photo still shows at its current size; a failed sharper copy is not retried.

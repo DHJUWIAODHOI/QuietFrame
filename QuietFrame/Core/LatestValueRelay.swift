@@ -1,7 +1,6 @@
 import Foundation
 
-/// Hands values from background work to the main actor without making the sender wait. While the main actor is busy,
-/// only the newest value waits to be applied, so a slow screen never slows the work that reports to it.
+/// Hands values to the main actor without waiting for it, so a slow screen never slows the work that reports to it.
 final class LatestValueRelay<Value: Sendable>: Sendable {
     private let continuation: AsyncStream<Value>.Continuation
     private let applying: Task<Void, Never>
@@ -25,7 +24,6 @@ final class LatestValueRelay<Value: Sendable>: Sendable {
         continuation.yield(value)
     }
 
-    /// Applies the last value sent, then stops.
     func finish() async {
         continuation.finish()
         await applying.value

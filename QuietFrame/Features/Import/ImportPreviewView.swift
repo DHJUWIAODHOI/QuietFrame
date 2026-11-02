@@ -22,7 +22,6 @@ struct ImportPreviewView: View {
         let albumID: UUID?
     }
 
-    /// How many tiles behind and ahead of an appearing tile get their previews decoded early.
     private static let previewPrefetchBehind = 6
     private static let previewPrefetchAhead = 18
 
@@ -41,7 +40,6 @@ struct ImportPreviewView: View {
         )]
     }
 
-    /// Where the grid's tiles fall in the sheet as measured, so previews can be decoded before the tiles appear.
     private var previewLayout: ImportPreviewLayout? {
         let spacing = QuietFrameTheme.gridSpacing
         let gridWidth = min(QuietFrameTheme.readableWidth, contentSize.width - QuietFrameTheme.pagePadding * 2)

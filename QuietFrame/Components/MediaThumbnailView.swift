@@ -22,7 +22,6 @@ struct MediaThumbnailView: View {
         let cacheGeneration: UInt64
     }
 
-    /// Large enough for the image to fill the tile, whose longer side is its height when it is taller than wide.
     private var pixelSize: Int? {
         guard let tileWidth else { return nil }
         let longestTileSide = tileWidth * max(1, 1 / max(thumbnailAspectRatio, 0.01))

@@ -8,8 +8,7 @@ protocol ThumbnailGenerating: Sendable {
 }
 
 struct ThumbnailGenerator: ThumbnailGenerating {
-    /// ImageIO blocks its thread while it decodes, so photo thumbnails are made here and never hold one of Swift's
-    /// cooperative threads.
+    /// ImageIO blocks its thread while decoding, so photo thumbnails never hold one of Swift's cooperative threads.
     private static let photoQueue = DispatchQueue(
         label: "com.quietframe.vault.thumbnail-generation",
         qos: .userInitiated,

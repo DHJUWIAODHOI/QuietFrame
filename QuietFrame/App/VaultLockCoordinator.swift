@@ -164,8 +164,7 @@ final class VaultLockCoordinator {
         }
     }
 
-    /// Opens the vault straight away and runs the storage check once the unlock transition has played, under the
-    /// operation gate as before. A failed check leaves the vault open and runs again at the next unlock.
+    /// The storage check waits for the unlock transition; a failure leaves the vault open and the next unlock retries.
     private func openVault() {
         state = .unlocked
         guard let postUnlockMaintenance else { return }
@@ -185,7 +184,6 @@ final class VaultLockCoordinator {
         try? await postUnlockMaintenance?()
     }
 
-    /// Waits for the storage check scheduled by the last unlock, for tests.
     func waitForMaintenance() async {
         await maintenanceTask?.value
     }

@@ -37,7 +37,6 @@ func filmstripTileIsTappable(distance: Int, stripWidth: CGFloat) -> Bool {
 struct ViewerFilmstrip: View {
     let items: [VaultMedia]
     let selectedMediaID: UUID
-    /// The position of the selected item, looked up once by the viewer.
     let selectedIndex: Int?
     let thumbnailService: ThumbnailService
     let onSelect: (UUID) -> Void

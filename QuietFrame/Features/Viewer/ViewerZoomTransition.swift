@@ -2,8 +2,7 @@ import Observation
 import SwiftUI
 import UIKit
 
-/// The grid tile the open viewer stands in for, hidden while the viewer covers it. Only tiles read it, so turning a
-/// page re-renders the tiles on screen instead of the whole grid, its screen and the viewer.
+/// The tile hidden behind the open viewer. Only tiles read it, so turning a page re-renders just the tiles on screen.
 @MainActor
 @Observable
 final class MediaTileVisibility {
@@ -16,7 +15,6 @@ final class MediaTileVisibility {
 @MainActor
 final class MediaTileFrames {
     private var frames: [UUID: CGRect] = [:]
-    /// Where the grid's coordinate space starts in the window; it moves as the grid scrolls.
     var contentOrigin: CGPoint = .zero
     /// The window rect where the grid's tiles are visible, outside the navigation, filter and tab bars.
     var viewport: CGRect?

@@ -23,9 +23,7 @@ protocol VaultRepositoryProtocol: AnyObject {
     func setFavorite(mediaID: UUID, isFavorite: Bool) throws
 }
 
-/// Every input of a gallery fetch except the clock: the query, the library through its change counter, and the
-/// locale settings that searching and sorting use. While it stays equal, a fetch returns the same items in the
-/// same order.
+/// Every non-clock input of a gallery fetch: while it stays equal, a fetch returns the same items in the same order.
 struct GalleryFetchSignature: Equatable {
     let query: GalleryQuery
     let libraryGeneration: Int
@@ -37,16 +35,13 @@ struct GalleryFetchSignature: Equatable {
 
 @MainActor
 final class VaultRepository: VaultRepositoryProtocol {
-    /// The IDs a search matched, in sort order, so its later pages and refreshes skip the full scan.
     private struct SearchSnapshot {
         let query: GalleryQuery
         let fingerprint: SearchFingerprint
         let mediaIDs: [UUID]
     }
 
-    /// Changes whenever a search's results could: every edit to an item or album stamps its `modifiedAt`, items
-    /// joining or leaving the scope change its count, and dates match in the current locale, time zone, calendar
-    /// and date format.
+    /// Changes whenever a search's results could, given that every edit to an item or album stamps its `modifiedAt`.
     private struct SearchFingerprint: Equatable {
         let scopeCount: Int
         let latestScopeChange: Date?
@@ -233,7 +228,6 @@ final class VaultRepository: VaultRepositoryProtocol {
         )
     }
 
-    /// Forgets the last search's text and matches.
     func clearSearchSnapshot() {
         searchSnapshot = nil
     }
@@ -342,7 +336,6 @@ final class VaultRepository: VaultRepositoryProtocol {
         try saveChanges()
     }
 
-    /// Favorites every item in one save: all of them change, or none do.
     func setFavorite(mediaIDs: Set<UUID>, isFavorite: Bool) throws {
         guard !mediaIDs.isEmpty else { return }
         let media = try modelContext.fetchMedia(ids: mediaIDs)
@@ -546,8 +539,6 @@ final class VaultRepository: VaultRepositoryProtocol {
     }
 }
 
-/// Matches media against a search exactly as checking every field of every item would, but within one scan it
-/// formats and compares each calendar day once and each album's name once.
 struct GallerySearchMatcher {
     /// Holds on to the album so its object identifier cannot be reused by another album during the scan.
     private struct AlbumMatch {
@@ -563,7 +554,6 @@ struct GallerySearchMatcher {
     private var dateMatchesByDay: [Date: Bool] = [:]
     private var albumMatches: [ObjectIdentifier: AlbumMatch] = [:]
 
-    /// `search` is trimmed. Dates match as `dateFormatter` writes them; the import year is read in `calendar`.
     init(search: String, dateFormatter: DateFormatter, calendar: Calendar) {
         self.search = search
         // Only an integer's own spelling can equal the `description` of a year.
@@ -589,8 +579,7 @@ struct GallerySearchMatcher {
         return calendar.component(.year, from: media.importedAt) == searchedYear
     }
 
-    /// Whether the date as written contains the search. A date without a time reads the same all day, in the
-    /// formatter's own calendar and time zone, so each day is formatted once.
+    /// Formats each day once: a date without a time reads the same all day in the formatter's calendar and time zone.
     mutating func dateMatches(_ date: Date) -> Bool {
         let day = dayCalendar.startOfDay(for: date)
         if let known = dateMatchesByDay[day] { return known }

@@ -38,8 +38,6 @@ struct AlbumsScreen: View {
         }
     }
 
-    /// The chosen cover while it is an active member, otherwise the first active member in the relationship's
-    /// unspecified order.
     static func cover(of album: VaultAlbum) -> VaultMedia? {
         if let coverMediaID = album.coverMediaID,
            let selected = album.media.first(where: { $0.id == coverMediaID && !$0.isTrashed }) {

@@ -89,7 +89,6 @@ final class StorageAnalysisService: StorageAnalyzing {
             }
         }
 
-        // Ties keep fetch order, as the stable sort over the models did.
         let activeIndices = files.indices.filter { !files[$0].isTrashed }
         let largestIndices = activeIndices.sorted { lhs, rhs in
             let lhsBytes = files[lhs].byteCount
@@ -120,7 +119,6 @@ final class StorageAnalysisService: StorageAnalyzing {
         )
     }
 
-    /// A failed listing measures that location's files one by one, as before.
     private func listedByteCounts(in location: EncryptedAssetLocation) async -> [String: Int64] {
         do {
             return try await storage.fileByteCounts(location: location)
@@ -129,7 +127,6 @@ final class StorageAnalysisService: StorageAnalyzing {
         }
     }
 
-    /// A file the listing did not report is measured on its own, so a missing file fails with the same error.
     private func byteCount(
         of identifier: String,
         in location: EncryptedAssetLocation,

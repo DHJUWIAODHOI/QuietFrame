@@ -1,8 +1,6 @@
 import Foundation
 
-/// Runs synchronous work that can block (ImageIO, PhotoKit) on a Dispatch queue instead of one of Swift's cooperative
-/// threads, which are only as many as the device has cores. Work that has not started when its task is cancelled is
-/// skipped and throws `CancellationError`.
+/// Runs blocking work (ImageIO, PhotoKit) on a Dispatch queue, off Swift's cooperative pool of one thread per core.
 enum BlockingWork {
     static func run<Value: Sendable>(
         on queue: DispatchQueue,

@@ -6,9 +6,6 @@ struct ImportPreviewLayout: Equatable, Sendable {
     let firstScreenCount: Int
 }
 
-/// Review previews decoded at the size their tiles fill, in a memory-only cache with a byte budget. Background decodes
-/// run ahead of the tiles; a tile that gets ahead of them decodes its own preview, so an item with a preview never
-/// shows a placeholder.
 @MainActor
 final class ImportPreviewImages {
     private final class Entry {
@@ -37,7 +34,6 @@ final class ImportPreviewImages {
         cache.totalCostLimit = byteLimit
     }
 
-    /// Enough pixels to fill a square tile `tileWidth` points wide; the stored size when the media's size is unknown.
     nonisolated static func pixelSize(tileWidth: CGFloat, scale: CGFloat, metadata: MediaMetadata) -> Int {
         guard metadata.pixelWidth > 0, metadata.pixelHeight > 0 else { return ThumbnailService.storedPixelSize }
         return ThumbnailService.pixelSize(
@@ -52,7 +48,7 @@ final class ImportPreviewImages {
         return entry.image
     }
 
-    /// The preview a tile draws now: a cached one that is large enough, or one decoded on the spot.
+    /// Decodes on the spot when background decoding falls behind, so a tile with a preview never shows a placeholder.
     func image(for candidate: ImportPreviewCandidate, pixelSize: Int) -> UIImage? {
         if let image = cachedImage(for: candidate.id, atLeast: pixelSize) { return image }
         guard let data = candidate.source.thumbnailJPEGData, !undecodableIDs.contains(candidate.id) else { return nil }
@@ -65,14 +61,12 @@ final class ImportPreviewImages {
         return image
     }
 
-    /// Decodes these previews off the main thread and returns once they are cached.
     func load(_ candidates: [ImportPreviewCandidate], tileWidth: CGFloat, scale: CGFloat) async {
         let requests = beginDecoding(candidates, tileWidth: tileWidth, scale: scale)
         let generation = generation
         await finishDecoding(requests, generation: generation)
     }
 
-    /// Starts decoding these previews off the main thread without waiting for them.
     func prefetch(_ candidates: [ImportPreviewCandidate], tileWidth: CGFloat, scale: CGFloat) {
         let requests = beginDecoding(candidates, tileWidth: tileWidth, scale: scale)
         guard !requests.isEmpty else { return }
@@ -88,7 +82,6 @@ final class ImportPreviewImages {
         undecodableIDs.remove(id)
     }
 
-    /// Drops every preview. Decodes already running are discarded when they finish.
     func removeAll() {
         generation &+= 1
         loadingSizes.removeAll()

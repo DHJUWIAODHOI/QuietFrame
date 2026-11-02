@@ -27,8 +27,7 @@ protocol FileEncrypting: Sendable {
     func openReader(at inputURL: URL) async throws -> EncryptedFileReader
 }
 
-/// Keeps only immutable state, so every operation is nonisolated and concurrent operations run in parallel instead of
-/// queueing on the actor.
+/// Keeps only immutable state, so every operation is nonisolated and runs in parallel instead of queueing.
 actor ChunkedEncryptionService: FileEncrypting {
     private struct Header {
         static let magic = Data([0x51, 0x46, 0x52, 0x41, 0x4d, 0x45, 0x30, 0x31]) // QFRAME01
@@ -74,7 +73,6 @@ actor ChunkedEncryptionService: FileEncrypting {
             )
         }
 
-        /// The exact size of a container with this header: the header, then each chunk's ciphertext and 16-byte tag.
         var containerByteCount: UInt64? {
             let chunkSize = UInt64(chunkByteCount)
             guard chunkSize > 0 else { return nil }
@@ -281,9 +279,7 @@ actor ChunkedEncryptionService: FileEncrypting {
         }
     }
 
-    /// Reserves the whole plaintext up front only when the file's real size matches its header and the size is within
-    /// `maximumByteCount`, and only once the first chunk has authenticated that header, so a tampered header cannot
-    /// cause a large allocation.
+    /// Reserves only after the first chunk authenticates the header, so tampering cannot force a large allocation.
     nonisolated func decryptData(at inputURL: URL, maximumByteCount: Int = 268_435_456) async throws -> Data {
         let keyAccess = try await session.keyAccess()
         var result = Data()
@@ -375,8 +371,7 @@ actor ChunkedEncryptionService: FileEncrypting {
         }
     }
 
-    /// Opens a container for random-access reads. Its size must match its header exactly, so a truncated or padded
-    /// file is rejected before anything is read; each chunk is authenticated as it is read.
+    /// The size must match the header exactly, so a truncated or padded file is rejected before anything is read.
     nonisolated func openReader(at inputURL: URL) async throws -> EncryptedFileReader {
         let keyAccess = try await session.keyAccess()
         let input = try FileHandle(forReadingFrom: inputURL)

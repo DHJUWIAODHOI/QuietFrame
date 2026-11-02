@@ -5,8 +5,7 @@ import Observation
 @Observable
 final class GalleryViewModel {
     private(set) var items: [VaultMedia] = []
-    /// The IDs of `items` in the same order, built once per change, so screens can hand them on and find positions
-    /// without reading every item's ID.
+    /// The IDs of `items`, built once per change so screens never have to read every item's ID.
     private(set) var itemIDs: [UUID] = []
     private(set) var isLoading = false
     private(set) var hasMore = true
@@ -61,8 +60,7 @@ final class GalleryViewModel {
 
     /// Re-fetches as many items as are already loaded, so the grid keeps its scroll depth
     /// while items that left the query drop out and the selection keeps the ones that remain.
-    /// While the fetch signature is unchanged the fetch would return the loaded items, so it is skipped,
-    /// and only what changed is written, so an unchanged grid is not invalidated.
+    /// Only what changed is written, so an unchanged grid is not invalidated.
     func refreshLoadedItems() async {
         guard hasLoaded else {
             await loadInitial()
@@ -183,7 +181,6 @@ final class GalleryViewModel {
         errorMessage = nil
     }
 
-    /// The position of a loaded item, without scanning the items on every call.
     func index(of id: UUID) -> Int? {
         positions.index(of: id, in: itemIDs)
     }

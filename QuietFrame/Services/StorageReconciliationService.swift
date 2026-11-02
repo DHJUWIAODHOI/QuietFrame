@@ -102,9 +102,8 @@ final class StorageReconciliationService {
         }
     }
 
-    /// Reads the references a page at a time, yielding the main actor between pages. Locking cancels the maintenance
-    /// task, and a cancelled read stops at the next page, before any file is touched. Offset pages partition the stored
-    /// rows only while the context has no unsaved changes, so with any the references come from one fetch, as before.
+    /// Locking cancels this read at the next page, before any file is touched. Offset pages partition the stored rows
+    /// only while the context has no unsaved changes, so with any the references come from one fetch.
     private func mediaReferences() async throws -> MediaReferences {
         var references = MediaReferences()
         var page = referencesDescriptor()

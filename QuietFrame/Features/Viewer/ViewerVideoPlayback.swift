@@ -30,13 +30,11 @@ func videoFrameCount(forStripWidth width: CGFloat) -> Int {
 
 private let keptFrameStripLimit = 3
 
-/// Scrubbing keeps one exact seek in flight. A newer position waits for it and replaces any older waiting one,
-/// so the player always ends on the last position asked for.
+/// Scrubbing keeps one exact seek in flight; only the latest position waits for it.
 struct VideoSeekChase: Equatable {
     private(set) var isSeeking = false
     private(set) var waitingTime: TimeInterval?
 
-    /// The position to send now, or nil when it has to wait for the seek in flight.
     mutating func request(_ time: TimeInterval) -> TimeInterval? {
         guard isSeeking else {
             isSeeking = true
@@ -46,7 +44,6 @@ struct VideoSeekChase: Equatable {
         return nil
     }
 
-    /// The waiting position to send next, once the seek in flight has finished or been replaced.
     mutating func seekDidFinish() -> TimeInterval? {
         guard let next = waitingTime else {
             isSeeking = false
@@ -56,7 +53,6 @@ struct VideoSeekChase: Equatable {
         return next
     }
 
-    /// The position asked for but not sent yet. The chase is over either way.
     mutating func finish() -> TimeInterval? {
         let waiting = waitingTime
         self = VideoSeekChase()
@@ -64,8 +60,7 @@ struct VideoSeekChase: Equatable {
     }
 }
 
-/// Puts frames into the scrubber strip from left to right, whatever order they arrive in. A failed request ends the
-/// strip at its slot, as the one-at-a-time loop did; frames before it still join when they arrive.
+/// Puts frames into the scrubber strip from left to right, whatever order they arrive in.
 struct FrameStripAssembly<Time: Equatable, Frame> {
     private let times: [Time]
     private var waitingSlots: [Int]
@@ -87,8 +82,6 @@ struct FrameStripAssembly<Time: Equatable, Frame> {
         publishedCount == times.count
     }
 
-    /// The frames that can join the strip now, in slot order. `frame` is nil when its request failed. A result whose
-    /// time matches no waiting slot takes the leftmost one.
     mutating func receive(_ frame: Frame?, requestedAt time: Time?) -> [Frame] {
         guard !waitingSlots.isEmpty else { return [] }
         var position = 0
@@ -114,8 +107,7 @@ struct FrameStripAssembly<Time: Equatable, Frame> {
 @MainActor
 @Observable
 final class ViewerVideoPlayback {
-    /// Sends one exact seek. The completion, when there is one, runs on the main actor once the seek has finished
-    /// or been replaced.
+    /// Sends one exact seek; the completion runs once the seek has finished or been replaced.
     typealias ExactSeek = @MainActor (AVPlayer, TimeInterval, (@MainActor @Sendable () -> Void)?) -> Void
 
     private struct FrameRequest: Equatable {
@@ -147,7 +139,6 @@ final class ViewerVideoPlayback {
     @ObservationIgnored private var frameRequest: FrameRequest?
     @ObservationIgnored private var frameTask: Task<Void, Never>?
     @ObservationIgnored private var frameGenerator: AVAssetImageGenerator?
-    /// Completed strips of the last few videos, least recently used first, so returning to one shows it at once.
     @ObservationIgnored private var keptFrameStrips: [KeptFrameStrip] = []
     @ObservationIgnored private var seekChase = VideoSeekChase()
     /// Changes whenever a chase ends, so completions of its seeks that arrive later are ignored.
@@ -157,9 +148,8 @@ final class ViewerVideoPlayback {
         self.exactSeek = exactSeek
     }
 
-    /// AVPlayer does not document which queue runs a seek's completion, so it hops to the main actor. AVFoundation
-    /// rejects a seek with a completion before the item is ready, and an exact seek to the very end may never
-    /// complete, so those go out without one and count as finished at once.
+    /// AVPlayer does not document which queue runs a seek's completion. AVFoundation rejects a completion before the
+    /// item is ready, and an exact seek to the very end may never complete, so those count as finished at once.
     static func systemExactSeek(
         _ player: AVPlayer,
         _ seconds: TimeInterval,
@@ -220,8 +210,7 @@ final class ViewerVideoPlayback {
         if !frames.isEmpty { frames = [] }
     }
 
-    /// Lets go of whatever is attached, for when the viewer goes away before its video page cleans up, and of the
-    /// kept frame strips.
+    /// Lets go of whatever is attached, for when the viewer goes away before its video page cleans up.
     func release() {
         if let mediaID {
             detach(mediaID: mediaID)
@@ -286,8 +275,7 @@ final class ViewerVideoPlayback {
         seek(player, to: min(max(currentTime + seconds, 0), duration))
     }
 
-    /// Decodes `count` small frames of the attached video in memory, all requested at once, unless the same strip
-    /// was completed earlier in this viewer. Nothing is written to disk.
+    /// Decodes `count` small frames of the attached video in memory. Nothing is written to disk.
     func requestFrames(count: Int) {
         guard let mediaID, let frameAsset, count > 0 else { return }
         let request = FrameRequest(mediaID: mediaID, count: count)
@@ -305,7 +293,6 @@ final class ViewerVideoPlayback {
         }
     }
 
-    /// The frames of a strip completed for these exact times, which becomes the most recently used one.
     private func keptFrames(mediaID: UUID, times: [TimeInterval]) -> [UIImage]? {
         guard !times.isEmpty,
               let index = keptFrameStrips.firstIndex(where: { $0.mediaID == mediaID && $0.times == times })
@@ -349,8 +336,7 @@ final class ViewerVideoPlayback {
         }
     }
 
-    /// The request stays recorded, so a strip that stopped at a failure is decoded again only after a new attach,
-    /// and only a complete strip is kept.
+    /// The request stays recorded, so a strip that stopped at a failure is decoded again only after a new attach.
     private func finishFrames(for request: FrameRequest, times: [TimeInterval], isComplete: Bool) {
         guard frameRequest == request else { return }
         frameGenerator?.cancelAllCGImageGeneration()
@@ -396,7 +382,6 @@ final class ViewerVideoPlayback {
         sendChasedSeek(player, to: next)
     }
 
-    /// Sends the last position if it is still waiting, as the last drag event did before the chase.
     private func finishChase() {
         let waiting = seekChase.finish()
         seekToken &+= 1

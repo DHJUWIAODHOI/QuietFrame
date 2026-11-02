@@ -4,7 +4,6 @@ import SwiftUI
 struct ViewerChrome: View {
     let media: VaultMedia?
     let items: [VaultMedia]
-    /// The position of `media` in `items`, looked up once by the viewer.
     let selectedIndex: Int?
     let thumbnailService: ThumbnailService
     let playback: ViewerVideoPlayback
