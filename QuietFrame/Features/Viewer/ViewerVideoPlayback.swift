@@ -313,6 +313,7 @@ final class ViewerVideoPlayback {
         let requestedTimes = times.map { CMTime(seconds: $0, preferredTimescale: 600) }
         frameGenerator = generator
         frameTask = Task { [weak self] in
+            guard !Task.isCancelled else { return }
             var assembly = FrameStripAssembly<CMTime, UIImage>(times: requestedTimes)
             for await result in generator.images(for: requestedTimes) {
                 guard !Task.isCancelled, let self, self.frameRequest == request else { return }
