@@ -73,6 +73,18 @@ actor ChunkedEncryptionService: FileEncrypting {
                 noncePrefix: Data(data[40..<48])
             )
         }
+
+        /// The exact size of a container with this header: the header, then each chunk's ciphertext and 16-byte tag.
+        var containerByteCount: UInt64? {
+            let chunkSize = UInt64(chunkByteCount)
+            guard chunkSize > 0 else { return nil }
+            let chunkCount = plaintextByteCount / chunkSize + (plaintextByteCount % chunkSize == 0 ? 0 : 1)
+            guard chunkCount <= UInt64(UInt32.max) else { return nil }
+            let (byteCount, overflow) = plaintextByteCount.addingReportingOverflow(
+                UInt64(Self.encodedByteCount) + chunkCount * 16
+            )
+            return overflow ? nil : byteCount
+        }
     }
 
     private let session: VaultSession
@@ -256,10 +268,11 @@ actor ChunkedEncryptionService: FileEncrypting {
             try await decrypt(
                 inputURL: inputURL,
                 keyAccess: keyAccess,
-                progress: progress
-            ) { plaintext in
-                try output.write(contentsOf: plaintext)
-            }
+                progress: progress,
+                consume: { plaintext in
+                    try output.write(contentsOf: plaintext)
+                }
+            )
             completed = true
         } catch is CancellationError {
             throw VaultError.importCancelled
@@ -268,15 +281,35 @@ actor ChunkedEncryptionService: FileEncrypting {
         }
     }
 
+    /// Reserves the whole plaintext up front only when the file's real size matches its header and the size is within
+    /// `maximumByteCount`, and only once the first chunk has authenticated that header, so a tampered header cannot
+    /// cause a large allocation.
     nonisolated func decryptData(at inputURL: URL, maximumByteCount: Int = 268_435_456) async throws -> Data {
         let keyAccess = try await session.keyAccess()
         var result = Data()
-        try await decrypt(inputURL: inputURL, keyAccess: keyAccess, progress: nil) { plaintext in
-            guard result.count <= maximumByteCount - plaintext.count else {
-                throw VaultError.insufficientStorage
+        var verifiedByteCount: Int?
+        try await decrypt(
+            inputURL: inputURL,
+            keyAccess: keyAccess,
+            progress: nil,
+            sizeMatchesHeader: { plaintextByteCount in
+                guard plaintextByteCount <= UInt64(max(maximumByteCount, 0)) else { return }
+                verifiedByteCount = Int(exactly: plaintextByteCount)
+            },
+            consume: { plaintext in
+                guard result.count <= maximumByteCount - plaintext.count else {
+                    throw VaultError.insufficientStorage
+                }
+                if result.isEmpty, let verifiedByteCount {
+                    if plaintext.count == verifiedByteCount {
+                        result = plaintext
+                        return
+                    }
+                    result.reserveCapacity(verifiedByteCount)
+                }
+                result.append(plaintext)
             }
-            result.append(plaintext)
-        }
+        )
         return result
     }
 
@@ -284,6 +317,7 @@ actor ChunkedEncryptionService: FileEncrypting {
         inputURL: URL,
         keyAccess: VaultSession.KeyAccess,
         progress: FileProgressHandler?,
+        sizeMatchesHeader: ((UInt64) -> Void)? = nil,
         consume: (Data) throws -> Void
     ) async throws {
         let input = try FileHandle(forReadingFrom: inputURL)
@@ -292,6 +326,12 @@ actor ChunkedEncryptionService: FileEncrypting {
         do {
             let encodedHeader = try input.readExactly(Header.encodedByteCount)
             let header = try Header.decode(encodedHeader)
+            if let sizeMatchesHeader, let fileByteCount = try? input.seekToEnd() {
+                try input.seek(toOffset: UInt64(Header.encodedByteCount))
+                if header.containerByteCount == fileByteCount {
+                    sizeMatchesHeader(header.plaintextByteCount)
+                }
+            }
             let fileKey = Self.deriveFileKey(masterKey: keyAccess.key, salt: header.salt)
             var processed: UInt64 = 0
             var chunkIndex: UInt32 = 0
@@ -343,14 +383,8 @@ actor ChunkedEncryptionService: FileEncrypting {
         do {
             let encodedHeader = try input.readExactly(Header.encodedByteCount)
             let header = try Header.decode(encodedHeader)
-            let chunkSize = UInt64(header.chunkByteCount)
-            let chunkCount = header.plaintextByteCount / chunkSize + (header.plaintextByteCount % chunkSize == 0 ? 0 : 1)
-            let (expectedBytes, overflow) = header.plaintextByteCount.addingReportingOverflow(
-                UInt64(Header.encodedByteCount) + chunkCount * 16
-            )
-            guard !overflow,
-                  chunkCount <= UInt64(UInt32.max),
-                  try input.seekToEnd() == expectedBytes,
+            guard let expectedByteCount = header.containerByteCount,
+                  try input.seekToEnd() == expectedByteCount,
                   let plaintextByteCount = Int64(exactly: header.plaintextByteCount) else {
                 throw VaultError.corruptedFile
             }
