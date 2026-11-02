@@ -86,6 +86,46 @@ final class EncryptedStreamingTests: XCTestCase {
         }
     }
 
+    func testRecentlyReadChunksStillStopOnCancellationLockAndClose() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.remove() }
+        let identifier = try await fixture.store(Benchmark.randomData(byteCount: chunkByteCount * 4, seed: 26))
+        let reader = try await fixture.storage.openEncryptedReader(identifier: identifier, location: .media)
+        let chunkOffsets = (0..<4).map { Int64($0 * chunkByteCount) }
+        for offset in chunkOffsets {
+            _ = try await reader.read(offset: offset, length: 10)
+        }
+
+        let cancelledRead = Task { try await reader.read(offset: 0, length: 10) }
+        cancelledRead.cancel()
+        do {
+            _ = try await cancelledRead.value
+            XCTFail("A cancelled read must not return plaintext")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+
+        await fixture.session.lock()
+        for offset in chunkOffsets {
+            do {
+                _ = try await reader.read(offset: offset, length: 10)
+                XCTFail("Reads must stop once the vault locks (offset \(offset))")
+            } catch {
+                XCTAssertEqual(error as? VaultError, .authenticationRequired)
+            }
+        }
+
+        await reader.close()
+        for offset in chunkOffsets {
+            do {
+                _ = try await reader.read(offset: offset, length: 10)
+                XCTFail("A closed reader must not return plaintext (offset \(offset))")
+            } catch {
+                XCTAssertEqual(error as? VaultError, .fileOperationFailed)
+            }
+        }
+    }
+
     func testOversizedHeaderSizeIsRejectedOnOpen() async throws {
         let fixture = try await makeFixture()
         defer { fixture.remove() }

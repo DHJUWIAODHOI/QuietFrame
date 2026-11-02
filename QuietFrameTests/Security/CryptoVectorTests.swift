@@ -113,4 +113,73 @@ final class CryptoVectorTests: XCTestCase {
         XCTAssertEqual(decoded, plaintext)
         XCTAssertEqual(offset, container.count)
     }
+
+    /// Encodes a container with nothing but the published layout, then reads it through every read path the app has.
+    func testReadPathsDecodeAContainerBuiltFromTheDocumentedLayout() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let plaintext = Data((0..<180_000).map { UInt8(truncatingIfNeeded: $0 &* 5 &+ 11) })
+        let chunkByteCount = 65_536
+        let noncePrefix = Data((0x10...0x17).map { UInt8($0) })
+        var header = Data("QFRAME01".utf8)
+        header.append(contentsOf: [1, 0, 0, 0])
+        header.appendBigEndian(UInt32(chunkByteCount))
+        header.appendBigEndian(UInt64(plaintext.count))
+        header.append(countingSalt)
+        header.append(noncePrefix)
+        let fileKey = HKDF<SHA256>.deriveKey(
+            inputKeyMaterial: SymmetricKey(data: masterKey),
+            salt: countingSalt,
+            info: Data("QuietFrame.file-key.v1".utf8),
+            outputByteCount: 32
+        )
+        var container = header
+        var offset = 0
+        var index: UInt32 = 0
+        while offset < plaintext.count {
+            let end = min(offset + chunkByteCount, plaintext.count)
+            var nonceData = noncePrefix
+            nonceData.appendBigEndian(index)
+            let nonce = try AES.GCM.Nonce(data: nonceData)
+            var additionalData = header
+            additionalData.appendBigEndian(index)
+            let sealed = try AES.GCM.seal(
+                plaintext[offset..<end],
+                using: fileKey,
+                nonce: nonce,
+                authenticating: additionalData
+            )
+            container.append(sealed.ciphertext)
+            container.append(sealed.tag)
+            offset = end
+            index += 1
+        }
+        XCTAssertEqual(container.count, 48 + 180_000 + 16 * 3)
+
+        let session = VaultSession()
+        try await session.unlock(with: masterKey)
+        let storage = try SecureFileStorageService(
+            encryption: ChunkedEncryptionService(session: session, chunkByteCount: chunkByteCount),
+            baseURL: directory,
+            temporaryBaseURL: directory.appendingPathComponent("Caches", isDirectory: true),
+            applyFileProtection: false
+        )
+        let identifier = UUID().uuidString.lowercased()
+        try container.write(to: directory
+            .appendingPathComponent("QuietFrameVault/media", isDirectory: true)
+            .appendingPathComponent("\(identifier).qfe"))
+
+        let decrypted = try await storage.decryptData(identifier: identifier, location: .media, maximumByteCount: 180_000)
+        let lease = try await storage.temporaryDecryptedFile(identifier: identifier, location: .media, preferredExtension: nil)
+        defer { lease.cleanup() }
+        let reader = try await storage.openEncryptedReader(identifier: identifier, location: .media)
+        let streamed = try await reader.read(offset: 0, length: plaintext.count)
+        await reader.close()
+
+        XCTAssertEqual(decrypted, plaintext)
+        XCTAssertEqual(try Data(contentsOf: lease.url), plaintext)
+        XCTAssertEqual(streamed, plaintext)
+    }
 }

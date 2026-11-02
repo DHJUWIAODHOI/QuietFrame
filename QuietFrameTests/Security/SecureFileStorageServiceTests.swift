@@ -87,4 +87,49 @@ final class SecureFileStorageServiceTests: XCTestCase {
             XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), [])
         }
     }
+
+    func testTemporaryDecryptedFileHoldsTheExactPlaintextAndIsExcludedFromBackup() async throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let cache = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: base)
+            try? FileManager.default.removeItem(at: cache)
+        }
+        let session = VaultSession()
+        try await session.unlock(with: Data(repeating: 0x37, count: 32))
+        let storage = try SecureFileStorageService(
+            encryption: ChunkedEncryptionService(session: session, chunkByteCount: 65_536),
+            baseURL: base,
+            temporaryBaseURL: cache,
+            applyFileProtection: false
+        )
+        let source = Data((0..<180_000).map { UInt8(truncatingIfNeeded: $0 &* 17 &+ 5) })
+        let stored = try await storage.store(plaintextData: source, location: .media)
+
+        let lease = try await storage.temporaryDecryptedFile(
+            identifier: stored.identifier,
+            location: .media,
+            preferredExtension: "JPG"
+        )
+        let leasedURL = lease.url
+        let name = leasedURL.deletingPathExtension().lastPathComponent
+        let backupValues = try URL(fileURLWithPath: leasedURL.path).resourceValues(forKeys: [.isExcludedFromBackupKey])
+
+        XCTAssertEqual(try Data(contentsOf: leasedURL), source)
+        XCTAssertEqual(backupValues.isExcludedFromBackup, true)
+        XCTAssertEqual(leasedURL.deletingLastPathComponent().path, cache.appendingPathComponent("QuietFrameTemporary").path)
+        XCTAssertEqual(leasedURL.pathExtension, "jpg")
+        XCTAssertNotNil(UUID(uuidString: name))
+        XCTAssertEqual(name, name.lowercased())
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: base.appendingPathComponent("QuietFrameVault/staging").path),
+            []
+        )
+        lease.cleanup()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: leasedURL.path))
+    }
 }
