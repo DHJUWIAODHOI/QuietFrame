@@ -136,13 +136,13 @@ final class ChunkedEncryptionServiceTests: XCTestCase {
         let service = ChunkedEncryptionService(session: session, chunkByteCount: 65_536)
         _ = try await service.encryptFile(at: sourceURL, to: encryptedURL, progress: nil)
 
-        let held = expectation(description: "The service actor is held")
+        let held = XCTestExpectation(description: "The service actor is held")
         let release = DispatchSemaphore(value: 0)
         defer { release.signal() }
         let holder = Task { await service.holdIsolation(entered: held, release: release) }
         await fulfillment(of: [held], timeout: 10)
 
-        let finished = expectation(description: "Every operation finished while the actor was held")
+        let finished = XCTestExpectation(description: "Every operation finished while the actor was held")
         finished.expectedFulfillmentCount = 5
         let encryptingFile = Task {
             _ = try await service.encryptFile(at: sourceURL, to: directory.appendingPathComponent("file.qfe"), progress: nil)

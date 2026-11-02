@@ -110,13 +110,13 @@ final class SecureFileStorageServiceTests: XCTestCase {
         let thumbnail = Data((0..<20_000).map { UInt8(truncatingIfNeeded: $0 &* 3) })
         let identifier = try await storage.store(plaintextData: thumbnail, location: .thumbnails).identifier
 
-        let held = expectation(description: "The storage actor is held")
+        let held = XCTestExpectation(description: "The storage actor is held")
         let release = DispatchSemaphore(value: 0)
         defer { release.signal() }
         let holder = Task { await storage.holdIsolation(entered: held, release: release) }
         await fulfillment(of: [held], timeout: 10)
 
-        let read = expectation(description: "The thumbnail was read while the storage actor was held")
+        let read = XCTestExpectation(description: "The thumbnail was read while the storage actor was held")
         let reading = Task { () -> Data in
             let data = try await storage.decryptData(identifier: identifier, location: .thumbnails, maximumByteCount: 100_000)
             read.fulfill()
