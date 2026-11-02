@@ -310,6 +310,20 @@ final class VaultRepository: VaultRepositoryProtocol {
         try saveChanges()
     }
 
+    /// Favorites every item in one save: all of them change, or none do.
+    func setFavorite(mediaIDs: Set<UUID>, isFavorite: Bool) throws {
+        guard !mediaIDs.isEmpty else { return }
+        let media = try modelContext.fetchMedia(ids: mediaIDs)
+        guard media.count == mediaIDs.count else { throw VaultError.persistenceFailure }
+        let changedAt = Date()
+        for item in media {
+            item.isFavorite = isFavorite
+            item.modifiedAt = changedAt
+            item.album?.modifiedAt = changedAt
+        }
+        try saveChanges()
+    }
+
     private func findAlbum(id: UUID) throws -> VaultAlbum? {
         var descriptor = FetchDescriptor<VaultAlbum>(
             predicate: #Predicate { album in

@@ -147,6 +147,14 @@ final class GalleryViewModel {
         }
     }
 
+    func setFavorite(mediaIDs: Set<UUID>, isFavorite: Bool) {
+        do {
+            try repository.setFavorite(mediaIDs: mediaIDs, isFavorite: isFavorite)
+        } catch {
+            errorMessage = VaultError.persistenceFailure.localizedDescription
+        }
+    }
+
     func clearError() {
         errorMessage = nil
     }

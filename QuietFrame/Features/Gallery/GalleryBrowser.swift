@@ -339,9 +339,7 @@ private struct GalleryBrowserContent: View {
     @ViewBuilder
     private var selectionActions: some View {
         Button {
-            selectedItems.forEach {
-                galleryViewModel.setFavorite(mediaID: $0.id, isFavorite: true)
-            }
+            galleryViewModel.setFavorite(mediaIDs: Set(selectedItems.map(\.id)), isFavorite: true)
         } label: {
             GallerySelectionActionLabel(title: "Favorite", systemImage: "heart")
         }

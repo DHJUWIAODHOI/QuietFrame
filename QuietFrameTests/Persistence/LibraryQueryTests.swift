@@ -35,6 +35,32 @@ final class LibraryQueryTests: XCTestCase {
         XCTAssertThrowsError(try repository.exportItems(ids: [media[1].id, UUID()]))
     }
 
+    func testBulkFavoriteChangesEveryItemInOneSave() throws {
+        let container = try makeContainer()
+        let album = VaultAlbum(name: "Trip", createdAt: Date(timeIntervalSince1970: 1_000))
+        container.mainContext.insert(album)
+        let media = insertMedia(count: 4, in: container)
+        media[0].album = album
+        try container.mainContext.save()
+        let repository = VaultRepository(modelContext: container.mainContext)
+
+        try repository.setFavorite(mediaIDs: [media[0].id, media[2].id], isFavorite: true)
+
+        XCTAssertEqual(media.map(\.isFavorite), [true, false, true, false])
+        XCTAssertGreaterThan(album.modifiedAt, Date(timeIntervalSince1970: 1_000))
+        XCTAssertFalse(container.mainContext.hasChanges)
+    }
+
+    func testBulkFavoriteChangesNothingWhenAnItemIsMissing() throws {
+        let container = try makeContainer()
+        let media = insertMedia(count: 3, in: container)
+        let repository = VaultRepository(modelContext: container.mainContext)
+
+        XCTAssertThrowsError(try repository.setFavorite(mediaIDs: [media[0].id, UUID()], isFavorite: true))
+
+        XCTAssertEqual(media.map(\.isFavorite), [false, false, false])
+    }
+
     func testSearchPagesMatchOneFullScan() throws {
         let container = try makeContainer()
         _ = insertMedia(count: 40, in: container)
