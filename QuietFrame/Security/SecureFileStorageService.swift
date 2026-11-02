@@ -17,9 +17,7 @@ struct EncryptedFileReference: Hashable, Sendable {
 }
 
 struct EncryptedFileMoveResult: Sendable {
-    /// The files moved before the first failure, in order.
     let moved: [String]
-    /// The error the failing move threw, unchanged.
     let failure: (any Error)?
 }
 
@@ -37,7 +35,7 @@ protocol SecureFileStoring: Sendable {
         preferredExtension: String?
     ) async throws -> SecureTemporaryFileLease
     func move(identifier: String, from: EncryptedAssetLocation, to: EncryptedAssetLocation) async throws
-    /// Moves the files in order and stops at the first failure, leaving the files already moved where they are.
+    /// Moves the files in order and stops at the first failure; the result has the files moved and the error, unchanged.
     func move(
         identifiers: [String],
         from: EncryptedAssetLocation,
@@ -49,7 +47,7 @@ protocol SecureFileStoring: Sendable {
     func cleanupTemporaryFiles() async
     func removeAllEncryptedData() async throws
     func fileByteCount(identifier: String, location: EncryptedAssetLocation) async throws -> Int64
-    /// Sizes from one directory listing, keyed by identifier. Files it leaves out are measured with `fileByteCount`.
+    /// Sizes of the regular vault files in one listing. Callers measure anything it leaves out with `fileByteCount`.
     func fileByteCounts(location: EncryptedAssetLocation) async throws -> [String: Int64]
     func allIdentifiers(location: EncryptedAssetLocation) async throws -> Set<String>
     func openEncryptedReader(identifier: String, location: EncryptedAssetLocation) async throws -> EncryptedFileReader
@@ -344,8 +342,6 @@ actor SecureFileStorageService: SecureFileStoring {
         return (attributes[.size] as? NSNumber)?.int64Value ?? 0
     }
 
-    /// Only regular files with a vault file's name are listed; anything else, such as a directory with such a name,
-    /// is left to `fileByteCount`, so callers get the same size or the same error as before.
     func fileByteCounts(location: EncryptedAssetLocation) throws -> [String: Int64] {
         let directory = rootURL.appendingPathComponent(location.rawValue, isDirectory: true)
         let keys: Set<URLResourceKey> = [.isRegularFileKey, .fileSizeKey]

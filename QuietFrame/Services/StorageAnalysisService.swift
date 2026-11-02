@@ -142,7 +142,6 @@ final class StorageAnalysisService: StorageAnalyzing {
     }
 }
 
-/// The columns the analysis reads, copied out of the models once.
 private struct MediaFiles {
     let storageIdentifier: String
     let thumbnailIdentifier: String?
