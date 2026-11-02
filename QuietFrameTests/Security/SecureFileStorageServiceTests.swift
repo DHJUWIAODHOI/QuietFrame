@@ -88,6 +88,48 @@ final class SecureFileStorageServiceTests: XCTestCase {
         }
     }
 
+    func testReadingDataRunsWhileTheStorageActorIsHeld() async throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let cache = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: base)
+            try? FileManager.default.removeItem(at: cache)
+        }
+        let session = VaultSession()
+        try await session.unlock(with: Data(repeating: 0x38, count: 32))
+        let storage = try SecureFileStorageService(
+            encryption: ChunkedEncryptionService(session: session, chunkByteCount: 65_536),
+            baseURL: base,
+            temporaryBaseURL: cache,
+            applyFileProtection: false
+        )
+        let thumbnail = Data((0..<20_000).map { UInt8(truncatingIfNeeded: $0 &* 3) })
+        let identifier = try await storage.store(plaintextData: thumbnail, location: .thumbnails).identifier
+
+        let held = expectation(description: "The storage actor is held")
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let holder = Task { await storage.holdIsolation(entered: held, release: release) }
+        await fulfillment(of: [held], timeout: 10)
+
+        let read = expectation(description: "The thumbnail was read while the storage actor was held")
+        let reading = Task { () -> Data in
+            let data = try await storage.decryptData(identifier: identifier, location: .thumbnails, maximumByteCount: 100_000)
+            read.fulfill()
+            return data
+        }
+        await fulfillment(of: [read], timeout: 10)
+        release.signal()
+        await holder.value
+
+        let decrypted = try await reading.value
+        XCTAssertEqual(decrypted, thumbnail)
+    }
+
     func testTemporaryDecryptedFileHoldsTheExactPlaintextAndIsExcludedFromBackup() async throws {
         let base = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -131,5 +173,13 @@ final class SecureFileStorageServiceTests: XCTestCase {
         )
         lease.cleanup()
         XCTAssertFalse(FileManager.default.fileExists(atPath: leasedURL.path))
+    }
+}
+
+private extension SecureFileStorageService {
+    /// Occupies the actor until `release` is signalled, as a long listing or cleanup would.
+    func holdIsolation(entered: XCTestExpectation, release: DispatchSemaphore) {
+        entered.fulfill()
+        _ = release.wait(timeout: .now() + 30)
     }
 }

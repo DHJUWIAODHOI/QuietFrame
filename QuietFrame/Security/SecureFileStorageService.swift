@@ -134,7 +134,8 @@ actor SecureFileStorageService: SecureFileStoring {
         }
     }
 
-    func decryptData(
+    /// Runs off the actor, so thumbnail and viewer reads never wait behind other storage work.
+    nonisolated func decryptData(
         identifier: String,
         location: EncryptedAssetLocation,
         maximumByteCount: Int = 268_435_456
@@ -258,7 +259,7 @@ actor SecureFileStorageService: SecureFileStoring {
         })
     }
 
-    private func encryptedURL(identifier: String, location: EncryptedAssetLocation) throws -> URL {
+    private nonisolated func encryptedURL(identifier: String, location: EncryptedAssetLocation) throws -> URL {
         guard UUID(uuidString: identifier) != nil else { throw VaultError.fileOperationFailed }
         return rootURL
             .appendingPathComponent(location.rawValue, isDirectory: true)

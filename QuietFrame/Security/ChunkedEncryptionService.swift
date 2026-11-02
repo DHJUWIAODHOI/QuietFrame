@@ -27,6 +27,8 @@ protocol FileEncrypting: Sendable {
     func openReader(at inputURL: URL) async throws -> EncryptedFileReader
 }
 
+/// Keeps only immutable state, so every operation is nonisolated and concurrent operations run in parallel instead of
+/// queueing on the actor.
 actor ChunkedEncryptionService: FileEncrypting {
     private struct Header {
         static let magic = Data([0x51, 0x46, 0x52, 0x41, 0x4d, 0x45, 0x30, 0x31]) // QFRAME01
@@ -87,7 +89,7 @@ actor ChunkedEncryptionService: FileEncrypting {
         self.chunkByteCount = chunkByteCount
     }
 
-    func encryptFile(
+    nonisolated func encryptFile(
         at inputURL: URL,
         to outputURL: URL,
         progress: FileProgressHandler? = nil
@@ -112,7 +114,7 @@ actor ChunkedEncryptionService: FileEncrypting {
     }
 
     /// Writes the same container as `encryptFile` from bytes held in memory, so they never reach disk unencrypted.
-    func encryptData(_ plaintext: Data, to outputURL: URL) async throws -> EncryptionResult {
+    nonisolated func encryptData(_ plaintext: Data, to outputURL: URL) async throws -> EncryptionResult {
         guard hasSupportedChunkByteCount else {
             throw VaultError.invalidInput("The encryption file parameters are invalid.")
         }
@@ -131,11 +133,11 @@ actor ChunkedEncryptionService: FileEncrypting {
         }
     }
 
-    private var hasSupportedChunkByteCount: Bool {
+    private nonisolated var hasSupportedChunkByteCount: Bool {
         chunkByteCount >= 64 * 1_024 && chunkByteCount <= 16 * 1_024 * 1_024
     }
 
-    private func encrypt(
+    private nonisolated func encrypt(
         plaintextByteCount: UInt64,
         keyAccess: VaultSession.KeyAccess,
         to outputURL: URL,
@@ -227,7 +229,7 @@ actor ChunkedEncryptionService: FileEncrypting {
     }
 
     /// Writes a temporary plaintext copy that is deleted after use, on lock and at launch, so it is not synced to disk.
-    func decryptFile(
+    nonisolated func decryptFile(
         at inputURL: URL,
         to outputURL: URL,
         progress: FileProgressHandler? = nil
@@ -266,7 +268,7 @@ actor ChunkedEncryptionService: FileEncrypting {
         }
     }
 
-    func decryptData(at inputURL: URL, maximumByteCount: Int = 268_435_456) async throws -> Data {
+    nonisolated func decryptData(at inputURL: URL, maximumByteCount: Int = 268_435_456) async throws -> Data {
         let keyAccess = try await session.keyAccess()
         var result = Data()
         try await decrypt(inputURL: inputURL, keyAccess: keyAccess, progress: nil) { plaintext in
@@ -278,7 +280,7 @@ actor ChunkedEncryptionService: FileEncrypting {
         return result
     }
 
-    private func decrypt(
+    private nonisolated func decrypt(
         inputURL: URL,
         keyAccess: VaultSession.KeyAccess,
         progress: FileProgressHandler?,
@@ -335,7 +337,7 @@ actor ChunkedEncryptionService: FileEncrypting {
 
     /// Opens a container for random-access reads. Its size must match its header exactly, so a truncated or padded
     /// file is rejected before anything is read; each chunk is authenticated as it is read.
-    func openReader(at inputURL: URL) async throws -> EncryptedFileReader {
+    nonisolated func openReader(at inputURL: URL) async throws -> EncryptedFileReader {
         let keyAccess = try await session.keyAccess()
         let input = try FileHandle(forReadingFrom: inputURL)
         do {
