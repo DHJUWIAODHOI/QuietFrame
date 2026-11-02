@@ -77,7 +77,6 @@ struct MediaViewer: View {
     @Environment(\.accessibilitySwitchControlEnabled) private var switchControlIsEnabled
     @Environment(\.displayScale) private var displayScale
     @AccessibilityFocusState private var infoButtonIsFocused: Bool
-    @Query(sort: \VaultAlbum.position) private var albums: [VaultAlbum]
     @State private var selectedMediaID: UUID
     @State private var photoLoader: ViewerPhotoLoader
     @State private var playback: ViewerVideoPlayback
@@ -222,7 +221,7 @@ struct MediaViewer: View {
             if !isActive { Task { liftDidStop() } }
         }
         .sheet(item: $movingMedia) { media in
-            AlbumDestinationPicker(albums: albums, currentAlbumID: media.album?.id) { albumID in
+            AlbumDestinationSheet(currentAlbumID: media.album?.id) { albumID in
                 move(media: media, to: albumID)
                 movingMedia = nil
             }

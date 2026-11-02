@@ -22,7 +22,6 @@ struct GalleryBrowser: View {
 private struct GalleryBrowserContent: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var settingsRecords: [AppSettings]
-    @Query(sort: \VaultAlbum.position) private var albums: [VaultAlbum]
 
     let dependencies: AppDependencies
     let title: String
@@ -124,10 +123,7 @@ private struct GalleryBrowserContent: View {
             }
         }
         .sheet(isPresented: $showsAlbumDestinations) {
-            AlbumDestinationPicker(
-                albums: albums,
-                currentAlbumID: initialQuery.albumID
-            ) { albumID in
+            AlbumDestinationSheet(currentAlbumID: initialQuery.albumID) { albumID in
                 moveSelection(to: albumID)
                 showsAlbumDestinations = false
             }
@@ -577,4 +573,16 @@ private struct GalleryFilterChipStyle: ButtonStyle {
 struct MediaViewerRequest: Identifiable {
     let mediaID: UUID
     var id: UUID { mediaID }
+}
+
+/// The Move sheet's album list. It queries the albums itself, so the screen that presents it does not observe them.
+struct AlbumDestinationSheet: View {
+    let currentAlbumID: UUID?
+    let choose: (UUID?) -> Void
+
+    @Query(sort: \VaultAlbum.position) private var albums: [VaultAlbum]
+
+    var body: some View {
+        AlbumDestinationPicker(albums: albums, currentAlbumID: currentAlbumID, choose: choose)
+    }
 }
