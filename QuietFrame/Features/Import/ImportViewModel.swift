@@ -171,11 +171,16 @@ final class ImportViewModel {
                 originalFilename: loadedFile.originalFilename
             )
             try Task.checkCancellation()
-            let thumbnailData = try? await thumbnailGenerator.jpegThumbnail(
-                for: loadedFile.temporaryURL,
-                mediaType: selection.mediaType,
-                maximumPixelSize: ThumbnailService.storedPixelSize
-            )
+            let thumbnailData: Data?
+            do {
+                thumbnailData = try await thumbnailGenerator.jpegThumbnail(
+                    for: loadedFile.temporaryURL,
+                    mediaType: selection.mediaType,
+                    maximumPixelSize: ThumbnailService.storedPixelSize
+                )
+            } catch {
+                thumbnailData = nil
+            }
             try Task.checkCancellation()
             let source = ImportSource(
                 temporaryURL: loadedFile.temporaryURL,
