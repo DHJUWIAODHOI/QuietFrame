@@ -27,8 +27,4 @@ final class VaultAlbum {
         self.coverMediaID = coverMediaID
         self.media = []
     }
-
-    var activeMediaCount: Int {
-        media.lazy.filter { !$0.isTrashed }.count
-    }
 }
