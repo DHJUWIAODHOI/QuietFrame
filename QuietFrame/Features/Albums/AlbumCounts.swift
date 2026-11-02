@@ -16,8 +16,7 @@ final class AlbumCounts {
         albumCounts[albumID] ?? 0
     }
 
-    /// Counts on every appearance, not only after a skipped change: Recently Added moves with the clock, and not
-    /// every edit (reconciliation, for one) moves the library change counter.
+    /// Counts on every appearance, not only after a skipped change, because Recently Added moves with the clock.
     func screenDidAppear(in context: ModelContext, albumIDs: [UUID], now: Date = Date()) {
         screenIsVisible = true
         refresh(in: context, albumIDs: albumIDs, now: now)
