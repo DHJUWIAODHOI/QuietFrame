@@ -18,7 +18,7 @@ final class ImportBenchmarks: XCTestCase {
         }
     }
 
-    /// Eight photos with their thumbnails, with progress delivered to the main actor as the review screen does.
+    /// Eight photos with their thumbnails, with progress handed to the main actor as the review screen does.
     func testImportingEightPhotos() throws {
         let vault = try awaitBenchmark { try await BenchmarkVault.make() }
         defer { vault.remove() }
@@ -26,9 +26,6 @@ final class ImportBenchmarks: XCTestCase {
         let photoURL = try vault.writeSource(photo, named: "photo.jpg")
         let thumbnail = try awaitBenchmark {
             try await ThumbnailGenerator().jpegThumbnail(for: photoURL, mediaType: .photo, maximumPixelSize: 720)
-        }
-        let progress: @Sendable (ImportProgress) async -> Void = { update in
-            await MainActor.run { _ = update.overallFraction }
         }
         var iteration = 0
 
@@ -67,13 +64,16 @@ final class ImportBenchmarks: XCTestCase {
 
             startMeasuring()
             runBenchmark {
+                let progress = LatestValueRelay<ImportProgress> { _ = $0.overallFraction }
                 let summary = try await importer.importMedia(
                     sources,
                     albumID: nil,
                     preflightFailureCount: 0,
-                    preflightThumbnailFailureCount: 0,
-                    progress: progress
-                )
+                    preflightThumbnailFailureCount: 0
+                ) { update in
+                    progress.send(update)
+                }
+                await progress.finish()
                 XCTAssertEqual(summary.importedCount, 8)
             }
             stopMeasuring()

@@ -58,7 +58,7 @@ final class ImportPreparationTests: XCTestCase {
 
         viewModel.startImport()
         await fulfillment(of: [importer.started], timeout: 30)
-        let reportedWhileMainWasBlocked = blockMainThread(until: importer.finishedReporting)
+        let reportedWhileMainWasBlocked = blockMainThread(whileReporting: importer)
 
         XCTAssertTrue(reportedWhileMainWasBlocked, "Encryption must not wait for the main thread to show its progress.")
         for _ in 0..<1_000 where viewModel.isImporting {
@@ -89,13 +89,15 @@ final class ImportPreparationTests: XCTestCase {
         for _ in 0..<1_000 where viewModel.isPreparing {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
-        XCTAssertEqual(viewModel.candidates.count, 1)
+        _ = try XCTUnwrap(viewModel.candidates.first, "The photo was not prepared.")
         return viewModel
     }
 
-    /// Holds the main thread, as a long render would, until `semaphore` is signalled or 20 seconds pass.
-    private func blockMainThread(until semaphore: DispatchSemaphore) -> Bool {
-        semaphore.wait(timeout: .now() + 20) == .success
+    /// Holds the main thread, as a long render would, until the importer has reported everything or 20 seconds pass.
+    /// The importer starts reporting only once the main thread is held.
+    private func blockMainThread(whileReporting importer: ProgressReportingImporter) -> Bool {
+        importer.mainThreadHeld.signal()
+        return importer.finishedReporting.wait(timeout: .now() + 20) == .success
     }
 }
 
@@ -163,10 +165,11 @@ private actor IdlePhotoLibrary: PhotoLibraryServing {
     func deleteOriginals(localIdentifiers: [String]) async throws {}
 }
 
-/// Reports a run of progress values from off the main thread, then succeeds. It signals when it starts and when it
-/// has reported everything, so a test can hold the main thread in between.
+/// Reports a run of progress values from off the main thread, then succeeds. It reports only while the test holds the
+/// main thread, so any report that waits for the main thread stalls until the test gives up.
 private final class ProgressReportingImporter: MediaImporting, @unchecked Sendable {
     let started = XCTestExpectation(description: "The import started")
+    let mainThreadHeld = DispatchSemaphore(value: 0)
     let finishedReporting = DispatchSemaphore(value: 0)
     private let updateCount: Int
 
@@ -183,6 +186,7 @@ private final class ProgressReportingImporter: MediaImporting, @unchecked Sendab
     ) async throws -> ImportSummary {
         sources.forEach { IncomingMediaFileStore.remove($0.temporaryURL) }
         started.fulfill()
+        waitUntilTheMainThreadIsHeld()
         for update in 1...updateCount {
             await progress?(ImportProgress(
                 completedItems: 0,
@@ -201,4 +205,8 @@ private final class ProgressReportingImporter: MediaImporting, @unchecked Sendab
     func cleanupAbandonedIncomingFiles() async {}
 
     func cancelAllOperations() async {}
+
+    private func waitUntilTheMainThreadIsHeld() {
+        _ = mainThreadHeld.wait(timeout: .now() + 30)
+    }
 }

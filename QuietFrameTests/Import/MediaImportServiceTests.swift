@@ -277,6 +277,37 @@ final class MediaImportServiceTests: XCTestCase {
         XCTAssertEqual(storedThumbnails, Set(thumbnails))
     }
 
+    func testImportedThumbnailsAreEncryptedFromMemory() async throws {
+        let environment = try await makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.root) }
+        let storage = StoreRecordingStorage(wrapping: environment.storage)
+        let importer = MediaImportService(storage: storage, repository: environment.repository)
+        let sources = try (0..<2).map { index in
+            try makeSource(
+                at: environment.cache.appendingPathComponent("photo-\(index).jpg"),
+                bytes: Data(repeating: UInt8(0x20 + index), count: 70_000),
+                mediaType: .photo,
+                filename: "photo-\(index).jpg",
+                thumbnailData: Data(repeating: UInt8(0x30 + index), count: 2_048)
+            )
+        }
+
+        let summary = try await importer.importMedia(
+            sources,
+            albumID: nil,
+            preflightFailureCount: 0,
+            preflightThumbnailFailureCount: 0,
+            progress: nil
+        )
+
+        XCTAssertEqual(summary.importedCount, 2)
+        XCTAssertEqual(summary.thumbnailFailureCount, 0)
+        let calls = await storage.storeCalls
+        XCTAssertEqual(calls.filter { $0 == .file(.media) }.count, 2)
+        XCTAssertEqual(calls.filter { $0 == .memory(.thumbnails) }.count, 2)
+        XCTAssertFalse(calls.contains(.file(.thumbnails)), "Thumbnails must never pass through a plaintext file.")
+    }
+
     private func makeEnvironment() async throws -> (
         root: URL,
         cache: URL,
@@ -346,5 +377,82 @@ private actor IncomingFileSnapshots {
 
     func record(encryptingItem item: Int, present: [Bool]) {
         values.append((item, present))
+    }
+}
+
+/// Forwards everything to real storage and records how each item was stored.
+private actor StoreRecordingStorage: SecureFileStoring {
+    enum StoreCall: Equatable {
+        case file(EncryptedAssetLocation)
+        case memory(EncryptedAssetLocation)
+    }
+
+    private(set) var storeCalls: [StoreCall] = []
+    private let storage: any SecureFileStoring
+
+    init(wrapping storage: any SecureFileStoring) {
+        self.storage = storage
+    }
+
+    func store(
+        plaintextURL: URL,
+        location: EncryptedAssetLocation,
+        progress: FileProgressHandler?
+    ) async throws -> StoredEncryptedFile {
+        storeCalls.append(.file(location))
+        return try await storage.store(plaintextURL: plaintextURL, location: location, progress: progress)
+    }
+
+    func store(plaintextData: Data, location: EncryptedAssetLocation) async throws -> StoredEncryptedFile {
+        storeCalls.append(.memory(location))
+        return try await storage.store(plaintextData: plaintextData, location: location)
+    }
+
+    func decryptData(
+        identifier: String,
+        location: EncryptedAssetLocation,
+        maximumByteCount: Int
+    ) async throws -> Data {
+        try await storage.decryptData(identifier: identifier, location: location, maximumByteCount: maximumByteCount)
+    }
+
+    func temporaryDecryptedFile(
+        identifier: String,
+        location: EncryptedAssetLocation,
+        preferredExtension: String?
+    ) async throws -> SecureTemporaryFileLease {
+        try await storage.temporaryDecryptedFile(
+            identifier: identifier,
+            location: location,
+            preferredExtension: preferredExtension
+        )
+    }
+
+    func move(identifier: String, from: EncryptedAssetLocation, to: EncryptedAssetLocation) async throws {
+        try await storage.move(identifier: identifier, from: from, to: to)
+    }
+
+    func delete(identifier: String, location: EncryptedAssetLocation) async throws {
+        try await storage.delete(identifier: identifier, location: location)
+    }
+
+    func cleanupTemporaryFiles() async {
+        await storage.cleanupTemporaryFiles()
+    }
+
+    func removeAllEncryptedData() async throws {
+        try await storage.removeAllEncryptedData()
+    }
+
+    func fileByteCount(identifier: String, location: EncryptedAssetLocation) async throws -> Int64 {
+        try await storage.fileByteCount(identifier: identifier, location: location)
+    }
+
+    func allIdentifiers(location: EncryptedAssetLocation) async throws -> Set<String> {
+        try await storage.allIdentifiers(location: location)
+    }
+
+    func openEncryptedReader(identifier: String, location: EncryptedAssetLocation) async throws -> EncryptedFileReader {
+        try await storage.openEncryptedReader(identifier: identifier, location: location)
     }
 }

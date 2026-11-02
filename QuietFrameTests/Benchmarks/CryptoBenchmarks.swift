@@ -30,15 +30,12 @@ final class CryptoBenchmarks: XCTestCase {
         }
     }
 
-    /// Import progress is delivered to the main actor during encryption. While the main thread is busy drawing,
-    /// any wait for it lands on the encryption path.
+    /// Import progress reaches the main actor during encryption, the way the import screen shows it. While the main
+    /// thread is busy drawing, any wait for it lands on the encryption path.
     func testEncryptingWhileTheMainThreadIsBusy() throws {
         let vault = try awaitBenchmark { try await BenchmarkVault.make() }
         defer { vault.remove() }
         let source = try vault.writeSource(Benchmark.randomData(byteCount: 32 * 1_048_576, seed: 3), named: "video.mov")
-        let progress: FileProgressHandler = { fraction in
-            await MainActor.run { _ = fraction }
-        }
 
         measure(metrics: [XCTClockMetric()], options: Benchmark.options) {
             let busyMainThread = Timer(timeInterval: 0.008, repeats: true) { _ in
@@ -46,7 +43,11 @@ final class CryptoBenchmarks: XCTestCase {
             }
             RunLoop.main.add(busyMainThread, forMode: .common)
             runBenchmark {
-                _ = try await vault.storage.store(plaintextURL: source, location: .media, progress: progress)
+                let progress = LatestValueRelay<Double> { _ = $0 }
+                _ = try await vault.storage.store(plaintextURL: source, location: .media) { fraction in
+                    progress.send(fraction)
+                }
+                await progress.finish()
             }
             busyMainThread.invalidate()
         }
