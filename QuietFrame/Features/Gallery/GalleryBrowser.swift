@@ -38,7 +38,7 @@ private struct GalleryBrowserContent: View {
     @State private var showsAlbumDestinations = false
     @State private var viewerRequest: MediaViewerRequest?
     @State private var tileFrames: MediaTileFrames
-    @State private var hiddenMediaID: UUID?
+    @State private var tileVisibility = MediaTileVisibility()
     @State private var shareLease: MediaExportLease?
     @State private var confirmsMoveToTrash = false
     @State private var showsPhotosAccessWarning = false
@@ -85,7 +85,7 @@ private struct GalleryBrowserContent: View {
             emptyActionTitle: allowsImport ? "Choose media" : nil,
             emptyAction: allowsImport ? beginImportSelection : nil,
             tileFrames: tileFrames,
-            hiddenMediaID: hiddenMediaID
+            tileVisibility: tileVisibility
         ) { media in
             presentViewer(for: media)
         }
@@ -139,7 +139,7 @@ private struct GalleryBrowserContent: View {
         .fullScreenCover(item: $viewerRequest, onDismiss: {
             Task {
                 await galleryViewModel.refreshLoadedItems()
-                if viewerRequest == nil { hiddenMediaID = nil }
+                if viewerRequest == nil { tileVisibility.hiddenMediaID = nil }
             }
         }) { request in
             MediaViewer(
@@ -147,7 +147,7 @@ private struct GalleryBrowserContent: View {
                 initialMediaID: request.mediaID,
                 dependencies: dependencies,
                 tileFrames: tileFrames,
-                onCurrentMediaChange: { hiddenMediaID = $0 }
+                onCurrentMediaChange: { tileVisibility.hiddenMediaID = $0 }
             )
             .presentationBackground(Color.clear)
         }

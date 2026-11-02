@@ -16,6 +16,10 @@ actor ThumbnailStorageFake: SecureFileStoring {
         heldDecrypts.count
     }
 
+    func setPayload(_ data: Data?, for identifier: String) {
+        payloads[identifier] = data
+    }
+
     func holdDecrypts() {
         isHolding = true
     }

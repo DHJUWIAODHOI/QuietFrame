@@ -115,8 +115,18 @@ final class ZoomingImageScrollView: UIScrollView {
 
     func display(_ image: UIImage) {
         guard imageView.image !== image else { return }
+        let previousSize = imageView.image?.size
         imageView.image = image
+        // A sharper copy of the same photo arriving mid-zoom replaces it in place, keeping the zoom and position.
+        if let previousSize, zoomScale > minimumZoomScale + 0.01, hasSameAspectRatio(previousSize, image.size) {
+            return
+        }
         fitImageToBounds()
+    }
+
+    private func hasSameAspectRatio(_ first: CGSize, _ second: CGSize) -> Bool {
+        guard first.width > 0, first.height > 0, second.width > 0, second.height > 0 else { return false }
+        return abs(first.width / first.height - second.width / second.height) <= 0.01 * (first.width / first.height)
     }
 
     override func layoutSubviews() {

@@ -4,6 +4,8 @@ import SwiftUI
 struct ViewerChrome: View {
     let media: VaultMedia?
     let items: [VaultMedia]
+    /// The position of `media` in `items`, looked up once by the viewer.
+    let selectedIndex: Int?
     let thumbnailService: ThumbnailService
     let playback: ViewerVideoPlayback
     let isWorking: Bool
@@ -102,6 +104,7 @@ struct ViewerChrome: View {
                         ViewerFilmstrip(
                             items: items,
                             selectedMediaID: media.id,
+                            selectedIndex: selectedIndex,
                             thumbnailService: thumbnailService,
                             onSelect: onSelect
                         )
@@ -109,7 +112,7 @@ struct ViewerChrome: View {
                 }
                 .background {
                     if items.count > 1 {
-                        ViewerMediaPosition(items: items, selectedMediaID: media.id, onSelect: onSelect)
+                        ViewerMediaPosition(items: items, selectedIndex: selectedIndex, onSelect: onSelect)
                     }
                 }
             }
@@ -131,12 +134,8 @@ struct ViewerChrome: View {
 /// so focus survives stepping between photos and videos.
 private struct ViewerMediaPosition: View {
     let items: [VaultMedia]
-    let selectedMediaID: UUID
+    let selectedIndex: Int?
     let onSelect: (UUID) -> Void
-
-    private var selectedIndex: Int? {
-        items.firstIndex { $0.id == selectedMediaID }
-    }
 
     private var positionDescription: String {
         guard let selectedIndex else { return "" }

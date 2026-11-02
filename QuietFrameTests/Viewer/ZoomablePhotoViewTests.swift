@@ -130,6 +130,42 @@ final class ZoomablePhotoViewTests: XCTestCase {
         withExtendedLifetime(coordinator) {}
     }
 
+    func testSharperCopyArrivingWhileZoomedKeepsTheZoomAndPosition() {
+        let coordinator = ZoomablePhotoView.Coordinator { _ in }
+        let scrollView = makeScrollView(coordinator: coordinator)
+        scrollView.display(makeImage(width: 500, height: 250))
+        scrollView.layoutIfNeeded()
+        scrollView.setZoomScale(3, animated: false)
+        scrollView.setContentOffset(CGPoint(x: 400, y: -75), animated: false)
+        scrollView.layoutIfNeeded()
+
+        let sharper = makeImage(width: 2_000, height: 1_000)
+        scrollView.display(sharper)
+        scrollView.layoutIfNeeded()
+
+        XCTAssertTrue(scrollView.imageView.image === sharper)
+        XCTAssertEqual(scrollView.zoomScale, 3, accuracy: 0.001)
+        XCTAssertEqual(scrollView.contentOffset.x, 400, accuracy: 0.5)
+        XCTAssertEqual(scrollView.contentSize.width, 900, accuracy: 1)
+        withExtendedLifetime(coordinator) {}
+    }
+
+    func testImageOfAnotherShapeIsFittedAgainEvenWhileZoomed() {
+        let coordinator = ZoomablePhotoView.Coordinator { _ in }
+        let scrollView = makeScrollView(coordinator: coordinator)
+        scrollView.display(makeImage(width: 500, height: 250))
+        scrollView.layoutIfNeeded()
+        scrollView.setZoomScale(3, animated: false)
+        scrollView.layoutIfNeeded()
+
+        scrollView.display(makeImage(width: 300, height: 600))
+        scrollView.layoutIfNeeded()
+
+        XCTAssertEqual(scrollView.zoomScale, 1, accuracy: 0.001)
+        XCTAssertEqual(scrollView.imageView.frame.height, 600, accuracy: 0.5)
+        withExtendedLifetime(coordinator) {}
+    }
+
     private func makeScrollView(
         coordinator: ZoomablePhotoView.Coordinator,
         frame: CGRect = CGRect(x: 0, y: 0, width: 300, height: 600)

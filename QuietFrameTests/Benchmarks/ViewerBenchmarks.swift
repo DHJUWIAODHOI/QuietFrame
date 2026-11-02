@@ -6,11 +6,28 @@ import XCTest
 @MainActor
 final class ViewerBenchmarks: XCTestCase {
     func testOpeningATwelveMegapixelPhoto() throws {
+        try measureOpeningATwelveMegapixelPhoto(pixelSize: ViewerPhotoRequest.zoomPixelSize)
+    }
+
+    /// The size the viewer now decodes for an iPhone 16 Pro screen until the photo is zoomed.
+    func testOpeningATwelveMegapixelPhotoAtScreenSize() throws {
+        try measureOpeningATwelveMegapixelPhoto(pixelSize: viewerFitPixelSize(
+            photoPixelSize: CGSize(width: 4_032, height: 3_024),
+            viewerPixelSize: CGSize(width: 1_206, height: 2_622)
+        ))
+    }
+
+    private func measureOpeningATwelveMegapixelPhoto(pixelSize: Int) throws {
         let vault = try awaitBenchmark { try await BenchmarkVault.make() }
         defer { vault.remove() }
         let jpeg = Benchmark.photoJPEG(width: 4_032, height: 3_024, seed: 7)
         let identifier = try awaitBenchmark { try await vault.store(jpeg, location: .media) }
-        let request = ViewerPhotoRequest(mediaID: UUID(), storageIdentifier: identifier, location: .media)
+        let request = ViewerPhotoRequest(
+            mediaID: UUID(),
+            storageIdentifier: identifier,
+            location: .media,
+            pixelSize: pixelSize
+        )
 
         measure(metrics: [XCTClockMetric()], options: Benchmark.manualOptions) {
             let loader = ViewerPhotoLoader(storage: vault.storage)

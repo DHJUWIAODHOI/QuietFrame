@@ -1,3 +1,4 @@
+import Observation
 import SwiftData
 import SwiftUI
 import UIKit
@@ -22,6 +23,40 @@ func viewerControlsVisibility(
     return !isPlaying
 }
 
+/// How far a dismiss drag has pulled the media. Only the backdrop and the lift effect read it, so a drag frame
+/// re-renders those two instead of the whole viewer and its pager.
+@MainActor
+@Observable
+final class ViewerLift {
+    var translation: CGFloat = 0
+}
+
+private struct ViewerBackdrop: View {
+    let lift: ViewerLift
+    let level: Double
+    let viewerHeight: CGFloat
+
+    var body: some View {
+        QuietFrameTheme.background
+            .opacity(level * backdropOpacity(translation: lift.translation, height: viewerHeight))
+            .ignoresSafeArea()
+    }
+}
+
+private struct ViewerLiftEffect: ViewModifier {
+    let lift: ViewerLift
+    let viewerHeight: CGFloat
+    let raisedOffset: CGFloat
+    let reduceMotion: Bool
+
+    func body(content: Content) -> some View {
+        let progress = dismissProgress(translation: lift.translation, height: viewerHeight)
+        content
+            .scaleEffect(dragScale(progress: progress, reduceMotion: reduceMotion))
+            .offset(y: dismissDragOffset(translation: lift.translation) + raisedOffset)
+    }
+}
+
 struct MediaViewer: View {
     private enum LiftPhase {
         case idle
@@ -38,6 +73,7 @@ struct MediaViewer: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverIsEnabled
     @Environment(\.accessibilitySwitchControlEnabled) private var switchControlIsEnabled
+    @Environment(\.displayScale) private var displayScale
     @AccessibilityFocusState private var infoButtonIsFocused: Bool
     @Query(sort: \VaultAlbum.position) private var albums: [VaultAlbum]
     @State private var selectedMediaID: UUID
@@ -46,7 +82,8 @@ struct MediaViewer: View {
     @State private var controlsAreVisible = true
     @State private var detailsAreOpen = false
     @State private var mediaIsRaised = false
-    @State private var selectedPhotoIsZoomed = false
+    @State private var zoomedMediaID: UUID?
+    @State private var viewerWindowSize = CGSize.zero
     @State private var movingMedia: VaultMedia?
     @State private var shareLease: MediaExportLease?
     @State private var confirmsTrash = false
@@ -66,7 +103,8 @@ struct MediaViewer: View {
     @State private var hasDismissed = false
     @State private var liftPhase = LiftPhase.idle
     @State private var liftOrigin: CGFloat = 0
-    @State private var liftTranslation: CGFloat = 0
+    @State private var lift = ViewerLift()
+    @State private var positions = MediaPositionIndex()
     @State private var mediaIsLifted = false
     @GestureState private var dismissDragIsActive = false
 
@@ -86,32 +124,74 @@ struct MediaViewer: View {
         _playback = State(initialValue: ViewerVideoPlayback())
     }
 
+    private var selectedMediaIndex: Int? {
+        positions.index(of: selectedMediaID, in: items)
+    }
+
     private var selectedMedia: VaultMedia? {
-        items.first { $0.id == selectedMediaID }
+        selectedMediaIndex.map { items[$0] }
     }
 
     private var selectedIndex: Int {
-        items.firstIndex { $0.id == selectedMediaID } ?? items.startIndex
+        selectedMediaIndex ?? items.startIndex
     }
 
+    /// The zoom belongs to the photo that reported it, so a new selection is never treated as zoomed.
+    private var selectedPhotoIsZoomed: Bool {
+        zoomedMediaID == selectedMediaID
+    }
+
+    /// Photos decode at the size the viewer's window shows them, and the selected photo again at the zoom size once
+    /// zoomed. Nothing is requested until the window size is known.
     private var photoRequests: [ViewerPhotoRequest] {
-        mediaPreparationOrder(selectedIndex: selectedIndex, count: items.count)
+        guard viewerWindowSize.width > 0, viewerWindowSize.height > 0 else { return [] }
+        let viewerPixelSize = CGSize(
+            width: viewerWindowSize.width * displayScale,
+            height: viewerWindowSize.height * displayScale
+        )
+        return mediaPreparationOrder(selectedIndex: selectedIndex, count: items.count)
             .map { items[$0] }
             .filter { $0.mediaType == .photo }
-            .map { ViewerPhotoRequest(media: $0) }
+            .map { media in
+                ViewerPhotoRequest(
+                    media: media,
+                    pixelSize: viewerPhotoPixelSize(
+                        photoPixelSize: CGSize(width: media.pixelWidth, height: media.pixelHeight),
+                        viewerPixelSize: viewerPixelSize,
+                        isZoomed: selectedPhotoIsZoomed && media.id == selectedMediaID
+                    )
+                )
+            }
+    }
+
+    private var selectedPageIsPhoto: Bool {
+        selectedMedia?.mediaType == .photo
+    }
+
+    /// The whole window, so showing or hiding the chrome and status bar never changes the decode size.
+    private func windowSize(of proxy: GeometryProxy) -> CGSize {
+        CGSize(
+            width: proxy.size.width + proxy.safeAreaInsets.leading + proxy.safeAreaInsets.trailing,
+            height: proxy.size.height + proxy.safeAreaInsets.top + proxy.safeAreaInsets.bottom
+        )
     }
 
     var body: some View {
         GeometryReader { proxy in
             let windowFrame = proxy.frame(in: .global)
+            let fullWindowSize = windowSize(of: proxy)
             viewerContent(in: windowFrame, safeAreaInsets: proxy.safeAreaInsets)
-                .onAppear { viewerFrame = windowFrame }
+                .onAppear {
+                    viewerFrame = windowFrame
+                    viewerWindowSize = fullWindowSize
+                }
                 .onChange(of: windowFrame) { _, newFrame in viewerFrame = newFrame }
+                .onChange(of: fullWindowSize) { _, newSize in viewerWindowSize = newSize }
         }
         .opacity(viewerOpacity)
         .statusBarHidden(!controlsAreVisible)
         .persistentSystemOverlays(controlsAreVisible ? .automatic : .hidden)
-        .onAppear { photoLoader.prepare(photoRequests) }
+        .onAppear { photoLoader.prepare(photoRequests, firstIsSelected: selectedPageIsPhoto) }
         .onAppear {
             onCurrentMediaChange?(selectedMediaID)
             beginOpening()
@@ -122,10 +202,10 @@ struct MediaViewer: View {
         }
         .onDisappear { transitionFallback?.cancel() }
         .onChange(of: photoRequests) { _, requests in
-            photoLoader.prepare(requests)
+            photoLoader.prepare(requests, firstIsSelected: selectedPageIsPhoto)
         }
         .onChange(of: selectedMediaID) { _, mediaID in
-            selectedPhotoIsZoomed = false
+            zoomedMediaID = nil
             controlsAreVisible = true
             setDetails(open: false, animated: false)
             playback.pause()
@@ -188,17 +268,18 @@ struct MediaViewer: View {
 
     private func viewerContent(in windowFrame: CGRect, safeAreaInsets: EdgeInsets) -> some View {
         let viewerBounds = CGRect(origin: .zero, size: windowFrame.size)
-        let liftProgress = dismissProgress(translation: liftTranslation, height: windowFrame.height)
         let panelTop = detailsPanelTop(viewerHeight: windowFrame.height, topBarBottom: QuietFrameTheme.controlHeight)
         let raisedOffset = selectedMediaDetailsOffset(viewerBounds: viewerBounds, panelTop: panelTop)
         return ZStack {
-            QuietFrameTheme.background
-                .opacity(backdropLevel * backdropOpacity(translation: liftTranslation, height: windowFrame.height))
-                .ignoresSafeArea()
+            ViewerBackdrop(lift: lift, level: backdropLevel, viewerHeight: windowFrame.height)
 
             mediaPager
-                .scaleEffect(dragScale(progress: liftProgress, reduceMotion: reduceMotion))
-                .offset(y: dismissDragOffset(translation: liftTranslation) + raisedOffset)
+                .modifier(ViewerLiftEffect(
+                    lift: lift,
+                    viewerHeight: windowFrame.height,
+                    raisedOffset: raisedOffset,
+                    reduceMotion: reduceMotion
+                ))
                 .opacity(pagerIsHidden ? 0 : 1)
                 .allowsHitTesting(!detailsAreOpen)
                 .accessibilityHidden(detailsAreOpen)
@@ -228,6 +309,7 @@ struct MediaViewer: View {
                 ViewerChrome(
                     media: selectedMedia,
                     items: items,
+                    selectedIndex: selectedMediaIndex,
                     thumbnailService: dependencies.thumbnailService,
                     playback: playback,
                     isWorking: isWorking,
@@ -259,7 +341,8 @@ struct MediaViewer: View {
     private var mediaPager: some View {
         let selectedIndex = self.selectedIndex
         return TabView(selection: $selectedMediaID) {
-            ForEach(Array(items.enumerated()), id: \.element.id) { pageIndex, media in
+            ForEach(items, id: \.id) { media in
+                let pageIndex = positions.index(of: media.id, in: items) ?? -2
                 let pageState = mediaPageState(pageIndex: pageIndex, selectedIndex: selectedIndex)
                 SecureMediaPage(
                     media: media,
@@ -364,8 +447,8 @@ struct MediaViewer: View {
         case .tracking:
             break
         }
-        liftTranslation = value.translation.height - liftOrigin
-        if liftTranslation > 0, chromeOpacity > 0 {
+        lift.translation = value.translation.height - liftOrigin
+        if lift.translation > 0, chromeOpacity > 0 {
             withAnimation(.easeOut(duration: 0.1)) { chromeOpacity = 0 }
         }
     }
@@ -396,12 +479,12 @@ struct MediaViewer: View {
 
     private func settleLift() {
         withAnimation(.easeOut(duration: 0.16)) { chromeOpacity = 1 }
-        guard liftTranslation != 0 else {
+        guard lift.translation != 0 else {
             mediaIsLifted = false
             return
         }
         withAnimation(.spring(duration: 0.26, bounce: 0)) {
-            liftTranslation = 0
+            lift.translation = 0
         } completion: {
             if liftPhase != .tracking, !isDismissing {
                 withoutAnimation { mediaIsLifted = false }
@@ -504,7 +587,7 @@ struct MediaViewer: View {
         let start = dismissDragRect(
             fitting: fitted,
             in: viewerBounds,
-            translation: liftTranslation,
+            translation: lift.translation,
             reduceMotion: reduceMotion
         )
         .offsetBy(dx: 0, dy: raisedOffset)
@@ -666,7 +749,7 @@ struct MediaViewer: View {
 
     private func updatePhotoZoom(_ isZoomed: Bool, mediaID: UUID) {
         guard mediaID == selectedMediaID else { return }
-        selectedPhotoIsZoomed = isZoomed
+        zoomedMediaID = isZoomed ? mediaID : nil
     }
 
     /// VoiceOver and Switch Control keep the chrome while a video plays, since it holds the only Pause control.

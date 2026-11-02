@@ -1,5 +1,14 @@
+import Observation
 import SwiftUI
 import UIKit
+
+/// The grid tile the open viewer stands in for, hidden while the viewer covers it. Only tiles read it, so turning a
+/// page re-renders the tiles on screen instead of the whole grid, its screen and the viewer.
+@MainActor
+@Observable
+final class MediaTileVisibility {
+    var hiddenMediaID: UUID?
+}
 
 /// Window frames of the gallery tiles currently on screen, so the viewer can open from and return to a tile.
 /// Tiles report frames in the grid's own coordinate space, which scrolling leaves unchanged, and a single reporter

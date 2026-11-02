@@ -16,7 +16,7 @@ private struct TrashScreenContent: View {
     @State private var viewModel: GalleryViewModel
     @State private var viewerRequest: MediaViewerRequest?
     @State private var tileFrames: MediaTileFrames
-    @State private var hiddenMediaID: UUID?
+    @State private var tileVisibility = MediaTileVisibility()
     @State private var confirmsPermanentDeletion = false
     @State private var confirmsEmptyTrash = false
     @State private var userMessage: String?
@@ -47,7 +47,7 @@ private struct TrashScreenContent: View {
                 emptyTitle: "Trash is empty",
                 emptyDescription: "Deleted media remains encrypted here until it expires.",
                 tileFrames: tileFrames,
-                hiddenMediaID: hiddenMediaID,
+                tileVisibility: tileVisibility,
                 open: { media in presentViewer(for: media) }
             )
         }
@@ -71,7 +71,7 @@ private struct TrashScreenContent: View {
         .fullScreenCover(item: $viewerRequest, onDismiss: {
             Task {
                 await viewModel.refreshLoadedItems()
-                if viewerRequest == nil { hiddenMediaID = nil }
+                if viewerRequest == nil { tileVisibility.hiddenMediaID = nil }
             }
         }) { request in
             MediaViewer(
@@ -79,7 +79,7 @@ private struct TrashScreenContent: View {
                 initialMediaID: request.mediaID,
                 dependencies: dependencies,
                 tileFrames: tileFrames,
-                onCurrentMediaChange: { hiddenMediaID = $0 }
+                onCurrentMediaChange: { tileVisibility.hiddenMediaID = $0 }
             )
             .presentationBackground(Color.clear)
         }

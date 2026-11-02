@@ -9,7 +9,7 @@ struct GalleryGridView: View {
     var emptyActionTitle: String?
     var emptyAction: (() -> Void)?
     var tileFrames: MediaTileFrames?
-    var hiddenMediaID: UUID?
+    var tileVisibility: MediaTileVisibility?
     let open: (VaultMedia) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -81,7 +81,7 @@ struct GalleryGridView: View {
                                 )
                             }
                             .buttonStyle(.plain)
-                            .opacity(media.id == hiddenMediaID ? 0 : 1)
+                            .modifier(HiddenWhileViewed(mediaID: media.id, visibility: tileVisibility))
                             .background { tileFrameReporter(for: media.id) }
                             .onAppear { prefetchThumbnails(around: media) }
                             .contentShape(.contextMenuPreview, tileShape)
@@ -252,6 +252,15 @@ struct GalleryGridView: View {
             }
             .scrollBounceBehavior(.basedOnSize)
         }
+    }
+}
+
+private struct HiddenWhileViewed: ViewModifier {
+    let mediaID: UUID
+    let visibility: MediaTileVisibility?
+
+    func body(content: Content) -> some View {
+        content.opacity(visibility?.hiddenMediaID == mediaID ? 0 : 1)
     }
 }
 
