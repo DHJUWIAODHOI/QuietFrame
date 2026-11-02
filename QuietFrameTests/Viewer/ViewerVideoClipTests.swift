@@ -70,8 +70,90 @@ final class ViewerVideoClipTests: XCTestCase {
 
         attachClip(clipURL, to: playback, mediaID: mediaID)
         playback.requestFrames(count: 6)
+        XCTAssertTrue(playback.frames.isEmpty, "An unfinished strip is not kept")
         try await waitUntil { playback.frames.count == 6 }
         playback.detach(mediaID: mediaID)
+    }
+
+    func testReturningToAVideoShowsItsKeptFramesAtOnce() async throws {
+        let clipURL = try await makeClip()
+        defer { removeClip(at: clipURL) }
+        let playback = ViewerVideoPlayback()
+        let videoID = UUID()
+        let otherID = UUID()
+        attachClip(clipURL, to: playback, mediaID: videoID)
+        playback.requestFrames(count: 6)
+        try await waitUntil { playback.frames.count == 6 }
+        let filledFrames = playback.frames
+        playback.detach(mediaID: videoID)
+        attachClip(clipURL, to: playback, mediaID: otherID)
+        playback.detach(mediaID: otherID)
+
+        attachClip(clipURL, to: playback, mediaID: videoID)
+        playback.requestFrames(count: 6)
+
+        XCTAssertEqual(playback.frames.count, 6)
+        XCTAssertTrue(zip(playback.frames, filledFrames).allSatisfy { pair in pair.0 === pair.1 })
+        playback.release()
+    }
+
+    func testAChangedFrameCountDecodesAgain() async throws {
+        let clipURL = try await makeClip()
+        defer { removeClip(at: clipURL) }
+        let playback = ViewerVideoPlayback()
+        let videoID = UUID()
+        attachClip(clipURL, to: playback, mediaID: videoID)
+        playback.requestFrames(count: 6)
+        try await waitUntil { playback.frames.count == 6 }
+        playback.detach(mediaID: videoID)
+
+        attachClip(clipURL, to: playback, mediaID: videoID)
+        playback.requestFrames(count: 7)
+
+        XCTAssertTrue(playback.frames.isEmpty)
+        try await waitUntil { playback.frames.count == 7 }
+        playback.release()
+    }
+
+    func testOnlyTheLastThreeStripsAreKept() async throws {
+        let clipURL = try await makeClip()
+        defer { removeClip(at: clipURL) }
+        let playback = ViewerVideoPlayback()
+        let videoIDs = [UUID(), UUID(), UUID(), UUID()]
+        for videoID in videoIDs {
+            attachClip(clipURL, to: playback, mediaID: videoID)
+            playback.requestFrames(count: 6)
+            try await waitUntil { playback.frames.count == 6 }
+            playback.detach(mediaID: videoID)
+        }
+
+        attachClip(clipURL, to: playback, mediaID: videoIDs[0])
+        playback.requestFrames(count: 6)
+        XCTAssertTrue(playback.frames.isEmpty, "The least recently shown strip is no longer kept")
+        playback.detach(mediaID: videoIDs[0])
+
+        attachClip(clipURL, to: playback, mediaID: videoIDs[3])
+        playback.requestFrames(count: 6)
+        XCTAssertEqual(playback.frames.count, 6)
+        playback.release()
+    }
+
+    func testReleaseForgetsKeptFrames() async throws {
+        let clipURL = try await makeClip()
+        defer { removeClip(at: clipURL) }
+        let playback = ViewerVideoPlayback()
+        let videoID = UUID()
+        attachClip(clipURL, to: playback, mediaID: videoID)
+        playback.requestFrames(count: 6)
+        try await waitUntil { playback.frames.count == 6 }
+        playback.detach(mediaID: videoID)
+
+        playback.release()
+        attachClip(clipURL, to: playback, mediaID: videoID)
+        playback.requestFrames(count: 6)
+
+        XCTAssertTrue(playback.frames.isEmpty)
+        playback.release()
     }
 
     func testUndecodableVideoKeepsThePlaceholders() async throws {

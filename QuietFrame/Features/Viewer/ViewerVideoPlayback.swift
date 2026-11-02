@@ -28,6 +28,8 @@ func videoFrameCount(forStripWidth width: CGFloat) -> Int {
     return max(6, Int(width / 28.5))
 }
 
+private let keptFrameStripLimit = 3
+
 /// Scrubbing keeps one exact seek in flight. A newer position waits for it and replaces any older waiting one,
 /// so the player always ends on the last position asked for.
 struct VideoSeekChase: Equatable {
@@ -121,6 +123,12 @@ final class ViewerVideoPlayback {
         let count: Int
     }
 
+    private struct KeptFrameStrip {
+        let mediaID: UUID
+        let times: [TimeInterval]
+        let frames: [UIImage]
+    }
+
     private(set) var mediaID: UUID?
     /// What the user asked for; scrubbing pauses the player without changing it.
     private(set) var isPlaying = false
@@ -139,6 +147,8 @@ final class ViewerVideoPlayback {
     @ObservationIgnored private var frameRequest: FrameRequest?
     @ObservationIgnored private var frameTask: Task<Void, Never>?
     @ObservationIgnored private var frameGenerator: AVAssetImageGenerator?
+    /// Completed strips of the last few videos, least recently used first, so returning to one shows it at once.
+    @ObservationIgnored private var keptFrameStrips: [KeptFrameStrip] = []
     @ObservationIgnored private var seekChase = VideoSeekChase()
     /// Changes whenever a chase ends, so completions of its seeks that arrive later are ignored.
     @ObservationIgnored private var seekToken: UInt64 = 0
@@ -199,10 +209,13 @@ final class ViewerVideoPlayback {
         if !frames.isEmpty { frames = [] }
     }
 
-    /// Lets go of whatever is attached, for when the viewer goes away before its video page cleans up.
+    /// Lets go of whatever is attached, for when the viewer goes away before its video page cleans up, and of the
+    /// kept frame strips.
     func release() {
-        guard let mediaID else { return }
-        detach(mediaID: mediaID)
+        if let mediaID {
+            detach(mediaID: mediaID)
+        }
+        keptFrameStrips.removeAll()
     }
 
     func markUnavailable(mediaID failedID: UUID) {
@@ -262,18 +275,33 @@ final class ViewerVideoPlayback {
         seek(player, to: min(max(currentTime + seconds, 0), duration))
     }
 
-    /// Decodes `count` small frames of the attached video in memory, all requested at once. Nothing is written to
-    /// disk.
+    /// Decodes `count` small frames of the attached video in memory, all requested at once, unless the same strip
+    /// was completed earlier in this viewer. Nothing is written to disk.
     func requestFrames(count: Int) {
         guard let mediaID, let frameAsset, count > 0 else { return }
         let request = FrameRequest(mediaID: mediaID, count: count)
         guard frameRequest != request else { return }
         cancelFrames()
-        if !frames.isEmpty { frames = [] }
         let times = videoFrameTimes(count: count, duration: duration)
+        let kept = keptFrames(mediaID: mediaID, times: times)
+        if !frames.isEmpty || kept != nil {
+            frames = kept ?? []
+        }
         guard !times.isEmpty else { return }
         frameRequest = request
-        generateFrames(for: request, times: times, asset: frameAsset)
+        if kept == nil {
+            generateFrames(for: request, times: times, asset: frameAsset)
+        }
+    }
+
+    /// The frames of a strip completed for these exact times, which becomes the most recently used one.
+    private func keptFrames(mediaID: UUID, times: [TimeInterval]) -> [UIImage]? {
+        guard !times.isEmpty,
+              let index = keptFrameStrips.firstIndex(where: { $0.mediaID == mediaID && $0.times == times })
+        else { return nil }
+        let strip = keptFrameStrips.remove(at: index)
+        keptFrameStrips.append(strip)
+        return strip.frames
     }
 
     private func generateFrames(for request: FrameRequest, times: [TimeInterval], asset: AVAsset) {
@@ -300,21 +328,28 @@ final class ViewerVideoPlayback {
                     self.frames.append(contentsOf: ready)
                 }
                 if assembly.isFinished {
-                    self.finishFrames(for: request)
+                    self.finishFrames(for: request, times: times, isComplete: assembly.isComplete)
                     return
                 }
             }
             guard !Task.isCancelled, let self, self.frameRequest == request else { return }
-            self.finishFrames(for: request)
+            self.finishFrames(for: request, times: times, isComplete: false)
         }
     }
 
-    /// The request stays recorded, so a strip that stopped at a failure is decoded again only after a new attach.
-    private func finishFrames(for request: FrameRequest) {
+    /// The request stays recorded, so a strip that stopped at a failure is decoded again only after a new attach,
+    /// and only a complete strip is kept.
+    private func finishFrames(for request: FrameRequest, times: [TimeInterval], isComplete: Bool) {
         guard frameRequest == request else { return }
         frameGenerator?.cancelAllCGImageGeneration()
         frameGenerator = nil
         frameTask = nil
+        guard isComplete else { return }
+        keptFrameStrips.removeAll { $0.mediaID == request.mediaID }
+        keptFrameStrips.append(KeptFrameStrip(mediaID: request.mediaID, times: times, frames: frames))
+        if keptFrameStrips.count > keptFrameStripLimit {
+            keptFrameStrips.removeFirst(keptFrameStrips.count - keptFrameStripLimit)
+        }
     }
 
     /// The generator may not watch for task cancellation, so its pending images are cancelled directly.
