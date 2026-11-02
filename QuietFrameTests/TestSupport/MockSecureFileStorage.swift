@@ -87,6 +87,10 @@ actor MockSecureFileStorage: SecureFileStoring {
         return identifiers[location] ?? []
     }
 
+    func openEncryptedReader(identifier: String, location: EncryptedAssetLocation) async throws -> EncryptedFileReader {
+        throw VaultError.fileOperationFailed
+    }
+
     func pauseNextMove() {
         shouldPauseNextMove = true
     }

@@ -33,12 +33,6 @@ protocol SecureFileStoring: Sendable {
     func openEncryptedReader(identifier: String, location: EncryptedAssetLocation) async throws -> EncryptedFileReader
 }
 
-extension SecureFileStoring {
-    func openEncryptedReader(identifier: String, location: EncryptedAssetLocation) async throws -> EncryptedFileReader {
-        throw VaultError.fileOperationFailed
-    }
-}
-
 actor SecureFileStorageService: SecureFileStoring {
     private let fileManager: FileManager
     private let encryption: any FileEncrypting

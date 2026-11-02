@@ -79,4 +79,8 @@ actor ThumbnailStorageFake: SecureFileStoring {
     func allIdentifiers(location: EncryptedAssetLocation) async throws -> Set<String> {
         Set(payloads.keys)
     }
+
+    func openEncryptedReader(identifier: String, location: EncryptedAssetLocation) async throws -> EncryptedFileReader {
+        throw VaultError.fileOperationFailed
+    }
 }

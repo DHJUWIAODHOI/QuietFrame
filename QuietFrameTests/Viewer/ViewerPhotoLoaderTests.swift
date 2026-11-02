@@ -249,6 +249,10 @@ private actor RecordingPhotoStorage: SecureFileStoring {
     func allIdentifiers(location: EncryptedAssetLocation) async throws -> Set<String> {
         []
     }
+
+    func openEncryptedReader(identifier: String, location: EncryptedAssetLocation) async throws -> EncryptedFileReader {
+        throw VaultError.fileOperationFailed
+    }
 }
 
 /// Holds each decrypt until the test releases it, then reports cancellation the way the real decrypt loop does.
@@ -321,5 +325,9 @@ private actor GatedPhotoStorage: SecureFileStoring {
 
     func allIdentifiers(location: EncryptedAssetLocation) async throws -> Set<String> {
         []
+    }
+
+    func openEncryptedReader(identifier: String, location: EncryptedAssetLocation) async throws -> EncryptedFileReader {
+        throw VaultError.fileOperationFailed
     }
 }
