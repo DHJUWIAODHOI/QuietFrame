@@ -174,7 +174,7 @@ final class StorageReconciliationServiceTests: XCTestCase {
 
     func testCancellingWhileReadingReferencesTouchesNoFile() async throws {
         let container = try makeContainer()
-        let library = try insertMixedLibrary(itemCount: 300, in: container)
+        let library = try insertMixedLibrary(itemCount: 600, in: container)
         let storage = MockSecureFileStorage(identifiers: library.files)
         let operationGate = VaultOperationGate()
         let service = StorageReconciliationService(
