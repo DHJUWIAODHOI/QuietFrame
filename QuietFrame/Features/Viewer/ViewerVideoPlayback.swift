@@ -49,16 +49,16 @@ final class ViewerVideoPlayback {
     private(set) var unavailableMediaID: UUID?
 
     @ObservationIgnored private var player: AVPlayer?
-    @ObservationIgnored private var assetURL: URL?
+    @ObservationIgnored private var frameAsset: AVAsset?
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var frameRequest: FrameRequest?
     @ObservationIgnored private var frameTask: Task<Void, Never>?
 
-    func attach(player newPlayer: AVPlayer, url: URL, mediaID newMediaID: UUID, fallbackDuration: TimeInterval?) {
+    func attach(player newPlayer: AVPlayer, asset: AVAsset, mediaID newMediaID: UUID, fallbackDuration: TimeInterval?) {
         guard player !== newPlayer || mediaID != newMediaID else { return }
         stopObserving()
         player = newPlayer
-        assetURL = url
+        frameAsset = asset
         mediaID = newMediaID
         if unavailableMediaID == newMediaID { unavailableMediaID = nil }
         isScrubbing = false
@@ -78,7 +78,7 @@ final class ViewerVideoPlayback {
         player?.pause()
         stopObserving()
         player = nil
-        assetURL = nil
+        frameAsset = nil
         mediaID = nil
         if isPlaying { isPlaying = false }
         isReady = false
@@ -144,7 +144,7 @@ final class ViewerVideoPlayback {
 
     /// Decodes `count` small frames of the attached video in memory, one at a time. Nothing is written to disk.
     func requestFrames(count: Int) {
-        guard let mediaID, let assetURL, count > 0 else { return }
+        guard let mediaID, let frameAsset, count > 0 else { return }
         let request = FrameRequest(mediaID: mediaID, count: count)
         guard frameRequest != request else { return }
         frameTask?.cancel()
@@ -157,7 +157,7 @@ final class ViewerVideoPlayback {
         }
         frameRequest = request
         frameTask = Task { [weak self] in
-            let generator = AVAssetImageGenerator(asset: AVURLAsset(url: assetURL))
+            let generator = AVAssetImageGenerator(asset: frameAsset)
             generator.appliesPreferredTrackTransform = true
             generator.maximumSize = CGSize(width: 120, height: 120)
             generator.requestedTimeToleranceBefore = CMTime(seconds: 0.5, preferredTimescale: 600)

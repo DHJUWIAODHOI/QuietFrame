@@ -77,7 +77,25 @@ final class CryptoBenchmarks: XCTestCase {
         }
     }
 
-    /// The wait between opening a video and having something AVFoundation can play.
+    /// The wait before streaming playback has its first bytes: opening the container and decrypting its first chunk.
+    func testOpeningAFortyEightMegabyteVideoStream() throws {
+        let vault = try awaitBenchmark { try await BenchmarkVault.make() }
+        defer { vault.remove() }
+        let identifier = try awaitBenchmark {
+            try await vault.store(Benchmark.randomData(byteCount: 48 * 1_048_576, seed: 4), location: .media)
+        }
+
+        measure(metrics: [XCTClockMetric()], options: Benchmark.options) {
+            runBenchmark {
+                let reader = try await vault.storage.openEncryptedReader(identifier: identifier, location: .media)
+                let firstBytes = try await reader.read(offset: 0, length: 65_536)
+                XCTAssertEqual(firstBytes.count, 65_536)
+                await reader.close()
+            }
+        }
+    }
+
+    /// The wait between opening a video and having something AVFoundation can play, before playback streamed.
     func testPreparingAFortyEightMegabyteVideoForPlayback() throws {
         let vault = try awaitBenchmark { try await BenchmarkVault.make() }
         defer { vault.remove() }

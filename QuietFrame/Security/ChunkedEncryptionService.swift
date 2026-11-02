@@ -22,6 +22,13 @@ protocol FileEncrypting: Sendable {
     ) async throws
 
     func decryptData(at inputURL: URL, maximumByteCount: Int) async throws -> Data
+    func openReader(at inputURL: URL) async throws -> EncryptedFileReader
+}
+
+extension FileEncrypting {
+    func openReader(at inputURL: URL) async throws -> EncryptedFileReader {
+        throw VaultError.fileOperationFailed
+    }
 }
 
 actor ChunkedEncryptionService: FileEncrypting {
@@ -113,7 +120,7 @@ actor ChunkedEncryptionService: FileEncrypting {
             noncePrefix: noncePrefix
         )
         let encodedHeader = header.encode()
-        let fileKey = deriveFileKey(masterKey: keyAccess.key, salt: salt)
+        let fileKey = Self.deriveFileKey(masterKey: keyAccess.key, salt: salt)
 
         guard fileManager.createFile(
             atPath: outputURL.path,
@@ -145,12 +152,12 @@ actor ChunkedEncryptionService: FileEncrypting {
                 let plaintext = try input.readExactly(readCount)
                 hasher.update(data: plaintext)
 
-                let nonce = try makeNonce(prefix: noncePrefix, chunkIndex: chunkIndex)
+                let nonce = try Self.makeNonce(prefix: noncePrefix, chunkIndex: chunkIndex)
                 let sealed = try AES.GCM.seal(
                     plaintext,
                     using: fileKey,
                     nonce: nonce,
-                    authenticating: additionalData(header: encodedHeader, chunkIndex: chunkIndex)
+                    authenticating: Self.additionalData(header: encodedHeader, chunkIndex: chunkIndex)
                 )
                 try output.write(contentsOf: sealed.ciphertext)
                 try output.write(contentsOf: sealed.tag)
@@ -252,7 +259,7 @@ actor ChunkedEncryptionService: FileEncrypting {
         do {
             let encodedHeader = try input.readExactly(Header.encodedByteCount)
             let header = try Header.decode(encodedHeader)
-            let fileKey = deriveFileKey(masterKey: keyAccess.key, salt: header.salt)
+            let fileKey = Self.deriveFileKey(masterKey: keyAccess.key, salt: header.salt)
             var processed: UInt64 = 0
             var chunkIndex: UInt32 = 0
 
@@ -263,12 +270,12 @@ actor ChunkedEncryptionService: FileEncrypting {
                 let plaintextCount = Int(min(UInt64(header.chunkByteCount), remaining))
                 let ciphertext = try input.readExactly(plaintextCount)
                 let tag = try input.readExactly(16)
-                let nonce = try makeNonce(prefix: header.noncePrefix, chunkIndex: chunkIndex)
+                let nonce = try Self.makeNonce(prefix: header.noncePrefix, chunkIndex: chunkIndex)
                 let box = try AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertext, tag: tag)
                 let plaintext = try AES.GCM.open(
                     box,
                     using: fileKey,
-                    authenticating: additionalData(header: encodedHeader, chunkIndex: chunkIndex)
+                    authenticating: Self.additionalData(header: encodedHeader, chunkIndex: chunkIndex)
                 )
                 try consume(plaintext)
 
@@ -292,7 +299,45 @@ actor ChunkedEncryptionService: FileEncrypting {
         }
     }
 
-    private func deriveFileKey(masterKey: SymmetricKey, salt: Data) -> SymmetricKey {
+    /// Opens a container for random-access reads. Its size must match its header exactly, so a truncated or padded
+    /// file is rejected before anything is read; each chunk is authenticated as it is read.
+    func openReader(at inputURL: URL) async throws -> EncryptedFileReader {
+        let keyAccess = try await session.keyAccess()
+        let input = try FileHandle(forReadingFrom: inputURL)
+        do {
+            let encodedHeader = try input.readExactly(Header.encodedByteCount)
+            let header = try Header.decode(encodedHeader)
+            let chunkSize = UInt64(header.chunkByteCount)
+            let chunkCount = header.plaintextByteCount / chunkSize + (header.plaintextByteCount % chunkSize == 0 ? 0 : 1)
+            let (expectedBytes, overflow) = header.plaintextByteCount.addingReportingOverflow(
+                UInt64(Header.encodedByteCount) + chunkCount * 16
+            )
+            guard !overflow,
+                  chunkCount <= UInt64(UInt32.max),
+                  try input.seekToEnd() == expectedBytes,
+                  let plaintextByteCount = Int64(exactly: header.plaintextByteCount) else {
+                throw VaultError.corruptedFile
+            }
+            return EncryptedFileReader(
+                handle: input,
+                session: session,
+                generation: keyAccess.generation,
+                fileKey: Self.deriveFileKey(masterKey: keyAccess.key, salt: header.salt),
+                encodedHeader: encodedHeader,
+                noncePrefix: header.noncePrefix,
+                chunkByteCount: Int(header.chunkByteCount),
+                plaintextByteCount: plaintextByteCount
+            )
+        } catch let error as VaultError {
+            try? input.close()
+            throw error
+        } catch {
+            try? input.close()
+            throw VaultError.corruptedFile
+        }
+    }
+
+    private nonisolated static func deriveFileKey(masterKey: SymmetricKey, salt: Data) -> SymmetricKey {
         HKDF<SHA256>.deriveKey(
             inputKeyMaterial: masterKey,
             salt: salt,
@@ -301,14 +346,14 @@ actor ChunkedEncryptionService: FileEncrypting {
         )
     }
 
-    private func makeNonce(prefix: Data, chunkIndex: UInt32) throws -> AES.GCM.Nonce {
+    nonisolated static func makeNonce(prefix: Data, chunkIndex: UInt32) throws -> AES.GCM.Nonce {
         guard prefix.count == 8 else { throw VaultError.corruptedFile }
         var nonceData = prefix
         nonceData.appendBigEndian(chunkIndex)
         return try AES.GCM.Nonce(data: nonceData)
     }
 
-    private func additionalData(header: Data, chunkIndex: UInt32) -> Data {
+    nonisolated static func additionalData(header: Data, chunkIndex: UInt32) -> Data {
         var data = header
         data.appendBigEndian(chunkIndex)
         return data

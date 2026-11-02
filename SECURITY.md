@@ -13,7 +13,7 @@ It does not claim protection against a compromised iOS kernel, a jailbroken devi
 - Random 256-bit vault master key
 - Passcode verifier and wrapped-key envelope
 - Filenames, dates, dimensions, sizes, albums, tags, and favorites
-- Temporary plaintext required for Photos transfer, AVPlayer, and sharing
+- Temporary plaintext required for Photos transfer and sharing (video playback reads encrypted files in place)
 
 ## Trust Boundaries
 
@@ -23,7 +23,7 @@ It does not claim protection against a compromised iOS kernel, a jailbroken devi
 - PhotoKit add/delete transactions
 - Activity extensions selected by the user
 
-QuietFrame trusts Apple platform cryptography and does not implement AES, SHA-256, HMAC, HKDF, or random generation primitives itself. PBKDF2 orchestration is implemented with CryptoKit HMAC because Apple frameworks do not expose PBKDF2 directly.
+QuietFrame trusts Apple platform cryptography and does not implement AES, SHA-256, HMAC, HKDF, PBKDF2, or random generation primitives itself. Passcode keys come from CommonCrypto's `CCKeyDerivationPBKDF` (PBKDF2-HMAC-SHA256); tests pin its output to independently computed vectors and to the CryptoKit loop earlier versions used, so existing envelopes keep opening.
 
 ## Key Management
 
@@ -58,9 +58,11 @@ SwiftData metadata is not encrypted with the QuietFrame passcode. While the devi
 
 ## Lock Boundary
 
-The root removes all vault navigation before cleanup. Lock increments a session generation, and crypto validates that generation before every chunk and before completion. Import operations have their own generation and are cancelled on lock. Protected incoming, staging, export, and video files are then deleted; thumbnail memory is purged.
+The root removes all vault navigation before cleanup. Lock increments a session generation, and crypto validates that generation before every chunk and before completion, including each chunk a playing video reads. Import operations have their own generation and are cancelled on lock. Protected incoming, staging, and export files are then deleted; thumbnail memory is purged.
 
-UI tasks outside import are not managed by a single global operation registry. Crypto work is revoked, but a future revision should serialize all metadata mutations, PhotoKit transactions, reconciliation, reset, and exports under one vault-operation coordinator.
+Video playback never writes plaintext: AVFoundation reads byte ranges through a private resource-loader scheme, and each chunk is decrypted and authenticated in memory as it is read. A container whose size does not match its header is rejected before playback starts.
+
+A single FIFO operation gate serializes import, Trash operations, album deletion, reconciliation, reset, and exports. The storage check after unlock runs under it once the vault has opened; a failed check leaves the vault open and runs again at the next unlock.
 
 ## Reset and Recovery
 
@@ -76,7 +78,7 @@ On flash storage, unlinking files does not guarantee physical overwrite. Destroy
 - Incoming picker files are plaintext but random-named, complete-protected, backup-excluded, cancellation-tracked, and removed after import or lock.
 - Originals are never deleted automatically.
 - Export asks for Photos authorization before decryption.
-- Share and playback use random protected leases with completion and deinit cleanup.
+- Share and Save to Photos decrypt into random protected leases with completion and deinit cleanup. Video playback creates no lease: it reads the encrypted file through the private resource loader and writes no plaintext.
 - Reconciliation deletes encrypted files not referenced by metadata and repairs interrupted media/Trash moves.
 
 Once data is transferred to another app or Photos, destination behavior is outside QuietFrame's security boundary.

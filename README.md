@@ -154,7 +154,7 @@ SwiftData metadata is protected by iOS complete Data Protection and backup exclu
 
 ### Decrypted temporary files
 
-Photos decrypt in memory and are downsampled to a maximum 4096-pixel viewing representation. Video playback and native export require a file URL, so QuietFrame creates protected, backup-excluded, randomly named temporary files. `SecureTemporaryFileLease` deletes them explicitly and on deinitialization. Lock clears exports, video leases, staging files, incoming Photos transfers, and the thumbnail memory cache.
+Photos decrypt in memory and decode at the size the screen shows them; zooming decodes the selected photo again at up to 4096 pixels. Videos play straight from their encrypted files: AVFoundation reads byte ranges through a private resource loader, and each chunk is decrypted and authenticated in memory as it is read, so playback writes no plaintext. Native export (Share and Save to Photos) still requires a file URL, so QuietFrame creates protected, backup-excluded, randomly named temporary files for it. `SecureTemporaryFileLease` deletes them explicitly and on deinitialization. Lock clears exports, staging files, incoming Photos transfers, and the thumbnail memory cache.
 
 ### Reset
 
@@ -229,9 +229,9 @@ Tests use in-memory SwiftData stores and protocol mocks. Security file tests use
 4. Choosing no app passcode means anyone using the unlocked iPhone can open QuietFrame. Media remains encrypted at rest by a random key in the device-only Keychain.
 5. The normal passcode envelope uses `WhenUnlockedThisDeviceOnly`, not `WhenPasscodeSetThisDeviceOnly`. QuietFrame should either require an iOS device passcode in a future security-policy revision or explicitly accept operation on devices without one.
 6. SwiftData catalog metadata is plaintext inside an OS-protected, backup-excluded store. The app passcode encrypts media and thumbnails, not filenames, albums, dates, dimensions, sizes, tags, or SQLite free pages while the device is already unlocked.
-7. AVPlayer requires a fully decrypted protected temporary video before playback. Very large videos need free space approximately equal to their original size plus a safety margin and do not begin streaming immediately.
+7. Share and Save to Photos decrypt a protected temporary copy first, so very large videos need free space approximately equal to their size plus a safety margin. Playback streams from the encrypted file and needs no free space.
 8. Bulk sharing decrypts all selected files before presenting the activity sheet. Each file receives a capacity check, but v1 has no aggregate progress UI.
-9. Search loads the scoped metadata set for multi-field matching. Normal browsing is paged, but search and some bulk operations can become slower with very large vaults.
+9. Search scans the scoped metadata set for multi-field matching on its first page; later pages reuse that result until the library changes. Very large vaults still pay that first scan.
 10. Viewer swipe navigation covers currently loaded gallery pages. It does not yet fetch the next metadata page from inside the viewer.
 11. Tags are represented, displayed, and searchable but v1 has no tag editing screen.
 12. Failed import thumbnails remain as placeholders; there is no background thumbnail-regeneration queue.

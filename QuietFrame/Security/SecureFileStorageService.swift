@@ -29,6 +29,13 @@ protocol SecureFileStoring: Sendable {
     func removeAllEncryptedData() async throws
     func fileByteCount(identifier: String, location: EncryptedAssetLocation) async throws -> Int64
     func allIdentifiers(location: EncryptedAssetLocation) async throws -> Set<String>
+    func openEncryptedReader(identifier: String, location: EncryptedAssetLocation) async throws -> EncryptedFileReader
+}
+
+extension SecureFileStoring {
+    func openEncryptedReader(identifier: String, location: EncryptedAssetLocation) async throws -> EncryptedFileReader {
+        throw VaultError.fileOperationFailed
+    }
 }
 
 actor SecureFileStorageService: SecureFileStoring {
@@ -157,6 +164,13 @@ actor SecureFileStorageService: SecureFileStoring {
             try? fileManager.removeItem(at: outputURL)
             throw error
         }
+    }
+
+    /// Reads an encrypted file in place, decrypting only the ranges asked for; nothing is written to disk.
+    func openEncryptedReader(identifier: String, location: EncryptedAssetLocation) async throws -> EncryptedFileReader {
+        let url = try encryptedURL(identifier: identifier, location: location)
+        guard fileManager.fileExists(atPath: url.path) else { throw VaultError.corruptedFile }
+        return try await encryption.openReader(at: url)
     }
 
     func move(

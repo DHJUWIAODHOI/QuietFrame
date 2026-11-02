@@ -140,7 +140,8 @@ private struct SecureVideoPage: View {
 
     @Environment(\.scenePhase) private var scenePhase
 
-    @State private var lease: SecureTemporaryFileLease?
+    @State private var stream: EncryptedVideoStream?
+    @State private var streamStatus: NSKeyValueObservation?
     @State private var player: AVQueuePlayer?
     @State private var playerLooper: AVPlayerLooper?
     @State private var errorMessage: String?
@@ -224,22 +225,25 @@ private struct SecureVideoPage: View {
         isLoading = true
         defer { isLoading = false }
         do {
-            let fileExtension = UTType(media.contentTypeIdentifier)?.preferredFilenameExtension
-            let newLease = try await storage.temporaryDecryptedFile(
+            let reader = try await storage.openEncryptedReader(
                 identifier: media.storageIdentifier,
-                location: media.isTrashed ? .trash : .media,
-                preferredExtension: fileExtension
+                location: media.isTrashed ? .trash : .media
             )
             guard !Task.isCancelled, shouldPrepare, scenePhase == .active else {
-                newLease.cleanup()
+                await reader.close()
                 return
             }
+            let newStream = try EncryptedVideoStream(reader: reader, contentTypeIdentifier: media.contentTypeIdentifier)
             let newPlayer = AVQueuePlayer()
             let newLooper = AVPlayerLooper(
                 player: newPlayer,
-                templateItem: AVPlayerItem(url: newLease.url)
+                templateItem: AVPlayerItem(asset: newStream.asset)
             )
-            lease = newLease
+            streamStatus = newLooper.observe(\.status, options: [.new]) { looper, _ in
+                guard looper.status == .failed else { return }
+                Task { @MainActor in showUnplayableStream() }
+            }
+            stream = newStream
             playerLooper = newLooper
             player = newPlayer
         } catch is CancellationError {
@@ -256,8 +260,17 @@ private struct SecureVideoPage: View {
     }
 
     private func attachIfActive() {
-        guard !Task.isCancelled, isActive, scenePhase == .active, let player, let lease else { return }
-        playback.attach(player: player, url: lease.url, mediaID: media.id, fallbackDuration: media.duration)
+        guard !Task.isCancelled, isActive, scenePhase == .active, let player, let stream else { return }
+        playback.attach(player: player, asset: stream.asset, mediaID: media.id, fallbackDuration: media.duration)
+    }
+
+    /// A chunk that fails to decrypt mid-stream shows the same message as a file that fails to open.
+    private func showUnplayableStream() {
+        guard stream != nil else { return }
+        let ownsTransport = playback.mediaID == media.id
+        cleanup()
+        if ownsTransport { playback.markUnavailable(mediaID: media.id) }
+        errorMessage = VaultError.corruptedFile.localizedDescription
     }
 
     private func pausePlayback() {
@@ -286,8 +299,10 @@ private struct SecureVideoPage: View {
         playerLooper = nil
         player?.removeAllItems()
         player = nil
-        lease?.cleanup()
-        lease = nil
+        streamStatus?.invalidate()
+        streamStatus = nil
+        stream?.invalidate()
+        stream = nil
         errorMessage = nil
     }
 }

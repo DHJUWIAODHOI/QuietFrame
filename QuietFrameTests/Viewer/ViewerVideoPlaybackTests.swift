@@ -58,7 +58,7 @@ final class ViewerVideoPlaybackTests: XCTestCase {
         XCTAssertTrue(playback.isPlaying)
         XCTAssertNil(playback.mediaID)
 
-        playback.attach(player: AVPlayer(), url: makeURL(), mediaID: mediaID, fallbackDuration: 42)
+        playback.attach(player: AVPlayer(), asset: AVURLAsset(url: makeURL()), mediaID: mediaID, fallbackDuration: 42)
 
         XCTAssertEqual(playback.mediaID, mediaID)
         XCTAssertTrue(playback.isPlaying)
@@ -69,7 +69,7 @@ final class ViewerVideoPlaybackTests: XCTestCase {
     func testDetachIgnoresOtherItemsAndResetsTheTransport() {
         let playback = ViewerVideoPlayback()
         let mediaID = UUID()
-        playback.attach(player: AVPlayer(), url: makeURL(), mediaID: mediaID, fallbackDuration: 42)
+        playback.attach(player: AVPlayer(), asset: AVURLAsset(url: makeURL()), mediaID: mediaID, fallbackDuration: 42)
         playback.play()
 
         playback.detach(mediaID: UUID())
@@ -89,7 +89,7 @@ final class ViewerVideoPlaybackTests: XCTestCase {
     func testScrubbingMovesTheTimeAndKeepsThePlayIntent() {
         let playback = ViewerVideoPlayback()
         let mediaID = UUID()
-        playback.attach(player: AVPlayer(), url: makeURL(), mediaID: mediaID, fallbackDuration: 40)
+        playback.attach(player: AVPlayer(), asset: AVURLAsset(url: makeURL()), mediaID: mediaID, fallbackDuration: 40)
         playback.play()
 
         playback.scrub(toFraction: 0.25)
@@ -108,7 +108,7 @@ final class ViewerVideoPlaybackTests: XCTestCase {
     func testPausingEndsAScrub() {
         let playback = ViewerVideoPlayback()
         let mediaID = UUID()
-        playback.attach(player: AVPlayer(), url: makeURL(), mediaID: mediaID, fallbackDuration: 40)
+        playback.attach(player: AVPlayer(), asset: AVURLAsset(url: makeURL()), mediaID: mediaID, fallbackDuration: 40)
         playback.play()
         playback.scrub(toFraction: 0.5)
 
@@ -127,17 +127,17 @@ final class ViewerVideoPlaybackTests: XCTestCase {
         playback.markUnavailable(mediaID: failedID)
         XCTAssertEqual(playback.unavailableMediaID, failedID)
 
-        playback.attach(player: AVPlayer(), url: makeURL(), mediaID: otherID, fallbackDuration: 10)
+        playback.attach(player: AVPlayer(), asset: AVURLAsset(url: makeURL()), mediaID: otherID, fallbackDuration: 10)
         XCTAssertEqual(playback.unavailableMediaID, failedID)
 
-        playback.attach(player: AVPlayer(), url: makeURL(), mediaID: failedID, fallbackDuration: 10)
+        playback.attach(player: AVPlayer(), asset: AVURLAsset(url: makeURL()), mediaID: failedID, fallbackDuration: 10)
         XCTAssertNil(playback.unavailableMediaID)
         playback.detach(mediaID: failedID)
     }
 
     func testReleaseLetsGoOfTheAttachedVideo() {
         let playback = ViewerVideoPlayback()
-        playback.attach(player: AVPlayer(), url: makeURL(), mediaID: UUID(), fallbackDuration: 30)
+        playback.attach(player: AVPlayer(), asset: AVURLAsset(url: makeURL()), mediaID: UUID(), fallbackDuration: 30)
         playback.play()
 
         playback.release()
@@ -159,7 +159,7 @@ final class ViewerVideoPlaybackTests: XCTestCase {
     func testSeekingIsClampedToTheVideo() {
         let playback = ViewerVideoPlayback()
         let mediaID = UUID()
-        playback.attach(player: AVPlayer(), url: makeURL(), mediaID: mediaID, fallbackDuration: 20)
+        playback.attach(player: AVPlayer(), asset: AVURLAsset(url: makeURL()), mediaID: mediaID, fallbackDuration: 20)
 
         playback.seek(by: 5)
         XCTAssertEqual(playback.currentTime, 5, accuracy: 0.001)
