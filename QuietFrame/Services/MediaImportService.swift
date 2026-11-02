@@ -99,9 +99,11 @@ actor MediaImportService: MediaImporting {
             var summary = ImportSummary()
             summary.failedCount = initialFailureCount
             summary.thumbnailFailureCount = max(0, preflightThumbnailFailureCount)
-            defer { sources.forEach { IncomingMediaFileStore.remove($0.temporaryURL) } }
+            var startedCount = 0
+            defer { sources.dropFirst(startedCount).forEach { IncomingMediaFileStore.remove($0.temporaryURL) } }
 
             for (index, source) in sources.enumerated() {
+                startedCount = index + 1
                 defer { IncomingMediaFileStore.remove(source.temporaryURL) }
                 do {
                     try Task.checkCancellation()

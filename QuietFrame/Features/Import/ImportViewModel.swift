@@ -114,6 +114,7 @@ final class ImportViewModel {
             let sourceIdentifiers = await resolvedSourceIdentifiers
             let deletionUnavailableCount = sourceIdentifiers.filter { $0 == nil }.count
             var prepared: [ImportPreviewCandidate] = []
+            var abandonedURLs: [URL] = []
             var failedCount = pickerFailureCount
             var thumbnailFailureCount = 0
             var wasCancelled = false
@@ -134,15 +135,16 @@ final class ImportViewModel {
                 case .failed:
                     failedCount += 1
                 case .cancelled(let temporaryURL):
-                    if let temporaryURL { IncomingMediaFileStore.remove(temporaryURL) }
+                    if let temporaryURL { abandonedURLs.append(temporaryURL) }
                     wasCancelled = true
                 case nil:
                     wasCancelled = true
                 }
             }
+            IncomingMediaFileStore.removeInBackground(abandonedURLs)
 
             guard let self, generation == self.preparationGeneration, !wasCancelled, !Task.isCancelled else {
-                prepared.forEach { IncomingMediaFileStore.remove($0.source.temporaryURL) }
+                IncomingMediaFileStore.removeInBackground(prepared.map(\.source.temporaryURL))
                 if let self, generation == self.preparationGeneration { self.isPreparing = false }
                 return
             }
@@ -153,7 +155,7 @@ final class ImportViewModel {
                     scale: layout.scale
                 )
                 guard generation == preparationGeneration, !Task.isCancelled else {
-                    prepared.forEach { IncomingMediaFileStore.remove($0.source.temporaryURL) }
+                    IncomingMediaFileStore.removeInBackground(prepared.map(\.source.temporaryURL))
                     if generation == preparationGeneration { isPreparing = false }
                     return
                 }
@@ -243,7 +245,7 @@ final class ImportViewModel {
         guard !isImporting,
               let index = candidates.firstIndex(where: { $0.id == id }) else { return }
         let candidate = candidates[index]
-        IncomingMediaFileStore.remove(candidate.source.temporaryURL)
+        IncomingMediaFileStore.removeInBackground([candidate.source.temporaryURL])
         candidates.remove(at: index)
         previewImages.remove(candidate.id)
         albumAssignments.remove(candidate.id)
@@ -379,7 +381,7 @@ final class ImportViewModel {
     }
 
     private func cleanupPreparedFiles() {
-        candidates.forEach { IncomingMediaFileStore.remove($0.source.temporaryURL) }
+        IncomingMediaFileStore.removeInBackground(candidates.map(\.source.temporaryURL))
         previewImages.removeAll()
     }
 }

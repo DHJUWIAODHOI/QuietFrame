@@ -208,6 +208,35 @@ final class ImportPreparationTests: XCTestCase {
         XCTAssertTrue(ids.allSatisfy { viewModel.previewImages.cachedImage(for: $0, atLeast: 1) == nil })
     }
 
+    func testRemovedAndClosedCandidatesLoseTheirIncomingCopies() async throws {
+        let directory = try Benchmark.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selections = try makeSelections(count: 3, in: directory) { _ in .resolved(nil) }
+        let viewModel = makeViewModel(photoLibrary: IdlePhotoLibrary())
+        defer { viewModel.cancelPreparation() }
+        viewModel.prepare(selections: selections)
+        try await waitUntilPrepared(viewModel)
+        let urls = viewModel.candidates.map(\.source.temporaryURL)
+        XCTAssertEqual(urls.count, 3)
+        XCTAssertTrue(urls.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
+
+        viewModel.removeCandidate(id: viewModel.candidates[0].id)
+        try await waitUntilRemoved(urls[0])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: urls[1].path))
+
+        viewModel.cleanupIfIdle()
+        XCTAssertTrue(viewModel.candidates.isEmpty)
+        try await waitUntilRemoved(urls[1])
+        try await waitUntilRemoved(urls[2])
+    }
+
+    private func waitUntilRemoved(_ url: URL) async throws {
+        for _ in 0..<1_000 where FileManager.default.fileExists(atPath: url.path) {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path), "\(url.lastPathComponent) was not removed")
+    }
+
     private func makeViewModel(
         photoLibrary: any PhotoLibraryServing,
         importer: any MediaImporting = IdleImporter()

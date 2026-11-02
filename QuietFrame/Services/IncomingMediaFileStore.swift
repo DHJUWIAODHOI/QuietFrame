@@ -21,6 +21,16 @@ enum IncomingMediaFileStore {
         try? FileManager.default.removeItem(at: url)
     }
 
+    /// Removes incoming copies on a utility queue, so the caller, usually the main thread, never waits for the unlinks.
+    static func removeInBackground(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        DispatchQueue.global(qos: .utility).async {
+            for url in urls {
+                IncomingMediaFileStore.remove(url)
+            }
+        }
+    }
+
     static func removeAll() {
         guard let directory = try? incomingDirectory(),
               let files = try? FileManager.default.contentsOfDirectory(

@@ -308,6 +308,41 @@ final class MediaImportServiceTests: XCTestCase {
         XCTAssertFalse(calls.contains(.file(.thumbnails)), "Thumbnails must never pass through a plaintext file.")
     }
 
+    func testCancellingMidBatchStillRemovesEveryIncomingCopy() async throws {
+        let environment = try await makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.root) }
+        let incoming = environment.root.appendingPathComponent("QuietFrameIncoming", isDirectory: true)
+        try FileManager.default.createDirectory(at: incoming, withIntermediateDirectories: true)
+        let sources = try (0..<3).map { index in
+            try makeSource(
+                at: incoming.appendingPathComponent("item-\(index).jpg"),
+                bytes: Data(repeating: UInt8(0x50 + index), count: 80_000),
+                mediaType: .photo,
+                filename: "item-\(index).jpg"
+            )
+        }
+        let importer = environment.importer
+        let importTask = Task {
+            try await importer.importMedia(
+                sources,
+                albumID: nil,
+                preflightFailureCount: 0,
+                preflightThumbnailFailureCount: 0
+            ) { progress in
+                guard progress.completedItems == 1 else { return }
+                withUnsafeCurrentTask { task in
+                    task?.cancel()
+                }
+            }
+        }
+
+        let summary = try await importTask.value
+
+        XCTAssertTrue(summary.wasCancelled)
+        XCTAssertEqual(summary.importedCount, 1)
+        XCTAssertFalse(sources.contains { FileManager.default.fileExists(atPath: $0.temporaryURL.path) })
+    }
+
     private func makeEnvironment() async throws -> (
         root: URL,
         cache: URL,
