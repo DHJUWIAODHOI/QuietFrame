@@ -38,7 +38,65 @@ benchmarks and the unsigned archive.
 | 4 | Unlock: system PBKDF2 (P14); the vault opens before the storage check (P03) | `5f1df5b` `22a1ef8` | Verified |
 | 5 | Library: ID lookups (P08), store counts for the Albums tab (P05), search pages from one scan (P04 in part), lighter reconcile, name-based listings (P41), bulk Favorite in one save (P23) | `95e9764` `ef22709` `16f995e` | Verified |
 | 6 | Import: parallel preparation with "Preparing N of M" (P09), progress that never waits for the main thread (P17), thumbnails encrypted from memory and incoming copies removed per item (P37 in part) | `7e96ff3` `306b8ea` `61afc35` | Verified |
-| 7 | Crypto engine (P31, P20), storage bulk operations (P15, P40, P38), refresh skip (P11), import previews, thumbnail generation and picker (P13, P39, P22), scrubbing (P36), review follow-ups | — | Designing |
+| 7 | See "Phase 7 plan" below | — | Designed, not started |
+
+Corrections from the completeness review: P05, P06 and P30 are only partly done. Album covers still walk
+`album.media` up to four times per render, the viewer pager is still O(loaded items) per body evaluation, and Empty
+Trash and purges still flush the whole thumbnail cache.
+
+### Phase 7 plan (designed 2026-11-02, nothing implemented yet)
+
+Fix first:
+
+1. **Memory regression from `7e96ff3`.** Import review previews are decoded to 720 px bitmaps during preparation and
+   kept until the summary: about 290-520 MB for 250 items (computed). The old code decoded lazily. Fix: a
+   byte-bounded, tile-sized preview cache (P13).
+2. **Search snapshot survives a lock.** `VaultRepository.searchSnapshot` keeps the typed text and the matching IDs.
+   Clear it when the state leaves `.unlocked` (where `RootView` empties the thumbnail cache) and on reset.
+3. **Reconcile blocks the main thread** for about 0.4 s at 5k items, 0.75 s after unlock. Fetch in batches of 500,
+   sorted by id, with `Task.yield()` between batches. The gate already blocks concurrent media changes.
+
+Then, in independent groups with disjoint files (worktrees, adversarial review, one CI run):
+
+- **Crypto (P31 part, P20):**
+  - make every `ChunkedEncryptionService` member `nonisolated` (it holds only immutable state), plus
+    `SecureFileStorageService.decryptData`;
+  - drop the extra copy per chunk, and reserve bounded capacity in `decryptData`;
+  - remove the fsync in `decryptFile`;
+  - remove the unreachable `FileEncrypting.openReader` default;
+  - keep a few recent chunks in `EncryptedFileReader`.
+- **Storage (P15 part, P40 part, P30):**
+  - one bulk size listing per location for storage analysis;
+  - one-hop batch move and delete, keeping per-item rollback;
+  - targeted thumbnail eviction after Empty Trash and purges;
+  - remove the `SecureFileStoring.openEncryptedReader` default and give every test double an explicit stub;
+  - a pinning test for the per-item free-space check (P38 stays as is).
+- **Gallery (P11, P27, P04 part, P06, P35):**
+  - skip a refresh when the change counter, query, locale, time zone and calendar are unchanged (Recently Added
+    always refreshes), and don't reassign unchanged items;
+  - reuse the offset-0 search snapshot, and memoize dates per day while searching;
+  - pass ID arrays to the viewer pager, move the viewer-wide albums query, and stop `MediaPositionIndex` rebuilding
+    on every miss.
+- **Import (P13, P39, P22, P37 part):**
+  - the preview cache;
+  - blocking ImageIO work on a dispatch queue, and `image(at:)` for video;
+  - picker eligibility checks off the main thread with identical results;
+  - unlinks off the main thread, and the batch backstop removes only unprocessed sources;
+  - `LatestValueRelay` finishes its stream in `deinit`;
+  - restore do/catch where `try?` replaced it.
+- **Video (P36):**
+  - one exact seek in flight, plus the newest pending position (no tolerance, so the frames shown stay exact);
+  - the frame strip generated in one batch and kept per media;
+  - remove the unused `UniformTypeIdentifiers` import in `SecureMediaPage`.
+- **Albums (P05, P29):**
+  - evaluate the cover once per render, and sort once;
+  - refresh counts only while the screen is visible;
+  - move `VaultAlbum.activeMediaCount` (no app caller) into a test extension.
+- **Last:** prune the comments the rewrite added (app comment lines grew from 123 to 224, against CLAUDE.md), and add
+  any new benchmark classes to `BENCHMARK_CLASSES` in the workflow.
+
+Left out because they change visible behaviour (need sign-off): P12 look-ahead, seek tolerance while scrubbing,
+re-ordering ties in the storage top 20, batching free-space checks (P38), and loading Trash before the purge (P19).
 
 Test fixes on the way: two tests crashed on iOS 17 because their setup inserted both ends of a new relationship,
 which iOS 17's SwiftData registers twice; the test files were unchanged from `main`, so the crash predates the
