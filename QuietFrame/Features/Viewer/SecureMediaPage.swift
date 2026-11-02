@@ -1,7 +1,6 @@
 import AVFoundation
 import SwiftUI
 import UIKit
-import UniformTypeIdentifiers
 
 enum VideoPageAction: Equatable {
     case cleanup
