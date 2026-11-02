@@ -157,7 +157,9 @@ final class ViewerVideoPlayback {
         self.exactSeek = exactSeek
     }
 
-    /// AVPlayer does not document which queue runs a seek's completion, so it hops to the main actor.
+    /// AVPlayer does not document which queue runs a seek's completion, so it hops to the main actor. AVFoundation
+    /// rejects a seek with a completion before the item is ready, and an exact seek to the very end may never
+    /// complete, so those go out without one and count as finished at once.
     static func systemExactSeek(
         _ player: AVPlayer,
         _ seconds: TimeInterval,
@@ -166,6 +168,15 @@ final class ViewerVideoPlayback {
         let time = CMTime(seconds: seconds, preferredTimescale: 600)
         guard let completion else {
             player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+            return
+        }
+        guard let item = player.currentItem,
+              item.status == .readyToPlay,
+              CMTimeCompare(time, item.duration) < 0 else {
+            player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+            Task { @MainActor in
+                completion()
+            }
             return
         }
         player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { @Sendable (_: Bool) in
