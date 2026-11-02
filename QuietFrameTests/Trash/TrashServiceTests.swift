@@ -10,8 +10,9 @@ final class TrashServiceTests: XCTestCase {
         let storage = MockSecureFileStorage()
         let service = TrashService(modelContext: container.mainContext, storage: storage)
         let album = VaultAlbum(name: "Private")
-        let media = makeMedia(album: album)
         container.mainContext.insert(album)
+        try container.mainContext.save()
+        let media = makeMedia(album: album)
         container.mainContext.insert(media)
         try container.mainContext.save()
 

@@ -365,6 +365,8 @@ final class AlbumServiceTests: XCTestCase {
                 position: 7,
                 coverMediaID: mediaID
             )
+            container.mainContext.insert(album)
+            try container.mainContext.save()
             let media = VaultSchemaV2.VaultMedia(
                 id: mediaID,
                 storageIdentifier: "existing-storage",
@@ -393,7 +395,6 @@ final class AlbumServiceTests: XCTestCase {
             )
             importRecord.importedCount = 1
             importRecord.statusRawValue = "completed"
-            container.mainContext.insert(album)
             container.mainContext.insert(media)
             container.mainContext.insert(settings)
             container.mainContext.insert(importRecord)
