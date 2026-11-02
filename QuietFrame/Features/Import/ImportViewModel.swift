@@ -4,7 +4,6 @@ import UIKit
 
 struct ImportPreviewCandidate: Identifiable {
     let source: ImportSource
-    let previewImage: UIImage?
     let thumbnailFailed: Bool
 
     var id: UUID { source.id }
@@ -24,6 +23,9 @@ final class ImportViewModel {
     private(set) var summary: ImportSummary?
     private(set) var albumAssignments = ImportAlbumAssignments()
     var userMessage: String?
+    let previewImages: ImportPreviewImages
+    /// Set by the review screen once it knows where its tiles fall, so the first screen of previews is ready with it.
+    @ObservationIgnored var previewLayout: ImportPreviewLayout?
 
     private let metadataReader: any MediaMetadataReading
     private let thumbnailGenerator: any ThumbnailGenerating
@@ -38,15 +40,8 @@ final class ImportViewModel {
     /// Items prepared at once: enough to overlap copying, reading and preview work without holding many decodes.
     private static let preparationConcurrency = 3
 
-    private struct PreparedFile: Sendable {
-        let temporaryURL: URL
-        let metadata: MediaMetadata
-        let thumbnailJPEGData: Data?
-        let previewImage: UIImage?
-    }
-
     private enum PreparationOutcome: Sendable {
-        case prepared(PreparedFile)
+        case prepared(ImportPreparedFile)
         case failed
         case cancelled(temporaryURL: URL?)
     }
@@ -61,6 +56,7 @@ final class ImportViewModel {
         self.thumbnailGenerator = thumbnailGenerator
         self.importer = importer
         self.photoLibrary = photoLibrary
+        previewImages = ImportPreviewImages()
     }
 
     func prepare(
@@ -132,7 +128,6 @@ final class ImportViewModel {
                             thumbnailJPEGData: file.thumbnailJPEGData,
                             sourceLocalIdentifier: sourceIdentifiers[index]
                         ),
-                        previewImage: file.previewImage,
                         thumbnailFailed: thumbnailFailed
                     ))
                     if thumbnailFailed { thumbnailFailureCount += 1 }
@@ -150,6 +145,18 @@ final class ImportViewModel {
                 prepared.forEach { IncomingMediaFileStore.remove($0.source.temporaryURL) }
                 if let self, generation == self.preparationGeneration { self.isPreparing = false }
                 return
+            }
+            if let layout = previewLayout {
+                await previewImages.load(
+                    Array(prepared.prefix(max(0, layout.firstScreenCount))),
+                    tileWidth: layout.tileWidth,
+                    scale: layout.scale
+                )
+                guard generation == preparationGeneration, !Task.isCancelled else {
+                    prepared.forEach { IncomingMediaFileStore.remove($0.source.temporaryURL) }
+                    if generation == preparationGeneration { isPreparing = false }
+                    return
+                }
             }
             candidates = prepared
             preparationFailureCount = failedCount
@@ -171,7 +178,8 @@ final class ImportViewModel {
         }
     }
 
-    /// Copies, reads and previews one picked item off the main actor. Its incoming copy is removed when it fails.
+    /// Copies, reads and makes the thumbnail for one picked item off the main actor. Its incoming copy is removed when
+    /// it fails.
     private nonisolated static func prepare(
         _ selection: PhotoLibrarySelection,
         metadataReader: any MediaMetadataReading,
@@ -200,14 +208,10 @@ final class ImportViewModel {
                 thumbnailData = nil
             }
             try Task.checkCancellation()
-            let previewImage = thumbnailData.flatMap {
-                ThumbnailService.downsampledImage(from: $0, maximumPixelSize: ThumbnailService.storedPixelSize)
-            }
-            return .prepared(PreparedFile(
+            return .prepared(ImportPreparedFile(
                 temporaryURL: loadedFile.temporaryURL,
                 metadata: metadata,
-                thumbnailJPEGData: thumbnailData,
-                previewImage: previewImage
+                thumbnailJPEGData: thumbnailData
             ))
         } catch is CancellationError {
             return .cancelled(temporaryURL: temporaryURL)
@@ -241,6 +245,7 @@ final class ImportViewModel {
         let candidate = candidates[index]
         IncomingMediaFileStore.remove(candidate.source.temporaryURL)
         candidates.remove(at: index)
+        previewImages.remove(candidate.id)
         albumAssignments.remove(candidate.id)
         if candidate.thumbnailFailed {
             preparationThumbnailFailureCount = max(0, preparationThumbnailFailureCount - 1)
@@ -292,6 +297,7 @@ final class ImportViewModel {
                 let result = try await runImport(sources, albumID: albumID)
                 summary = result
                 candidates = []
+                previewImages.removeAll()
                 albumAssignments.reset()
                 if result.importedCount > 0, !result.canDeleteImportedOriginals {
                     userMessage = "Automatic deletion was not offered because every imported item could not be matched safely to a replaceable Photos asset."
@@ -374,5 +380,12 @@ final class ImportViewModel {
 
     private func cleanupPreparedFiles() {
         candidates.forEach { IncomingMediaFileStore.remove($0.source.temporaryURL) }
+        previewImages.removeAll()
     }
+}
+
+private struct ImportPreparedFile: Sendable {
+    let temporaryURL: URL
+    let metadata: MediaMetadata
+    let thumbnailJPEGData: Data?
 }

@@ -5,6 +5,7 @@ import UIKit
 struct ImportPreviewView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.displayScale) private var displayScale
     @Environment(AppDependencies.self) private var dependencies
     @Query(sort: \VaultAlbum.position) private var albums: [VaultAlbum]
     @Bindable var viewModel: ImportViewModel
@@ -15,19 +16,45 @@ struct ImportPreviewView: View {
     @State private var showsAlbumPicker = false
     @State private var assignmentAnnouncement: String?
     @State private var pendingAssignment: PendingAssignment?
+    @State private var contentSize: CGSize = .zero
 
     private struct PendingAssignment {
         let albumID: UUID?
     }
 
+    /// How many tiles behind and ahead of an appearing tile get their previews decoded early.
+    private static let previewPrefetchBehind = 6
+    private static let previewPrefetchAhead = 18
+
+    private var minimumTileWidth: CGFloat {
+        dynamicTypeSize.isAccessibilitySize ? 160 : 104
+    }
+
+    private var maximumTileWidth: CGFloat {
+        dynamicTypeSize.isAccessibilitySize ? 240 : 160
+    }
+
     private var columns: [GridItem] {
         [GridItem(
-            .adaptive(
-                minimum: dynamicTypeSize.isAccessibilitySize ? 160 : 104,
-                maximum: dynamicTypeSize.isAccessibilitySize ? 240 : 160
-            ),
+            .adaptive(minimum: minimumTileWidth, maximum: maximumTileWidth),
             spacing: QuietFrameTheme.gridSpacing
         )]
+    }
+
+    /// Where the grid's tiles fall in the sheet as measured, so previews can be decoded before the tiles appear.
+    private var previewLayout: ImportPreviewLayout? {
+        let spacing = QuietFrameTheme.gridSpacing
+        let gridWidth = min(QuietFrameTheme.readableWidth, contentSize.width - QuietFrameTheme.pagePadding * 2)
+        guard gridWidth > 0, gridWidth.isFinite, contentSize.height > 0, contentSize.height.isFinite else { return nil }
+        let tileWidth = adaptiveGridTileWidth(
+            availableWidth: gridWidth,
+            minimum: minimumTileWidth,
+            maximum: maximumTileWidth,
+            spacing: spacing
+        )
+        let columnCount = max(1, Int(((gridWidth + spacing) / (minimumTileWidth + spacing)).rounded(.down)))
+        let rowCount = Int((contentSize.height / (tileWidth + spacing)).rounded(.up)) + 1
+        return ImportPreviewLayout(tileWidth: tileWidth, scale: displayScale, firstScreenCount: columnCount * rowCount)
     }
 
     var body: some View {
@@ -48,6 +75,7 @@ struct ImportPreviewView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .background { sizeReporter }
         .background(ground)
         .safeAreaInset(edge: .bottom) { bottomAction }
         .confirmationDialog(
@@ -76,8 +104,28 @@ struct ImportPreviewView: View {
         .onChange(of: albumIDs, initial: true) { _, ids in
             viewModel.discardAlbumAssignments(notIn: Set(ids))
         }
+        .onChange(of: previewLayout, initial: true) { _, layout in
+            viewModel.previewLayout = layout
+        }
         .sheet(isPresented: $showsAlbumPicker, onDismiss: { finishAlbumAssignment() }) { albumPicker }
         .onDisappear { viewModel.cleanupIfIdle() }
+    }
+
+    private var sizeReporter: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .onAppear { contentSize = proxy.size }
+                .onChange(of: proxy.size) { _, size in contentSize = size }
+        }
+    }
+
+    private func prefetchPreviews(around candidateID: UUID) {
+        guard let layout = previewLayout else { return }
+        let candidates = viewModel.candidates
+        guard let index = candidates.firstIndex(where: { $0.id == candidateID }) else { return }
+        let lower = max(index - Self.previewPrefetchBehind, 0)
+        let upper = min(index + Self.previewPrefetchAhead, candidates.count - 1)
+        viewModel.previewImages.prefetch(Array(candidates[lower...upper]), tileWidth: layout.tileWidth, scale: layout.scale)
     }
 
     private var protectsReview: Bool {
@@ -236,11 +284,13 @@ struct ImportPreviewView: View {
                         ForEach(Array(viewModel.candidates.enumerated()), id: \.element.id) { index, candidate in
                             ImportSealingCell(
                                 candidate: candidate,
+                                previews: viewModel.previewImages,
                                 albumName: albumName(for: candidate.id),
                                 state: sealState(at: index)
                             )
                             .dynamicTypeSize(...DynamicTypeSize.accessibility1)
                             .id(candidate.id)
+                            .onAppear { prefetchPreviews(around: candidate.id) }
                         }
                     }
                 }
@@ -252,6 +302,7 @@ struct ImportPreviewView: View {
             }
             .onChange(of: sealingCandidateID) { _, candidateID in
                 guard let candidateID else { return }
+                prefetchPreviews(around: candidateID)
                 if reduceMotion {
                     proxy.scrollTo(candidateID)
                 } else {
@@ -283,6 +334,7 @@ struct ImportPreviewView: View {
                     ForEach(viewModel.candidates) { candidate in
                         ImportPreviewCell(
                             candidate: candidate,
+                            previews: viewModel.previewImages,
                             albumName: albumName(for: candidate.id),
                             isSelected: viewModel.albumAssignments.isSelected(candidate.id),
                             selectionMode: viewModel.albumAssignments.hasSelection,
@@ -292,6 +344,7 @@ struct ImportPreviewView: View {
                             viewModel.removeCandidate(id: candidate.id)
                         }
                         .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+                        .onAppear { prefetchPreviews(around: candidate.id) }
                     }
                 }
 
@@ -760,7 +813,9 @@ private extension ImportPreviewCandidate {
 
 private struct ImportTileArtwork: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.displayScale) private var displayScale
     let candidate: ImportPreviewCandidate
+    let previews: ImportPreviewImages
     let albumName: String?
     var labelDelay: Double = 0
     var animatesLabel = true
@@ -776,16 +831,20 @@ private struct ImportTileArtwork: View {
             .fill(QuietFrameTheme.inset)
             .aspectRatio(1, contentMode: .fit)
             .overlay {
-                preview
+                GeometryReader { proxy in
+                    preview(side: proxy.size.width)
+                        .frame(width: proxy.size.width, height: proxy.size.height)
+                }
             }
             .overlay(alignment: .bottom) {
                 bottomBadges
             }
     }
 
+    /// Decoded for the width this tile really has, so the preview always has at least as many pixels as it fills.
     @ViewBuilder
-    private var preview: some View {
-        if let image = candidate.previewImage {
+    private func preview(side: CGFloat) -> some View {
+        if let image = previewImage(side: side) {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFill()
@@ -794,6 +853,18 @@ private struct ImportTileArtwork: View {
                 .font(.title)
                 .foregroundStyle(QuietFrameTheme.quietInk)
         }
+    }
+
+    private func previewImage(side: CGFloat) -> UIImage? {
+        guard side > 0, side.isFinite else { return nil }
+        return previews.image(
+            for: candidate,
+            pixelSize: ImportPreviewImages.pixelSize(
+                tileWidth: side,
+                scale: displayScale,
+                metadata: candidate.source.metadata
+            )
+        )
     }
 
     private var bottomBadges: some View {
@@ -881,6 +952,7 @@ private struct ImportPreviewCell: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ScaledMetric(relativeTo: .body) private var badgeSize: CGFloat = 26
     let candidate: ImportPreviewCandidate
+    let previews: ImportPreviewImages
     let albumName: String?
     let isSelected: Bool
     let selectionMode: Bool
@@ -924,7 +996,7 @@ private struct ImportPreviewCell: View {
     }
 
     private var tile: some View {
-        ImportTileArtwork(candidate: candidate, albumName: albumName, labelDelay: labelDelay)
+        ImportTileArtwork(candidate: candidate, previews: previews, albumName: albumName, labelDelay: labelDelay)
             .overlay {
                 ImportTileArtwork.shape
                     .strokeBorder(QuietFrameTheme.accent, lineWidth: 3)
@@ -977,11 +1049,12 @@ private enum ImportSealState: Equatable {
 private struct ImportSealingCell: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let candidate: ImportPreviewCandidate
+    let previews: ImportPreviewImages
     let albumName: String?
     let state: ImportSealState
 
     var body: some View {
-        ImportTileArtwork(candidate: candidate, albumName: albumName, animatesLabel: false)
+        ImportTileArtwork(candidate: candidate, previews: previews, albumName: albumName, animatesLabel: false)
             .overlay {
                 sweep
             }

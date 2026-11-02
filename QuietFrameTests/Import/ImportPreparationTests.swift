@@ -157,6 +157,57 @@ final class ImportPreparationTests: XCTestCase {
         )
     }
 
+    func testPreparationDecodesOnlyTheFirstScreenBeforeShowingTheReview() async throws {
+        let directory = try Benchmark.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selections = try makeSelections(count: 6, in: directory, width: 720, height: 540) { _ in .resolved(nil) }
+        let viewModel = makeViewModel(photoLibrary: IdlePhotoLibrary())
+        defer { viewModel.cancelPreparation() }
+        viewModel.previewLayout = ImportPreviewLayout(tileWidth: 114, scale: 3, firstScreenCount: 2)
+
+        viewModel.prepare(selections: selections)
+        try await waitUntilPrepared(viewModel)
+
+        let candidates = viewModel.candidates
+        XCTAssertEqual(candidates.count, 6)
+        for candidate in candidates.prefix(2) {
+            XCTAssertEqual(viewModel.previewImages.cachedImage(for: candidate.id, atLeast: 512)?.cgImage?.width, 512)
+        }
+        for candidate in candidates.dropFirst(2) {
+            XCTAssertNil(viewModel.previewImages.cachedImage(for: candidate.id, atLeast: 1))
+        }
+        XCTAssertEqual(viewModel.previewImages.decodeCount, 2)
+        XCTAssertTrue(candidates.allSatisfy { $0.source.thumbnailJPEGData != nil })
+    }
+
+    func testRemovingACandidateAndFinishingTheImportReleasePreviews() async throws {
+        let directory = try Benchmark.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selections = try makeSelections(count: 3, in: directory, width: 720, height: 540) { _ in .resolved(nil) }
+        let viewModel = makeViewModel(photoLibrary: IdlePhotoLibrary(), importer: CompletingImporter())
+        defer { viewModel.cancelPreparation() }
+        viewModel.previewLayout = ImportPreviewLayout(tileWidth: 114, scale: 3, firstScreenCount: 3)
+        viewModel.prepare(selections: selections)
+        try await waitUntilPrepared(viewModel)
+        let ids = viewModel.candidates.map(\.id)
+        XCTAssertEqual(ids.count, 3)
+        XCTAssertTrue(ids.allSatisfy { viewModel.previewImages.cachedImage(for: $0, atLeast: 512) != nil })
+
+        viewModel.removeCandidate(id: ids[1])
+
+        XCTAssertNil(viewModel.previewImages.cachedImage(for: ids[1], atLeast: 1))
+        XCTAssertNotNil(viewModel.previewImages.cachedImage(for: ids[0], atLeast: 512))
+
+        viewModel.startImport()
+        for _ in 0..<1_000 where viewModel.isImporting {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        XCTAssertEqual(viewModel.summary?.importedCount, 2)
+        XCTAssertTrue(viewModel.candidates.isEmpty)
+        XCTAssertTrue(ids.allSatisfy { viewModel.previewImages.cachedImage(for: $0, atLeast: 1) == nil })
+    }
+
     private func makeViewModel(
         photoLibrary: any PhotoLibraryServing,
         importer: any MediaImporting = IdleImporter()
@@ -284,6 +335,26 @@ private actor IdleImporter: MediaImporting {
         progress: (@Sendable (ImportProgress) async -> Void)?
     ) async throws -> ImportSummary {
         throw VaultError.importFailed
+    }
+
+    func cleanupAbandonedIncomingFiles() async {}
+
+    func cancelAllOperations() async {}
+}
+
+/// Imports every source at once, consuming its incoming copy.
+private actor CompletingImporter: MediaImporting {
+    func importMedia(
+        _ sources: [ImportSource],
+        albumID: UUID?,
+        preflightFailureCount: Int,
+        preflightThumbnailFailureCount: Int,
+        progress: (@Sendable (ImportProgress) async -> Void)?
+    ) async throws -> ImportSummary {
+        sources.forEach { IncomingMediaFileStore.remove($0.temporaryURL) }
+        var summary = ImportSummary()
+        summary.importedCount = sources.count
+        return summary
     }
 
     func cleanupAbandonedIncomingFiles() async {}
