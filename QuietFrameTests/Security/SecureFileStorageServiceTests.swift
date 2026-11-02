@@ -174,6 +174,33 @@ final class SecureFileStorageServiceTests: XCTestCase {
         lease.cleanup()
         XCTAssertFalse(FileManager.default.fileExists(atPath: leasedURL.path))
     }
+
+    func testFileByteCountsListOnlyRegularVaultFiles() async throws {
+        let vault = try TemporaryVaultStorage()
+        defer { vault.remove() }
+        let small = try vault.place(in: .media, byteCount: 10)
+        let large = try vault.place(in: .media, byteCount: 4_000)
+        let empty = try vault.place(in: .media, byteCount: 0)
+        let uppercase = try vault.place(UUID().uuidString.uppercased(), in: .media, byteCount: 77)
+        try FileManager.default.createDirectory(
+            at: vault.url(of: UUID().uuidString.lowercased(), in: .media),
+            withIntermediateDirectories: false
+        )
+        try vault.place(".\(UUID().uuidString.lowercased())", in: .media)
+        try vault.place("not-a-uuid", in: .media)
+        let textFile = vault.directory(for: .media).appendingPathComponent("\(UUID().uuidString.lowercased()).txt")
+        try Data(repeating: 0x42, count: 9).write(to: textFile)
+        try vault.place(in: .trash, byteCount: 3)
+        let storage: any SecureFileStoring = vault.storage
+
+        let sizes = try await storage.fileByteCounts(location: .media)
+
+        XCTAssertEqual(sizes, [small: 10, large: 4_000, empty: 0, uppercase: 77])
+        for (identifier, size) in sizes {
+            let measured = try await storage.fileByteCount(identifier: identifier, location: .media)
+            XCTAssertEqual(measured, size, identifier)
+        }
+    }
 }
 
 private extension SecureFileStorageService {

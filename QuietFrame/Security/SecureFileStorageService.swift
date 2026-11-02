@@ -29,8 +29,16 @@ protocol SecureFileStoring: Sendable {
     func cleanupTemporaryFiles() async
     func removeAllEncryptedData() async throws
     func fileByteCount(identifier: String, location: EncryptedAssetLocation) async throws -> Int64
+    /// Sizes from one directory listing, keyed by identifier. Files it leaves out are measured with `fileByteCount`.
+    func fileByteCounts(location: EncryptedAssetLocation) async throws -> [String: Int64]
     func allIdentifiers(location: EncryptedAssetLocation) async throws -> Set<String>
     func openEncryptedReader(identifier: String, location: EncryptedAssetLocation) async throws -> EncryptedFileReader
+}
+
+extension SecureFileStoring {
+    func fileByteCounts(location: EncryptedAssetLocation) async throws -> [String: Int64] {
+        [:]
+    }
 }
 
 actor SecureFileStorageService: SecureFileStoring {
@@ -241,6 +249,30 @@ actor SecureFileStorageService: SecureFileStoring {
         let url = try encryptedURL(identifier: identifier, location: location)
         let attributes = try fileManager.attributesOfItem(atPath: url.path)
         return (attributes[.size] as? NSNumber)?.int64Value ?? 0
+    }
+
+    /// Only regular files with a vault file's name are listed; anything else, such as a directory with such a name,
+    /// is left to `fileByteCount`, so callers get the same size or the same error as before.
+    func fileByteCounts(location: EncryptedAssetLocation) throws -> [String: Int64] {
+        let directory = rootURL.appendingPathComponent(location.rawValue, isDirectory: true)
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .fileSizeKey]
+        let urls = try fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: Array(keys),
+            options: []
+        )
+        var sizes: [String: Int64] = [:]
+        sizes.reserveCapacity(urls.count)
+        for url in urls {
+            let name = url.lastPathComponent
+            guard !name.hasPrefix("."), name.hasSuffix(".qfe") else { continue }
+            let identifier = String(name.dropLast(4))
+            guard UUID(uuidString: identifier) != nil else { continue }
+            let values = try url.resourceValues(forKeys: keys)
+            guard values.isRegularFile == true, let size = values.fileSize else { continue }
+            sizes[identifier] = Int64(size)
+        }
+        return sizes
     }
 
     func allIdentifiers(location: EncryptedAssetLocation) throws -> Set<String> {
