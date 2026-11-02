@@ -32,10 +32,12 @@ final class VaultLockCoordinator {
     private let operationGate: VaultOperationGate
     private let cancelMediaOperations: (@Sendable () async -> Void)?
     private let postUnlockMaintenance: (@Sendable () async throws -> Void)?
+    private let maintenanceDelay: TimeInterval
     private let modelContext: ModelContext
     private let now: @Sendable () -> Date
     private var backgroundedAt: Date?
     private var delayedLockTask: Task<Void, Never>?
+    private var maintenanceTask: Task<Void, Never>?
     private var didInitialize = false
 
     init(
@@ -45,6 +47,7 @@ final class VaultLockCoordinator {
         operationGate: VaultOperationGate = VaultOperationGate(),
         cancelMediaOperations: (@Sendable () async -> Void)? = nil,
         postUnlockMaintenance: (@Sendable () async throws -> Void)? = nil,
+        maintenanceDelay: TimeInterval = 0.75,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.authentication = authentication
@@ -53,6 +56,7 @@ final class VaultLockCoordinator {
         self.modelContext = modelContext
         self.cancelMediaOperations = cancelMediaOperations
         self.postUnlockMaintenance = postUnlockMaintenance
+        self.maintenanceDelay = maintenanceDelay
         self.now = now
     }
 
@@ -78,8 +82,7 @@ final class VaultLockCoordinator {
                 state = .locked
             case .none:
                 try await authentication.unlockWithoutPasscode()
-                try await postUnlockMaintenance?()
-                state = .unlocked
+                openVault()
             case .notConfigured:
                 if try hasPersistedMedia() {
                     state = .recoveryRequired
@@ -102,7 +105,7 @@ final class VaultLockCoordinator {
             try await authentication.createPasscode(passcode)
             authenticationMode = .passcode
             state = .locked
-            try await postUnlockMaintenance?()
+            await maintainNewVault()
             state = .unlocked
         }
     }
@@ -112,7 +115,7 @@ final class VaultLockCoordinator {
             try await authentication.createWithoutPasscode()
             authenticationMode = .none
             state = .locked
-            try await postUnlockMaintenance?()
+            await maintainNewVault()
             state = .unlocked
         }
     }
@@ -154,12 +157,37 @@ final class VaultLockCoordinator {
         guard authenticationMode == .none, state == .locked else { return }
         do {
             try await authentication.unlockWithoutPasscode()
-            try await postUnlockMaintenance?()
-            state = .unlocked
+            openVault()
             userMessage = nil
         } catch {
             await handleVaultOpenFailure(error)
         }
+    }
+
+    /// Opens the vault straight away and runs the storage check once the unlock transition has played, under the
+    /// operation gate as before. A failed check leaves the vault open and runs again at the next unlock.
+    private func openVault() {
+        state = .unlocked
+        guard let postUnlockMaintenance else { return }
+        maintenanceTask?.cancel()
+        let delay = maintenanceDelay
+        maintenanceTask = Task { [weak self] in
+            if delay > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            }
+            guard !Task.isCancelled, self?.state == .unlocked else { return }
+            try? await postUnlockMaintenance()
+        }
+    }
+
+    /// A vault created moments ago has nothing to reconcile, so the check runs before it opens and cannot block it.
+    private func maintainNewVault() async {
+        try? await postUnlockMaintenance?()
+    }
+
+    /// Waits for the storage check scheduled by the last unlock, for tests.
+    func waitForMaintenance() async {
+        await maintenanceTask?.value
     }
 
     func retryOpeningVault() async {
@@ -175,9 +203,8 @@ final class VaultLockCoordinator {
     func unlock(passcode: String) async {
         await perform {
             try await authentication.unlock(passcode: passcode)
-            try await postUnlockMaintenance?()
             lockoutDate = nil
-            state = .unlocked
+            openVault()
         }
     }
 
@@ -189,9 +216,8 @@ final class VaultLockCoordinator {
             try await authentication.unlockWithBiometrics(
                 reason: "Unlock your private QuietFrame library"
             )
-            try await postUnlockMaintenance?()
             lockoutDate = nil
-            state = .unlocked
+            openVault()
             userMessage = nil
         } catch VaultError.biometricsChanged {
             await authentication.lock()
@@ -210,6 +236,7 @@ final class VaultLockCoordinator {
     func lock() async {
         delayedLockTask?.cancel()
         delayedLockTask = nil
+        maintenanceTask?.cancel()
         if state != .needsOnboarding && state != .retryRequired && state != .recoveryRequired {
             state = .locked
         }

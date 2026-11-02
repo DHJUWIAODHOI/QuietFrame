@@ -91,11 +91,13 @@ final class VaultLockCoordinatorTests: XCTestCase {
             authentication: authentication,
             secureStorage: MockSecureFileStorage(),
             modelContext: container.mainContext,
-            postUnlockMaintenance: { try await maintenance.increment() }
+            postUnlockMaintenance: { try await maintenance.increment() },
+            maintenanceDelay: 0
         )
 
         await coordinator.initializeIfNeeded()
         XCTAssertEqual(coordinator.state, .unlocked)
+        await coordinator.waitForMaintenance()
 
         let encryption = ChunkedEncryptionService(session: session, chunkByteCount: 65_536)
         _ = try await encryption.encryptFile(at: sourceURL, to: encryptedURL) { fraction in
@@ -110,7 +112,7 @@ final class VaultLockCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.state, .unlocked)
     }
 
-    func testNoPasscodeMaintenanceFailureCanRetryWithoutRecovery() async throws {
+    func testMaintenanceFailureLeavesTheVaultOpenAndRunsAgainAtTheNextUnlock() async throws {
         let container = try makeContainer(autoLock: .oneMinute)
         let authentication = MockAuthenticationService()
         try await authentication.removePasscode(current: "123456")
@@ -119,17 +121,136 @@ final class VaultLockCoordinatorTests: XCTestCase {
             authentication: authentication,
             secureStorage: MockSecureFileStorage(),
             modelContext: container.mainContext,
-            postUnlockMaintenance: { try await maintenance.increment() }
+            postUnlockMaintenance: { try await maintenance.increment() },
+            maintenanceDelay: 0
         )
 
         await coordinator.initializeIfNeeded()
-        XCTAssertEqual(coordinator.state, .retryRequired)
+        XCTAssertEqual(coordinator.state, .unlocked)
+        await coordinator.waitForMaintenance()
+        XCTAssertEqual(coordinator.state, .unlocked)
+        XCTAssertNil(coordinator.userMessage)
 
-        await coordinator.retryOpeningVault()
+        await coordinator.lock()
+        await coordinator.resumeWithoutPasscodeIfNeeded()
+        await coordinator.waitForMaintenance()
 
         let maintenanceCount = await maintenance.value
         XCTAssertEqual(maintenanceCount, 2)
         XCTAssertEqual(coordinator.state, .unlocked)
+    }
+
+    func testPasscodeUnlockRunsTheStorageCheckOnceAfterOpening() async throws {
+        let container = try makeContainer(autoLock: .oneMinute)
+        let maintenance = TestAsyncCounter()
+        let coordinator = VaultLockCoordinator(
+            authentication: MockAuthenticationService(),
+            secureStorage: MockSecureFileStorage(),
+            modelContext: container.mainContext,
+            postUnlockMaintenance: { try await maintenance.increment() },
+            maintenanceDelay: 0
+        )
+        await coordinator.initializeIfNeeded()
+
+        await coordinator.unlock(passcode: "123456")
+        await coordinator.waitForMaintenance()
+
+        let maintenanceCount = await maintenance.value
+        XCTAssertEqual(maintenanceCount, 1)
+        XCTAssertEqual(coordinator.state, .unlocked)
+    }
+
+    func testBiometricUnlockRunsTheStorageCheckOnceAfterOpening() async throws {
+        let container = try makeContainer(autoLock: .oneMinute)
+        let maintenance = TestAsyncCounter()
+        let coordinator = VaultLockCoordinator(
+            authentication: MockAuthenticationService(),
+            secureStorage: MockSecureFileStorage(),
+            modelContext: container.mainContext,
+            postUnlockMaintenance: { try await maintenance.increment() },
+            maintenanceDelay: 0
+        )
+        await coordinator.initializeIfNeeded()
+
+        await coordinator.unlockWithBiometrics()
+        await coordinator.waitForMaintenance()
+
+        let maintenanceCount = await maintenance.value
+        XCTAssertEqual(maintenanceCount, 1)
+        XCTAssertEqual(coordinator.state, .unlocked)
+    }
+
+    func testCreatingAPasscodeRunsTheStorageCheckOnceAndOpensWhenItFails() async throws {
+        let container = try makeContainer(autoLock: .oneMinute)
+        let authentication = MockAuthenticationService()
+        try await authentication.resetCredentials()
+        let maintenance = TestAsyncCounter(nextError: .fileOperationFailed)
+        let coordinator = VaultLockCoordinator(
+            authentication: authentication,
+            secureStorage: MockSecureFileStorage(),
+            modelContext: container.mainContext,
+            postUnlockMaintenance: { try await maintenance.increment() },
+            maintenanceDelay: 0
+        )
+        await coordinator.initializeIfNeeded()
+        XCTAssertEqual(coordinator.state, .needsOnboarding)
+
+        await coordinator.createPasscode("123456", confirmation: "123456")
+        await coordinator.waitForMaintenance()
+
+        let maintenanceCount = await maintenance.value
+        XCTAssertEqual(maintenanceCount, 1)
+        XCTAssertEqual(coordinator.state, .unlocked)
+        XCTAssertNil(coordinator.userMessage)
+    }
+
+    func testCreatingWithoutAPasscodeRunsTheStorageCheckOnceAndOpensWhenItFails() async throws {
+        let container = try makeContainer(autoLock: .oneMinute)
+        let authentication = MockAuthenticationService()
+        try await authentication.resetCredentials()
+        let maintenance = TestAsyncCounter(nextError: .fileOperationFailed)
+        let coordinator = VaultLockCoordinator(
+            authentication: authentication,
+            secureStorage: MockSecureFileStorage(),
+            modelContext: container.mainContext,
+            postUnlockMaintenance: { try await maintenance.increment() },
+            maintenanceDelay: 0
+        )
+        await coordinator.initializeIfNeeded()
+        XCTAssertEqual(coordinator.state, .needsOnboarding)
+
+        await coordinator.createWithoutPasscode()
+        await coordinator.waitForMaintenance()
+
+        let maintenanceCount = await maintenance.value
+        XCTAssertEqual(maintenanceCount, 1)
+        XCTAssertEqual(coordinator.state, .unlocked)
+        XCTAssertNil(coordinator.userMessage)
+    }
+
+    func testPasscodeUnlockOpensBeforeTheStorageCheckRuns() async throws {
+        let container = try makeContainer(autoLock: .oneMinute)
+        let authentication = MockAuthenticationService()
+        let maintenance = TestAsyncCounter()
+        let coordinator = VaultLockCoordinator(
+            authentication: authentication,
+            secureStorage: MockSecureFileStorage(),
+            modelContext: container.mainContext,
+            postUnlockMaintenance: { try await maintenance.increment() },
+            maintenanceDelay: 60
+        )
+        await coordinator.initializeIfNeeded()
+        XCTAssertEqual(coordinator.state, .locked)
+
+        await coordinator.unlock(passcode: "123456")
+
+        XCTAssertEqual(coordinator.state, .unlocked)
+        let countRightAfterUnlock = await maintenance.value
+        XCTAssertEqual(countRightAfterUnlock, 0)
+        await coordinator.lock()
+        await coordinator.waitForMaintenance()
+        let countAfterLocking = await maintenance.value
+        XCTAssertEqual(countAfterLocking, 0, "A check still waiting when the vault locks is skipped")
     }
 
     func testKeychainFailureCanRetryWithoutRecovery() async throws {
