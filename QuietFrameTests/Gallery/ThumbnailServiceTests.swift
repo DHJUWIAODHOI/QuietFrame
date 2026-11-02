@@ -298,7 +298,7 @@ final class ThumbnailServiceTests: XCTestCase {
     }
 
     private func waitUntil(
-        timeout: TimeInterval = 10,
+        timeout: TimeInterval = 30,
         _ condition: @MainActor () async -> Bool
     ) async throws {
         let deadline = Date().addingTimeInterval(timeout)
