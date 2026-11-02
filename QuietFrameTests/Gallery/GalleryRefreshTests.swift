@@ -58,6 +58,10 @@ final class GalleryRefreshTests: XCTestCase {
         let viewModel = albumViewModel(fixture, pageSize: 2)
         await viewModel.loadInitial()
         try await loadNextPage(of: viewModel)
+        // The app never saves an edit without recording it; this one only shows whether the refresh fetched.
+        let newest = try fixture.item(named: "5")
+        newest.trashedAt = Date()
+        try fixture.container.mainContext.save()
 
         await assertNothingObservedChanges(in: viewModel) {
             await viewModel.refreshLoadedItems()
@@ -71,15 +75,19 @@ final class GalleryRefreshTests: XCTestCase {
         let fixture = try makeFixture(count: 5)
         let viewModel = albumViewModel(fixture, pageSize: 2)
         await viewModel.loadInitial()
-        let unloaded = try fixture.item(named: "2")
-        try fixture.repository.moveMedia(ids: [unloaded.id], toAlbumID: nil)
+        _ = try fixture.repository.insertImportedMedia(
+            storageIdentifier: "6",
+            thumbnailIdentifier: nil,
+            fingerprint: "fingerprint-6",
+            metadata: Benchmark.metadata(filename: "6.jpg", width: 100, height: 100, byteCount: 100),
+            albumID: fixture.album.id
+        )
         try await loadNextPage(of: viewModel)
 
         await viewModel.refreshLoadedItems()
 
-        let fresh = try fixture.repository.fetchMedia(query: viewModel.query, offset: 0, limit: viewModel.items.count)
-        XCTAssertEqual(viewModel.itemIDs, fresh.items.map(\.id))
-        XCTAssertEqual(identifiers(of: viewModel), ["5", "4", "3", "1"])
+        XCTAssertEqual(identifiers(of: viewModel), ["6", "5", "4", "3"])
+        XCTAssertEqual(Set(viewModel.itemIDs).count, viewModel.itemIDs.count)
     }
 
     func testPageAppendedUnderAnotherQueryMakesTheNextRefreshFetch() async throws {
@@ -157,10 +165,15 @@ final class GalleryRefreshTests: XCTestCase {
         await viewModel.loadInitial()
         try await loadNextPage(of: viewModel)
         XCTAssertEqual(identifiers(of: viewModel), ["1", "2", "3", "4"])
+        // The app never saves an edit without recording it; this one only shows whether the refresh fetched.
+        let first = try fixture.item(named: "1")
+        first.trashedAt = Date()
+        try fixture.container.mainContext.save()
 
         await assertNothingObservedChanges(in: viewModel) {
             await viewModel.refreshLoadedItems()
         }
+        XCTAssertEqual(identifiers(of: viewModel), ["1", "2", "3", "4"])
 
         try fixture.repository.renameAlbum(id: fixture.album.id, name: "Archive")
         await viewModel.refreshLoadedItems()
