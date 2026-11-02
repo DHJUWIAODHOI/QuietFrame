@@ -84,7 +84,7 @@ QuietFrame/
   - Deletes: remove metadata first, then files.
   - Every save that changes media or albums must call `repository.changes.recordChange()` (`LibraryChangeCounter`). Galleries skip a refresh when the counter has not moved, so a missing call shows stale data.
   - `StorageReconciliationService` runs 0.75 s after every unlock as a backstop, in batches that stop if the vault locks.
-- **Performance:** the rewrite on `perf-rewrite` is documented in `Docs/Performance/` (`AUDIT.md`, `PROGRESS.md`). Crypto methods are `nonisolated` so reads run in parallel; never block one of Swift's cooperative threads (the simulator has very few), and run blocking ImageIO or PhotoKit work through `BlockingWork`.
+- **Performance:** the performance rewrite is documented in `Docs/Performance/` (`AUDIT.md`, `PROGRESS.md`). Crypto methods are `nonisolated` so reads run in parallel; never block one of Swift's cooperative threads (the simulator has very few), and run blocking ImageIO or PhotoKit work through `BlockingWork`.
 
 ## Security invariants (do not regress)
 
@@ -140,8 +140,8 @@ QuietFrame/
 
 - The app is for the owner's personal use and is never published, so App Store requirements do not apply. It is installed from the unsigned IPA that CI builds.
 - The v1 feature set is implemented. There are no TODO/FIXME markers; open work is in README "Known Limitations" and the unchecked items of the SECURITY.md checklist.
-- `main` (`1c8d5d0`) is in sync with `origin/main`. The performance rewrite lives on `perf-rewrite` until the owner approves a merge; its state is in `Docs/Performance/PROGRESS.md`. The repository is public, so CI minutes are free; never commit secrets or personal media. The simulator test step must stay ad-hoc signed (`CODE_SIGN_IDENTITY=-`): an unsigned test host has no Keychain access, which fails `KeychainServiceTests` and leaves the UI test on the retry screen. CI also runs the SwiftData test classes on iOS 18.5 and an installed iOS 17.5, and the benchmarks in their own optimized step; `-f compare=true` adds a same-run comparison against `6d83bea`. On iOS 17, never insert both ends of a new relationship: insert and save one side first, or SwiftData traps with "Duplicate registration attempt". `refactor-ui-fork` (= `fork/main`) is an older branch with a shortened CI test list, and the `fork` remote no longer exists.
-- **Tests (on `perf-rewrite`):** 377 unit tests in 47 files, 1 UI test, and 49 benchmarks in 11 classes. No tests cover reset-journal recovery or biometrics.
+- The performance rewrite was merged into `main` on 2026-11-02 (a fast-forward from `1c8d5d0`), and `main` is in sync with `origin/main`. Its results and the work still awaiting the owner's sign-off are in `Docs/Performance/PROGRESS.md`. The repository is public, so CI minutes are free; never commit secrets or personal media. The simulator test step must stay ad-hoc signed (`CODE_SIGN_IDENTITY=-`): an unsigned test host has no Keychain access, which fails `KeychainServiceTests` and leaves the UI test on the retry screen. CI also runs the SwiftData test classes on iOS 18.5 and an installed iOS 17.5, and the benchmarks in their own optimized step; `-f compare=true` adds a same-run comparison against `6d83bea`. On iOS 17, never insert both ends of a new relationship: insert and save one side first, or SwiftData traps with "Duplicate registration attempt". `refactor-ui-fork` (= `fork/main`) is an older branch with a shortened CI test list, and the `fork` remote no longer exists.
+- **Tests:** 377 unit tests in 47 files, 1 UI test, and 49 benchmarks in 11 classes. No tests cover reset-journal recovery or biometrics.
 - **Stale docs:**
   - PHASE_REPORT.md:114: says the viewer decrypts only the active page. Photos are now prepared for the selected page and its neighbours, one at a time, at screen size by `ViewerPhotoLoader`; videos stream from their encrypted files for the active page.
 - **Half-finished:**

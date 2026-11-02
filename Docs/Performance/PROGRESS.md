@@ -1,12 +1,12 @@
 # Performance rewrite: progress
 
-Branch `perf-rewrite`, cut from `main` at `1c8d5d0`. `main` stays the working reference until the owner approves a
-merge. The audit (architecture, feature inventory, the 46 ranked problems P01-P46, replacement architecture, data
+Done on branch `perf-rewrite`, cut from `main` at `1c8d5d0`, and merged into `main` on 2026-11-02 with the owner's
+approval. The audit (architecture, feature inventory, the 46 ranked problems P01-P46, replacement architecture, data
 risks and strategy) is in [AUDIT.md](AUDIT.md).
 
 ## How changes are verified
 
-- Nothing can be built on the development machine (Windows, no Xcode). Every change is pushed to `perf-rewrite` and
+- Nothing can be built on the development machine (Windows, no Xcode). Every change was pushed to `perf-rewrite` and
   checked by CI: `gh workflow run build-ipa.yml --ref perf-rewrite -R DHJUWIAODHOI/QuietFrame`. The repository is
   public, so CI minutes are free.
 - CI runs the full unit and UI suite on iOS 26.2, the SwiftData test classes again on iOS 18.5 and, in a parallel job,
@@ -25,8 +25,8 @@ risks and strategy) is in [AUDIT.md](AUDIT.md).
 
 ## Phases
 
-All phases are verified: every CI job passed in run 41491626842 at `9689d4d` (377 tests on iOS 26.2, the 99
-SwiftData tests on iOS 18.5 and on iOS 17.5, the benchmarks, the comparison and the unsigned archive).
+All phases are verified: every CI job passed in run 41491626842 at `9689d4d` (377 unit tests and the UI test on iOS
+26.2, the 99 SwiftData tests on iOS 18.5 and on iOS 17.5, the benchmarks, the comparison and the unsigned archive).
 
 | Phase | Scope (audit IDs) | Main commits |
 | --- | --- | --- |
@@ -70,7 +70,7 @@ P46 (SVG app icon) does not apply, because the app is not published.
 
 ## Tests
 
-376 unit tests in 47 files and 1 UI test (the original app had 167 in 25), plus 49 benchmarks in 11 classes.
+377 unit tests in 47 files and 1 UI test (the original app had 167 in 25), plus 49 benchmarks in 11 classes.
 New coverage includes:
 
 - PBKDF2 against independent vectors, and the container format against vectors built with CryptoKit alone;
