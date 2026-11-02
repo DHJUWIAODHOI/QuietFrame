@@ -5,6 +5,9 @@ import Observation
 @Observable
 final class GalleryViewModel {
     private(set) var items: [VaultMedia] = []
+    /// The IDs of `items` in the same order, built once per change, so screens can hand them on and find positions
+    /// without reading every item's ID.
+    private(set) var itemIDs: [UUID] = []
     private(set) var isLoading = false
     private(set) var hasMore = true
     private(set) var hasLoaded = false
@@ -36,11 +39,11 @@ final class GalleryViewModel {
         do {
             let page = try repository.fetchMedia(query: query, offset: 0, limit: pageSize)
             guard loadGeneration == generation else { return }
-            items = page.items
+            replaceItems(with: page.items)
             hasMore = page.hasMore
         } catch {
             guard loadGeneration == generation else { return }
-            items = []
+            replaceItems(with: [])
             hasMore = false
             errorMessage = (error as? VaultError)?.localizedDescription
                 ?? VaultError.persistenceFailure.localizedDescription
@@ -64,7 +67,7 @@ final class GalleryViewModel {
         do {
             let page = try repository.fetchMedia(query: query, offset: 0, limit: max(items.count, pageSize))
             guard loadGeneration == generation else { return }
-            items = page.items
+            replaceItems(with: page.items)
             hasMore = page.hasMore
             errorMessage = nil
             selectedIDs.formIntersection(page.items.map(\.id))
@@ -77,11 +80,11 @@ final class GalleryViewModel {
     }
 
     func loadNextIfNeeded(currentItem: VaultMedia) async {
-        guard hasMore, !isLoading, currentItem.id == items.last?.id else { return }
+        guard hasMore, !isLoading, currentItem.id == itemIDs.last else { return }
         isLoading = true
         do {
             let page = try repository.fetchMedia(query: query, offset: items.count, limit: pageSize)
-            items.append(contentsOf: page.items)
+            appendItems(page.items)
             hasMore = page.hasMore
             errorMessage = nil
         } catch {
@@ -161,6 +164,17 @@ final class GalleryViewModel {
 
     /// The position of a loaded item, without scanning the items on every call.
     func index(of id: UUID) -> Int? {
-        positions.index(of: id, in: items)
+        positions.index(of: id, in: itemIDs)
+    }
+
+    private func replaceItems(with newItems: [VaultMedia]) {
+        items = newItems
+        itemIDs = newItems.map(\.id)
+    }
+
+    private func appendItems(_ newItems: [VaultMedia]) {
+        guard !newItems.isEmpty else { return }
+        items.append(contentsOf: newItems)
+        itemIDs.append(contentsOf: newItems.map(\.id))
     }
 }

@@ -65,6 +65,8 @@ struct MediaViewer: View {
     }
 
     let items: [VaultMedia]
+    /// The IDs of `items`, built once per change by the presenter, so the pager never reads every item's ID.
+    let itemIDs: [UUID]
     let dependencies: AppDependencies
     let tileFrames: MediaTileFrames?
     let onCurrentMediaChange: ((UUID?) -> Void)?
@@ -110,12 +112,14 @@ struct MediaViewer: View {
 
     init(
         items: [VaultMedia],
+        itemIDs: [UUID],
         initialMediaID: UUID,
         dependencies: AppDependencies,
         tileFrames: MediaTileFrames? = nil,
         onCurrentMediaChange: ((UUID?) -> Void)? = nil
     ) {
         self.items = items
+        self.itemIDs = itemIDs.count == items.count ? itemIDs : items.map(\.id)
         self.dependencies = dependencies
         self.tileFrames = tileFrames
         self.onCurrentMediaChange = onCurrentMediaChange
@@ -125,7 +129,7 @@ struct MediaViewer: View {
     }
 
     private var selectedMediaIndex: Int? {
-        positions.index(of: selectedMediaID, in: items)
+        positions.index(of: selectedMediaID, in: itemIDs)
     }
 
     private var selectedMedia: VaultMedia? {
@@ -341,26 +345,32 @@ struct MediaViewer: View {
     private var mediaPager: some View {
         let selectedIndex = self.selectedIndex
         return TabView(selection: $selectedMediaID) {
-            ForEach(items, id: \.id) { media in
-                let pageIndex = positions.index(of: media.id, in: items) ?? -2
-                let pageState = mediaPageState(pageIndex: pageIndex, selectedIndex: selectedIndex)
-                SecureMediaPage(
-                    media: media,
-                    isActive: pageState.isActive,
-                    shouldPrepare: pageState.shouldPrepare,
-                    storage: dependencies.secureStorage,
-                    photoLoader: photoLoader,
-                    playback: playback,
-                    onTap: toggleControls,
-                    onPhotoZoomChanged: { updatePhotoZoom($0, mediaID: media.id) },
-                    thumbnailService: dependencies.thumbnailService,
-                    isLifted: pageState.isActive && mediaIsLifted
-                )
-                .tag(media.id)
+            ForEach(itemIDs, id: \.self) { mediaID in
+                mediaPage(for: mediaID, selectedIndex: selectedIndex)
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
         .simultaneousGesture(dismissGesture)
+    }
+
+    /// Every ID in `itemIDs` has a position. The fallback only spares the pager an optional page, which would make
+    /// SwiftUI build every page just to count them.
+    private func mediaPage(for mediaID: UUID, selectedIndex: Int) -> some View {
+        let pageIndex = positions.index(of: mediaID, in: itemIDs) ?? 0
+        let pageState = mediaPageState(pageIndex: pageIndex, selectedIndex: selectedIndex)
+        return SecureMediaPage(
+            media: items[pageIndex],
+            isActive: pageState.isActive,
+            shouldPrepare: pageState.shouldPrepare,
+            storage: dependencies.secureStorage,
+            photoLoader: photoLoader,
+            playback: playback,
+            onTap: toggleControls,
+            onPhotoZoomChanged: { updatePhotoZoom($0, mediaID: mediaID) },
+            thumbnailService: dependencies.thumbnailService,
+            isLifted: pageState.isActive && mediaIsLifted
+        )
+        .tag(mediaID)
     }
 
     /// Catches taps and downward drags on the raised media to put it back, and fades it into the panel.

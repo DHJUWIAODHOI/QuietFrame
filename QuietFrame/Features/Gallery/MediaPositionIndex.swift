@@ -1,21 +1,23 @@
 import Foundation
 
-/// Positions of media in a list by ID. A lookup that finds the index out of date rebuilds it once, so callers that
-/// look up positions on every frame never scan the whole list.
+/// Positions of media in a list of IDs. The map is rebuilt only when the list changes, so callers that look up
+/// positions on every frame never scan the whole list, not even for an ID that is missing from it.
 @MainActor
 final class MediaPositionIndex {
+    private var indexedIDs: [UUID] = []
     private var positions: [UUID: Int] = [:]
 
-    func index(of id: UUID, in items: [VaultMedia]) -> Int? {
-        if let index = positions[id], items.indices.contains(index), items[index].id == id {
-            return index
+    func index(of id: UUID, in ids: [UUID]) -> Int? {
+        if ids != indexedIDs {
+            var rebuilt: [UUID: Int] = [:]
+            rebuilt.reserveCapacity(ids.count)
+            for (index, mediaID) in ids.enumerated() where rebuilt[mediaID] == nil {
+                rebuilt[mediaID] = index
+            }
+            positions = rebuilt
         }
-        var rebuilt: [UUID: Int] = [:]
-        rebuilt.reserveCapacity(items.count)
-        for (index, item) in items.enumerated() where rebuilt[item.id] == nil {
-            rebuilt[item.id] = index
-        }
-        positions = rebuilt
-        return rebuilt[id]
+        // Holding the caller's own array makes the next comparison a check of the same storage.
+        indexedIDs = ids
+        return positions[id]
     }
 }

@@ -130,7 +130,7 @@ struct GalleryGridView: View {
 
     /// A tile already on screen re-runs its paging task when a refresh makes it the last loaded item.
     private func loadsNextPage(from media: VaultMedia) -> Bool {
-        viewModel.hasMore && media.id == viewModel.items.last?.id
+        viewModel.hasMore && media.id == viewModel.itemIDs.last
     }
 
     private func prefetchThumbnails(around media: VaultMedia) {

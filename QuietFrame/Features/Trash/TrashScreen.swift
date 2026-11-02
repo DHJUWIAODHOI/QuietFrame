@@ -77,6 +77,7 @@ private struct TrashScreenContent: View {
         }) { request in
             MediaViewer(
                 items: viewModel.items,
+                itemIDs: viewModel.itemIDs,
                 initialMediaID: request.mediaID,
                 dependencies: dependencies,
                 tileFrames: tileFrames,

@@ -144,6 +144,7 @@ private struct GalleryBrowserContent: View {
         }) { request in
             MediaViewer(
                 items: galleryViewModel.items,
+                itemIDs: galleryViewModel.itemIDs,
                 initialMediaID: request.mediaID,
                 dependencies: dependencies,
                 tileFrames: tileFrames,
