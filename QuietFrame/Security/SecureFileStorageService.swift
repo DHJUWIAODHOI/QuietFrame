@@ -223,14 +223,10 @@ actor SecureFileStorageService: SecureFileStoring {
 
     func allIdentifiers(location: EncryptedAssetLocation) throws -> Set<String> {
         let directory = rootURL.appendingPathComponent(location.rawValue, isDirectory: true)
-        let files = try fileManager.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        )
-        return Set(files.compactMap { url in
-            guard url.pathExtension == "qfe" else { return nil }
-            let identifier = url.deletingPathExtension().lastPathComponent
+        let names = try fileManager.contentsOfDirectory(atPath: directory.path)
+        return Set(names.compactMap { name in
+            guard !name.hasPrefix("."), name.hasSuffix(".qfe") else { return nil }
+            let identifier = String(name.dropLast(4))
             return UUID(uuidString: identifier) == nil ? nil : identifier
         })
     }

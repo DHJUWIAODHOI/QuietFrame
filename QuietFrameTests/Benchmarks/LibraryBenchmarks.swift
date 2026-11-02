@@ -110,23 +110,39 @@ final class LibraryBenchmarks: XCTestCase {
         }
     }
 
-    /// The work AlbumsScreen does each time its body is evaluated: the active-media query behind the three
-    /// collection counts, then each album row's count and cover.
+    /// The Albums tab's first appearance with counts from the store: the album list, the counts and the covers, in a
+    /// fresh context. The tab counts again when it appears, when its albums change and after each saved edit.
+    func testAlbumsTabCountsInTheStore() throws {
+        let library = try BenchmarkLibrary.make(itemCount: itemCount)
+        defer { library.remove() }
+        let counts = AlbumCounts()
+
+        measure(metrics: [XCTClockMetric()], options: Benchmark.manualOptions) {
+            let context = ModelContext(library.container)
+            startMeasuring()
+            let albums = (try? context.fetch(FetchDescriptor<VaultAlbum>(sortBy: [SortDescriptor(\.position)]))) ?? []
+            counts.refresh(in: context, albumIDs: albums.map(\.id))
+            let covers = albums.filter { $0.benchmarkCover != nil }.count
+            stopMeasuring()
+            withExtendedLifetime((context, albums)) {}
+            XCTAssertGreaterThan(counts.allCount + covers, 0)
+        }
+    }
+
+    /// The Albums tab's first appearance before the counts moved into the store: the active-media query behind the
+    /// three collection counts, then each album row's count and cover, in a fresh context.
     func testAlbumsTabCounts() throws {
         let library = try BenchmarkLibrary.make(itemCount: itemCount)
         defer { library.remove() }
-        let context = library.context
         let cutoff = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? .distantPast
 
-        measure(metrics: [XCTClockMetric()], options: Benchmark.options) {
-            guard let activeMedia = try? context.fetch(FetchDescriptor<VaultMedia>(
+        measure(metrics: [XCTClockMetric()], options: Benchmark.manualOptions) {
+            let context = ModelContext(library.container)
+            startMeasuring()
+            let activeMedia = (try? context.fetch(FetchDescriptor<VaultMedia>(
                 predicate: #Predicate { $0.trashedAt == nil }
-            )),
-                let albums = try? context.fetch(FetchDescriptor<VaultAlbum>(sortBy: [SortDescriptor(\.position)]))
-            else {
-                XCTFail("The library could not be fetched.")
-                return
-            }
+            ))) ?? []
+            let albums = (try? context.fetch(FetchDescriptor<VaultAlbum>(sortBy: [SortDescriptor(\.position)]))) ?? []
             let allCount = activeMedia.count
             let recentCount = activeMedia.lazy.filter { $0.importedAt >= cutoff }.count
             let favoriteCount = activeMedia.lazy.filter(\.isFavorite).count
@@ -134,11 +150,46 @@ final class LibraryBenchmarks: XCTestCase {
             var covers = 0
             for album in albums {
                 albumCounts += album.activeMediaCount
-                if album.media.first(where: { !$0.isTrashed }) != nil {
+                if album.benchmarkCover != nil {
                     covers += 1
                 }
             }
+            stopMeasuring()
+            withExtendedLifetime((context, activeMedia, albums)) {}
             XCTAssertGreaterThan(allCount + recentCount + favoriteCount + albumCounts + covers, 0)
+        }
+    }
+
+    /// Five pages of one search, as scrolling through the results loads them.
+    func testPagingThroughFiveSearchPages() throws {
+        try measurePagingThroughFiveSearchPages(savingBetweenPages: false)
+    }
+
+    /// The same five pages with a save before each one, so every page scans the library again, as every page did
+    /// before searches kept their results.
+    func testPagingThroughFiveSearchPagesWithSavesInBetween() throws {
+        try measurePagingThroughFiveSearchPages(savingBetweenPages: true)
+    }
+
+    private func measurePagingThroughFiveSearchPages(savingBetweenPages: Bool) throws {
+        let library = try BenchmarkLibrary.make(itemCount: itemCount)
+        defer { library.remove() }
+        let repository = VaultRepository(modelContext: library.context)
+        let query = GalleryQuery(searchText: "IMG_")
+        let album = library.albums[0]
+
+        measure(metrics: [XCTClockMetric()], options: Benchmark.options) {
+            runBenchmark {
+                for page in 0..<5 {
+                    if savingBetweenPages {
+                        album.modifiedAt = Date()
+                        try library.context.save()
+                        await Task.yield()
+                    }
+                    let result = try repository.fetchMedia(query: query, offset: page * 80, limit: 80)
+                    XCTAssertEqual(result.items.count, 80)
+                }
+            }
         }
     }
 
@@ -157,5 +208,15 @@ final class LibraryBenchmarks: XCTestCase {
                 XCTAssertTrue(fileManager.createFile(atPath: thumbnailPath.path, contents: nil))
             }
         }
+    }
+}
+
+private extension VaultAlbum {
+    /// AlbumCover's rule in AlbumsScreen: the chosen cover while it is active, otherwise the first active member.
+    var benchmarkCover: VaultMedia? {
+        if let coverMediaID, let selected = media.first(where: { $0.id == coverMediaID && !$0.isTrashed }) {
+            return selected
+        }
+        return media.first(where: { !$0.isTrashed })
     }
 }

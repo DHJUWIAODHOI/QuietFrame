@@ -15,15 +15,18 @@ final class TrashService: TrashServicing {
     private let modelContext: ModelContext
     private let storage: any SecureFileStoring
     private let operationGate: VaultOperationGate
+    private let changes: LibraryChangeCounter
 
     init(
         modelContext: ModelContext,
         storage: any SecureFileStoring,
-        operationGate: VaultOperationGate = VaultOperationGate()
+        operationGate: VaultOperationGate = VaultOperationGate(),
+        changes: LibraryChangeCounter = LibraryChangeCounter()
     ) {
         self.modelContext = modelContext
         self.storage = storage
         self.operationGate = operationGate
+        self.changes = changes
     }
 
     func moveToTrash(ids: Set<UUID>) async throws {
@@ -60,6 +63,7 @@ final class TrashService: TrashServicing {
                 await restorePhysicalFiles(moved)
                 throw VaultError.persistenceFailure
             }
+            changes.recordChange()
         }
     }
 
@@ -97,6 +101,7 @@ final class TrashService: TrashServicing {
                 await movePhysicalFilesBackToTrash(moved)
                 throw VaultError.persistenceFailure
             }
+            changes.recordChange()
         }
     }
 
@@ -120,6 +125,7 @@ final class TrashService: TrashServicing {
             modelContext.rollback()
             throw VaultError.persistenceFailure
         }
+        changes.recordChange()
 
         var deletionFailed = false
         for reference in fileReferences {
@@ -170,7 +176,7 @@ final class TrashService: TrashServicing {
 
     private func fetchMedia(ids: Set<UUID>) throws -> [VaultMedia] {
         guard !ids.isEmpty else { return [] }
-        return try modelContext.fetch(FetchDescriptor<VaultMedia>()).filter { ids.contains($0.id) }
+        return try modelContext.fetchMedia(ids: ids)
     }
 
     private func restorePhysicalFiles(_ identifiers: [String]) async {

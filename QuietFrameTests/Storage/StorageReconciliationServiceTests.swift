@@ -33,6 +33,56 @@ final class StorageReconciliationServiceTests: XCTestCase {
         XCTAssertEqual(deleteCount, 2)
     }
 
+    func testReconcilingInAFreshContextKeepsEveryAttributeReadable() async throws {
+        let container = try makeContainer()
+        let album = VaultAlbum(name: "Holiday")
+        container.mainContext.insert(album)
+        let thumbnailID = UUID().uuidString.lowercased()
+        let active = VaultMedia(
+            storageIdentifier: UUID().uuidString.lowercased(),
+            contentFingerprint: UUID().uuidString,
+            thumbnailIdentifier: thumbnailID,
+            metadata: MediaMetadata(
+                mediaType: .video,
+                contentTypeIdentifier: "com.apple.quicktime-movie",
+                originalFilename: "IMG_0042.MOV",
+                originalCreationDate: Date(timeIntervalSince1970: 1_600_000_000),
+                pixelWidth: 1_920,
+                pixelHeight: 1_080,
+                duration: 12,
+                byteCount: 4_096
+            ),
+            importedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            isFavorite: true,
+            tags: ["beach"],
+            album: album
+        )
+        let trashed = makeMedia()
+        trashed.trashedAt = Date(timeIntervalSince1970: 1_750_000_000)
+        container.mainContext.insert(active)
+        container.mainContext.insert(trashed)
+        try container.mainContext.save()
+        let storage = MockSecureFileStorage(identifiers: [
+            .media: [active.storageIdentifier],
+            .trash: [trashed.storageIdentifier],
+            .thumbnails: [thumbnailID]
+        ])
+        let context = ModelContext(container)
+
+        let result = try await StorageReconciliationService(modelContext: context, storage: storage).reconcile()
+
+        XCTAssertEqual(result, ReconciliationResult(repairedLocations: 0, deletedOrphans: 0, missingFiles: 0))
+        let reloaded = try context.fetch(FetchDescriptor<VaultMedia>())
+        let reloadedActive = try XCTUnwrap(reloaded.first { $0.storageIdentifier == active.storageIdentifier })
+        XCTAssertEqual(reloadedActive.originalFilename, "IMG_0042.MOV")
+        XCTAssertEqual(reloadedActive.pixelWidth, 1_920)
+        XCTAssertEqual(reloadedActive.duration, 12)
+        XCTAssertTrue(reloadedActive.isFavorite)
+        XCTAssertEqual(reloadedActive.tags, ["beach"])
+        XCTAssertEqual(reloadedActive.album?.name, "Holiday")
+        XCTAssertEqual(reloaded.filter(\.isTrashed).count, 1)
+    }
+
     func testReportsMissingReferencedFileWithoutDeletingMetadata() async throws {
         let container = try makeContainer()
         let active = makeMedia()

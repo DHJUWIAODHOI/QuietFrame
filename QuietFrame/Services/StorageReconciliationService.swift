@@ -25,7 +25,9 @@ final class StorageReconciliationService {
 
     func reconcile() async throws -> ReconciliationResult {
         try await operationGate.withLock {
-            let media = try modelContext.fetch(FetchDescriptor<VaultMedia>())
+            var descriptor = FetchDescriptor<VaultMedia>()
+            descriptor.propertiesToFetch = [\.storageIdentifier, \.thumbnailIdentifier, \.trashedAt]
+            let media = try modelContext.fetch(descriptor)
             let activeReferences = Set(media.filter { !$0.isTrashed }.map(\.storageIdentifier))
             let trashReferences = Set(media.filter(\.isTrashed).map(\.storageIdentifier))
             let thumbnailReferences = Set(media.compactMap(\.thumbnailIdentifier))

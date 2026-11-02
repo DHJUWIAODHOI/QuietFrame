@@ -25,10 +25,32 @@ protocol VaultRepositoryProtocol: AnyObject {
 
 @MainActor
 final class VaultRepository: VaultRepositoryProtocol {
-    let modelContext: ModelContext
+    /// The IDs a search matched, in sort order, so later pages of the same search skip the full scan.
+    private struct SearchSnapshot {
+        let query: GalleryQuery
+        let fingerprint: SearchFingerprint
+        let mediaIDs: [UUID]
+    }
 
-    init(modelContext: ModelContext) {
+    /// Changes whenever a search's results could: every edit to an item or album stamps its `modifiedAt`, items
+    /// joining or leaving the scope change its count, and dates match in the current locale and time zone.
+    private struct SearchFingerprint: Equatable {
+        let scopeCount: Int
+        let latestScopeChange: Date?
+        let albumCount: Int
+        let latestAlbumChange: Date?
+        let libraryGeneration: Int
+        let localeIdentifier: String
+        let timeZoneIdentifier: String
+    }
+
+    let modelContext: ModelContext
+    let changes: LibraryChangeCounter
+    private var searchSnapshot: SearchSnapshot?
+
+    init(modelContext: ModelContext, changes: LibraryChangeCounter = LibraryChangeCounter()) {
         self.modelContext = modelContext
+        self.changes = changes
     }
 
     func containsFingerprint(_ fingerprint: String) throws -> Bool {
@@ -67,6 +89,7 @@ final class VaultRepository: VaultRepositoryProtocol {
         modelContext.insert(media)
         do {
             try modelContext.save()
+            changes.recordChange()
             return media.id
         } catch {
             modelContext.delete(media)
@@ -95,6 +118,7 @@ final class VaultRepository: VaultRepositoryProtocol {
         modelContext.delete(media)
         do {
             try modelContext.save()
+            changes.recordChange()
         } catch {
             modelContext.rollback()
             throw VaultError.persistenceFailure
@@ -124,12 +148,12 @@ final class VaultRepository: VaultRepositoryProtocol {
     }
 
     func exportItems(ids: [UUID]) throws -> [MediaExportItem] {
-        try ids.map { id in
-            var descriptor = FetchDescriptor<VaultMedia>(
-                predicate: #Predicate { media in media.id == id }
-            )
-            descriptor.fetchLimit = 1
-            guard let media = try modelContext.fetch(descriptor).first else {
+        let mediaByID = Dictionary(
+            try modelContext.fetchMedia(ids: ids).map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return try ids.map { id in
+            guard let media = mediaByID[id] else {
                 throw VaultError.invalidInput("One or more selected items are no longer available.")
             }
             return MediaExportItem(media: media)
@@ -155,6 +179,18 @@ final class VaultRepository: VaultRepositoryProtocol {
             return (Array(fetched.prefix(limit)), fetched.count > limit)
         }
 
+        let fingerprint = try searchFingerprint(for: descriptor)
+        if offset > 0, let snapshot = searchSnapshot, snapshot.query == query, snapshot.fingerprint == fingerprint {
+            guard offset < snapshot.mediaIDs.count else { return ([], false) }
+            let end = min(offset + limit, snapshot.mediaIDs.count)
+            let pageIDs = Array(snapshot.mediaIDs[offset..<end])
+            let mediaByID = Dictionary(
+                try modelContext.fetchMedia(ids: pageIDs).map { ($0.id, $0) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            return (pageIDs.compactMap { mediaByID[$0] }, end < snapshot.mediaIDs.count)
+        }
+
         let allMatchingScope = try modelContext.fetch(descriptor)
         let calendar = Calendar.current
         let dateFormatter = DateFormatter()
@@ -170,6 +206,7 @@ final class VaultRepository: VaultRepositoryProtocol {
                 } == true
                 || Int(calendar.component(.year, from: media.importedAt)).description == search
         }
+        searchSnapshot = SearchSnapshot(query: query, fingerprint: fingerprint, mediaIDs: searched.map(\.id))
         guard offset < searched.count else { return ([], false) }
         let end = min(offset + limit, searched.count)
         return (Array(searched[offset..<end]), end < searched.count)
@@ -185,6 +222,7 @@ final class VaultRepository: VaultRepositoryProtocol {
         modelContext.insert(album)
         do {
             try modelContext.save()
+            changes.recordChange()
             return album
         } catch {
             modelContext.delete(album)
@@ -226,8 +264,7 @@ final class VaultRepository: VaultRepositoryProtocol {
     func moveMedia(ids: Set<UUID>, toAlbumID: UUID?) throws {
         guard !ids.isEmpty else { return }
         let destination = try toAlbumID.flatMap { try findAlbum(id: $0) }
-        let descriptor = FetchDescriptor<VaultMedia>()
-        let matching = try modelContext.fetch(descriptor).filter { ids.contains($0.id) && !$0.isTrashed }
+        let matching = try modelContext.fetchMedia(ids: ids).filter { !$0.isTrashed }
         guard matching.count == ids.count else { throw VaultError.persistenceFailure }
         var sourceAlbums: [UUID: VaultAlbum] = [:]
         for item in matching {
@@ -281,6 +318,23 @@ final class VaultRepository: VaultRepositoryProtocol {
         )
         descriptor.fetchLimit = 1
         return try modelContext.fetch(descriptor).first
+    }
+
+    private func searchFingerprint(for scope: FetchDescriptor<VaultMedia>) throws -> SearchFingerprint {
+        var latestScopeChange = scope
+        latestScopeChange.sortBy = [SortDescriptor(\VaultMedia.modifiedAt, order: .reverse)]
+        latestScopeChange.fetchLimit = 1
+        var latestAlbumChange = FetchDescriptor<VaultAlbum>(sortBy: [SortDescriptor(\.modifiedAt, order: .reverse)])
+        latestAlbumChange.fetchLimit = 1
+        return SearchFingerprint(
+            scopeCount: try modelContext.fetchCount(scope),
+            latestScopeChange: try modelContext.fetch(latestScopeChange).first?.modifiedAt,
+            albumCount: try modelContext.fetchCount(FetchDescriptor<VaultAlbum>()),
+            latestAlbumChange: try modelContext.fetch(latestAlbumChange).first?.modifiedAt,
+            libraryGeneration: changes.generation,
+            localeIdentifier: Locale.current.identifier,
+            timeZoneIdentifier: TimeZone.current.identifier
+        )
     }
 
     private func baseMediaDescriptor(for query: GalleryQuery) -> FetchDescriptor<VaultMedia> {
@@ -425,5 +479,6 @@ final class VaultRepository: VaultRepositoryProtocol {
             modelContext.rollback()
             throw VaultError.persistenceFailure
         }
+        changes.recordChange()
     }
 }

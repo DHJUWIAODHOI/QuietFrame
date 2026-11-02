@@ -8,8 +8,8 @@ struct AlbumsScreen: View {
     @Environment(AppDependencies.self) private var dependencies
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \VaultAlbum.position) private var albums: [VaultAlbum]
-    @Query(filter: #Predicate<VaultMedia> { $0.trashedAt == nil }) private var activeMedia: [VaultMedia]
     @Query private var settingsRecords: [AppSettings]
+    @State private var counts = AlbumCounts()
 
     @State private var showsNewAlbum = false
     @State private var newAlbumName = ""
@@ -40,6 +40,9 @@ struct AlbumsScreen: View {
         .listStyle(.insetGrouped)
         .quietFormStyle()
         .navigationTitle("Albums")
+        .onAppear { refreshCounts() }
+        .onChange(of: albums.map(\.id)) { refreshCounts() }
+        .onChange(of: dependencies.repository.changes.generation) { refreshCounts() }
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
@@ -109,9 +112,9 @@ struct AlbumsScreen: View {
 
     private var collectionsSection: some View {
         Section {
-            collectionRow(.allMedia, count: activeMedia.count)
-            collectionRow(.recentlyAdded, count: recentCount)
-            collectionRow(.favorites, count: activeMedia.lazy.filter(\.isFavorite).count)
+            collectionRow(.allMedia, count: counts.allCount)
+            collectionRow(.recentlyAdded, count: counts.recentCount)
+            collectionRow(.favorites, count: counts.favoriteCount)
         } header: {
             Text("Collections")
                 .font(QuietFrameTheme.sectionTitleFont)
@@ -168,7 +171,7 @@ struct AlbumsScreen: View {
     }
 
     private func albumRow(_ album: VaultAlbum) -> some View {
-        let detail = itemCountText(album.activeMediaCount)
+        let detail = itemCountText(counts.count(forAlbum: album.id))
         return NavigationLink {
             GalleryBrowser(
                 title: album.name,
@@ -232,9 +235,8 @@ struct AlbumsScreen: View {
         }
     }
 
-    private var recentCount: Int {
-        let cutoff = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? .distantPast
-        return activeMedia.lazy.filter { $0.importedAt >= cutoff }.count
+    private func refreshCounts() {
+        counts.refresh(in: modelContext, albumIDs: albums.map(\.id))
     }
 
     private var albumSortBinding: Binding<AlbumSortOption> {

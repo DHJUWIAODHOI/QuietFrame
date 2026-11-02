@@ -34,7 +34,8 @@ final class AppDependencies {
         let encryption = ChunkedEncryptionService(session: session)
         let secureStorage = try SecureFileStorageService(encryption: encryption)
         let operationGate = VaultOperationGate()
-        let repository = VaultRepository(modelContext: modelContainer.mainContext)
+        let libraryChanges = LibraryChangeCounter()
+        let repository = VaultRepository(modelContext: modelContainer.mainContext, changes: libraryChanges)
         let albumService = AlbumService(
             repository: repository,
             modelContext: modelContainer.mainContext,
@@ -53,7 +54,8 @@ final class AppDependencies {
         let trashService = TrashService(
             modelContext: modelContainer.mainContext,
             storage: secureStorage,
-            operationGate: operationGate
+            operationGate: operationGate,
+            changes: libraryChanges
         )
         let mediaExportService = MediaExportService(
             storage: secureStorage,

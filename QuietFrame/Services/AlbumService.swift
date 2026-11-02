@@ -93,6 +93,7 @@ final class AlbumService: AlbumServicing {
                 }
                 throw VaultError.persistenceFailure
             }
+            repository.changes.recordChange()
         }
     }
 }
