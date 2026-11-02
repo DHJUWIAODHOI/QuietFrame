@@ -299,10 +299,13 @@ actor ChunkedEncryptionService: FileEncrypting {
                 try await session.validate(keyAccess.generation)
                 let remaining = header.plaintextByteCount - processed
                 let plaintextCount = Int(min(UInt64(header.chunkByteCount), remaining))
-                let ciphertext = try input.readExactly(plaintextCount)
-                let tag = try input.readExactly(16)
+                let sealedChunk = try input.readExactly(plaintextCount + 16)
                 let nonce = try Self.makeNonce(prefix: header.noncePrefix, chunkIndex: chunkIndex)
-                let box = try AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertext, tag: tag)
+                let box = try AES.GCM.SealedBox(
+                    nonce: nonce,
+                    ciphertext: sealedChunk.prefix(plaintextCount),
+                    tag: sealedChunk.suffix(16)
+                )
                 let plaintext = try AES.GCM.open(
                     box,
                     using: fileKey,

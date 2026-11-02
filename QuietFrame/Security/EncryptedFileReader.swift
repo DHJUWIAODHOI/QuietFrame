@@ -84,12 +84,11 @@ actor EncryptedFileReader {
         let fileOffset = UInt64(encodedHeader.count) + UInt64(index) * UInt64(chunkByteCount + 16)
         do {
             try handle.seek(toOffset: fileOffset)
-            let ciphertext = try handle.readExactly(plaintextCount)
-            let tag = try handle.readExactly(16)
+            let sealedChunk = try handle.readExactly(plaintextCount + 16)
             let box = try AES.GCM.SealedBox(
                 nonce: ChunkedEncryptionService.makeNonce(prefix: noncePrefix, chunkIndex: index),
-                ciphertext: ciphertext,
-                tag: tag
+                ciphertext: sealedChunk.prefix(plaintextCount),
+                tag: sealedChunk.suffix(16)
             )
             let plaintext = try AES.GCM.open(
                 box,
