@@ -15,6 +15,9 @@ struct ImportPreviewCandidate: Identifiable {
 final class ImportViewModel {
     private(set) var candidates: [ImportPreviewCandidate] = []
     private(set) var isPreparing = false
+    /// Items of the current selection that have finished preparing, out of `preparationTotal`.
+    private(set) var preparedCount = 0
+    private(set) var preparationTotal = 0
     private(set) var isImporting = false
     private(set) var isDeletingOriginals = false
     private(set) var progress = ImportProgress(completedItems: 0, totalItems: 0, currentItemFraction: 0)
@@ -31,6 +34,15 @@ final class ImportViewModel {
     private var preparationGeneration: UInt64 = 0
     private var preparationFailureCount = 0
     private var preparationThumbnailFailureCount = 0
+
+    /// Items prepared at once: enough to overlap copying, reading and preview work without holding many decodes.
+    private static let preparationConcurrency = 3
+
+    private enum PreparationOutcome: Sendable {
+        case prepared(ImportSource, previewImage: UIImage?, thumbnailFailed: Bool)
+        case failed
+        case cancelled(temporaryURL: URL?)
+    }
 
     init(
         metadataReader: any MediaMetadataReading,
@@ -57,77 +69,68 @@ final class ImportViewModel {
         summary = nil
         userMessage = nil
         isPreparing = true
+        preparedCount = 0
+        preparationTotal = selections.count
         preparationFailureCount = 0
         preparationThumbnailFailureCount = 0
+        let metadataReader = metadataReader
+        let thumbnailGenerator = thumbnailGenerator
 
         preparationTask = Task { [weak self] in
-            guard let self else { return }
-            var prepared: [ImportPreviewCandidate] = []
             let deletionUnavailableCount = selections.reduce(into: 0) { count, selection in
                 if selection.sourceLocalIdentifier == nil { count += 1 }
             }
-            var failedCount = pickerFailureCount
-            var thumbnailFailureCount = 0
+            var outcomes = [PreparationOutcome?](repeating: nil, count: selections.count)
 
-            for selection in selections {
-                var temporaryURL: URL?
-                do {
-                    try Task.checkCancellation()
-                    let loadedFile = try await selection.loadProtectedFile()
-                    temporaryURL = loadedFile.temporaryURL
-                    guard generation == preparationGeneration, !Task.isCancelled else {
-                        throw CancellationError()
+            await withTaskGroup(of: (Int, PreparationOutcome).self) { group in
+                var nextIndex = 0
+                while nextIndex < min(ImportViewModel.preparationConcurrency, selections.count) {
+                    let index = nextIndex
+                    group.addTask {
+                        (index, await ImportViewModel.prepare(selections[index], metadataReader: metadataReader, thumbnailGenerator: thumbnailGenerator))
                     }
-                    let metadata = try await metadataReader.metadata(
-                        for: loadedFile.temporaryURL,
-                        mediaType: selection.mediaType,
-                        originalFilename: loadedFile.originalFilename
-                    )
-                    guard generation == preparationGeneration, !Task.isCancelled else {
-                        throw CancellationError()
+                    nextIndex += 1
+                }
+                while let (index, outcome) = await group.next() {
+                    outcomes[index] = outcome
+                    if let self, generation == self.preparationGeneration {
+                        self.preparedCount += 1
                     }
-                    let thumbnailData: Data?
-                    let thumbnailFailed: Bool
-                    do {
-                        thumbnailData = try await thumbnailGenerator.jpegThumbnail(
-                            for: loadedFile.temporaryURL,
-                            mediaType: selection.mediaType,
-                            maximumPixelSize: 720
-                        )
-                        thumbnailFailed = false
-                    } catch {
-                        thumbnailData = nil
-                        thumbnailFailed = true
-                        thumbnailFailureCount += 1
+                    guard nextIndex < selections.count, !Task.isCancelled else { continue }
+                    let next = nextIndex
+                    group.addTask {
+                        (next, await ImportViewModel.prepare(selections[next], metadataReader: metadataReader, thumbnailGenerator: thumbnailGenerator))
                     }
-                    guard generation == preparationGeneration, !Task.isCancelled else {
-                        throw CancellationError()
-                    }
-                    let source = ImportSource(
-                        temporaryURL: loadedFile.temporaryURL,
-                        metadata: metadata,
-                        thumbnailJPEGData: thumbnailData,
-                        sourceLocalIdentifier: selection.sourceLocalIdentifier
-                    )
-                    prepared.append(ImportPreviewCandidate(
-                        source: source,
-                        previewImage: thumbnailData.flatMap { UIImage(data: $0) },
-                        thumbnailFailed: thumbnailFailed
-                    ))
-                    temporaryURL = nil
-                } catch is CancellationError {
-                    if let temporaryURL { IncomingMediaFileStore.remove(temporaryURL) }
-                    prepared.forEach { IncomingMediaFileStore.remove($0.source.temporaryURL) }
-                    if generation == preparationGeneration { isPreparing = false }
-                    return
-                } catch {
-                    if let temporaryURL { IncomingMediaFileStore.remove(temporaryURL) }
-                    failedCount += 1
+                    nextIndex += 1
                 }
             }
 
-            guard generation == preparationGeneration else {
+            var prepared: [ImportPreviewCandidate] = []
+            var failedCount = pickerFailureCount
+            var thumbnailFailureCount = 0
+            var wasCancelled = false
+            for outcome in outcomes {
+                switch outcome {
+                case .prepared(let source, let previewImage, let thumbnailFailed):
+                    prepared.append(ImportPreviewCandidate(
+                        source: source,
+                        previewImage: previewImage,
+                        thumbnailFailed: thumbnailFailed
+                    ))
+                    if thumbnailFailed { thumbnailFailureCount += 1 }
+                case .failed:
+                    failedCount += 1
+                case .cancelled(let temporaryURL):
+                    if let temporaryURL { IncomingMediaFileStore.remove(temporaryURL) }
+                    wasCancelled = true
+                case nil:
+                    wasCancelled = true
+                }
+            }
+
+            guard let self, generation == self.preparationGeneration, !wasCancelled, !Task.isCancelled else {
                 prepared.forEach { IncomingMediaFileStore.remove($0.source.temporaryURL) }
+                if let self, generation == self.preparationGeneration { self.isPreparing = false }
                 return
             }
             candidates = prepared
@@ -147,6 +150,48 @@ final class ImportViewModel {
                 }
                 userMessage = messages.joined(separator: "; ") + "."
             }
+        }
+    }
+
+    /// Copies, reads and previews one picked item off the main actor. Its incoming copy is removed when it fails.
+    private nonisolated static func prepare(
+        _ selection: PhotoLibrarySelection,
+        metadataReader: any MediaMetadataReading,
+        thumbnailGenerator: any ThumbnailGenerating
+    ) async -> PreparationOutcome {
+        var temporaryURL: URL?
+        do {
+            try Task.checkCancellation()
+            let loadedFile = try await selection.loadProtectedFile()
+            temporaryURL = loadedFile.temporaryURL
+            try Task.checkCancellation()
+            let metadata = try await metadataReader.metadata(
+                for: loadedFile.temporaryURL,
+                mediaType: selection.mediaType,
+                originalFilename: loadedFile.originalFilename
+            )
+            try Task.checkCancellation()
+            let thumbnailData = try? await thumbnailGenerator.jpegThumbnail(
+                for: loadedFile.temporaryURL,
+                mediaType: selection.mediaType,
+                maximumPixelSize: ThumbnailService.storedPixelSize
+            )
+            try Task.checkCancellation()
+            let source = ImportSource(
+                temporaryURL: loadedFile.temporaryURL,
+                metadata: metadata,
+                thumbnailJPEGData: thumbnailData,
+                sourceLocalIdentifier: selection.sourceLocalIdentifier
+            )
+            let previewImage = thumbnailData.flatMap {
+                ThumbnailService.downsampledImage(from: $0, maximumPixelSize: ThumbnailService.storedPixelSize)
+            }
+            return .prepared(source, previewImage: previewImage, thumbnailFailed: thumbnailData == nil)
+        } catch is CancellationError {
+            return .cancelled(temporaryURL: temporaryURL)
+        } catch {
+            if let temporaryURL { IncomingMediaFileStore.remove(temporaryURL) }
+            return .failed
         }
     }
 

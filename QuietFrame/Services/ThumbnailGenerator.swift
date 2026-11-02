@@ -8,7 +8,7 @@ protocol ThumbnailGenerating: Sendable {
 }
 
 actor ThumbnailGenerator: ThumbnailGenerating {
-    func jpegThumbnail(
+    nonisolated func jpegThumbnail(
         for url: URL,
         mediaType: MediaType,
         maximumPixelSize: Int = 720

@@ -153,6 +153,12 @@ struct ImportPreviewView: View {
                     Text("Reading metadata and creating private previews without changing the originals.")
                         .font(.body)
                         .foregroundStyle(QuietFrameTheme.quietInk)
+                    if viewModel.preparationTotal > 1 {
+                        Text("Preparing \(viewModel.preparedCount) of \(viewModel.preparationTotal)")
+                            .font(.subheadline)
+                            .monospacedDigit()
+                            .foregroundStyle(QuietFrameTheme.quietInk)
+                    }
                 }
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -163,6 +169,11 @@ struct ImportPreviewView: View {
             .frame(maxWidth: .infinity)
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Preparing selected media")
+            .accessibilityValue(
+                viewModel.preparationTotal > 1
+                    ? "\(viewModel.preparedCount) of \(viewModel.preparationTotal)"
+                    : ""
+            )
         }
     }
 
