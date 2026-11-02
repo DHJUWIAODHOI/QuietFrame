@@ -2,6 +2,15 @@ name: Build Unsigned IPA
 
 on:
   workflow_dispatch:
+    inputs:
+      compare:
+        description: Benchmark a baseline commit and this commit side by side in one job
+        type: boolean
+        default: false
+      baseline_ref:
+        description: Commit or tag the comparison measures against
+        type: string
+        default: 6d83bea
   push:
     branches:
       - main
@@ -54,6 +63,31 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER= \
             test \
             | tee "$RUNNER_TEMP/xctest.log"
+
+      # The runner has no iOS 17 simulator; iOS 18.5 is the oldest available check of SwiftData query shapes.
+      - name: Run SwiftData tests on iOS 18.5
+        timeout-minutes: 15
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project QuietFrame.xcodeproj \
+            -scheme QuietFrame \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=18.5' \
+            -destination-timeout 120 \
+            -only-testing:QuietFrameTests/GallerySortingTests \
+            -only-testing:QuietFrameTests/LibraryQueryTests \
+            -only-testing:QuietFrameTests/AlbumServiceTests \
+            -only-testing:QuietFrameTests/TrashServiceTests \
+            -only-testing:QuietFrameTests/StorageReconciliationServiceTests \
+            -only-testing:QuietFrameTests/MediaExportServiceTests \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY=- \
+            DEVELOPMENT_TEAM= \
+            PROVISIONING_PROFILE_SPECIFIER= \
+            test \
+            | tee "$RUNNER_TEMP/swiftdata-ios18.log"
 
       # Serial and optimized like a Release build, so timings are not skewed by parallel
       # simulator clones or -Onone. Compare runs only on matching runner hardware.
@@ -173,3 +207,122 @@ jobs:
             ${{ runner.temp }}/QuietFrameTests.xcresult
           if-no-files-found: ignore
           retention-days: 7
+
+  compare:
+    name: Compare benchmarks with a baseline
+    if: github.event_name == 'workflow_dispatch' && inputs.compare
+    runs-on: macos-15
+    timeout-minutes: 120
+
+    env:
+      BENCHMARK_CLASSES: CryptoBenchmarks ThumbnailBenchmarks LibraryBenchmarks ViewerBenchmarks ImportBenchmarks
+      DESTINATION: platform=iOS Simulator,name=iPhone 16 Pro,OS=latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Show runner
+        run: |
+          xcodebuild -version
+          echo "Runner: $(sysctl -n machdep.cpu.brand_string), $(sysctl -n hw.ncpu) CPUs, $(( $(sysctl -n hw.memsize) / 1073741824 )) GB"
+
+      - name: Check out the baseline
+        run: git worktree add "$RUNNER_TEMP/baseline" "${{ inputs.baseline_ref }}"
+
+      - name: Build both for testing
+        run: |
+          set -o pipefail
+          build() {
+            xcodebuild \
+              -project "$1/QuietFrame.xcodeproj" \
+              -scheme QuietFrame \
+              -configuration Debug \
+              -sdk iphonesimulator \
+              -destination "$DESTINATION" \
+              -destination-timeout 120 \
+              -derivedDataPath "$2" \
+              SWIFT_OPTIMIZATION_LEVEL=-O \
+              SWIFT_COMPILATION_MODE=wholemodule \
+              CODE_SIGN_STYLE=Manual \
+              CODE_SIGN_IDENTITY=- \
+              DEVELOPMENT_TEAM= \
+              PROVISIONING_PROFILE_SPECIFIER= \
+              build-for-testing | tail -5
+          }
+          build "$RUNNER_TEMP/baseline" "$RUNNER_TEMP/dd-baseline"
+          build "$GITHUB_WORKSPACE" "$RUNNER_TEMP/dd-candidate"
+
+      - name: Run benchmarks alternately
+        run: |
+          set -o pipefail
+          ONLY=()
+          for class in $BENCHMARK_CLASSES; do
+            ONLY+=("-only-testing:QuietFrameTests/$class")
+          done
+          run() {
+            xcodebuild \
+              -xctestrun "$(ls "$1"/Build/Products/*.xctestrun | head -1)" \
+              -destination "$DESTINATION" \
+              -destination-timeout 120 \
+              -parallel-testing-enabled NO \
+              "${ONLY[@]}" \
+              test-without-building | tee "$2" | grep -E "measured \[|error:|failed" || true
+          }
+          for round in 1 2; do
+            run "$RUNNER_TEMP/dd-baseline" "$RUNNER_TEMP/baseline-$round.log"
+            run "$RUNNER_TEMP/dd-candidate" "$RUNNER_TEMP/candidate-$round.log"
+          done
+
+      - name: Summarize comparison
+        if: always()
+        run: |
+          {
+            echo "## Benchmarks: ${{ inputs.baseline_ref }} against $GITHUB_SHA"
+            echo
+            echo "Runner: $(sysctl -n machdep.cpu.brand_string), $(sysctl -n hw.ncpu) CPUs. Each side ran twice, alternating; averages of both runs."
+            echo
+            python3 .github/scripts/compare_benchmarks.py "$RUNNER_TEMP"/baseline-*.log -- "$RUNNER_TEMP"/candidate-*.log
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload comparison logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuietFrame-benchmark-comparison
+          path: |
+            ${{ runner.temp }}/baseline-*.log
+            ${{ runner.temp }}/candidate-*.log
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # SwiftData query shapes are only proven on the deployment target here. The runner image has no iOS 17
+  # simulator, so this job installs one; it runs alongside the main job and does not touch its timings.
+  swiftdata-ios17:
+    name: SwiftData on iOS 17
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install an iOS 17 simulator
+        run: |
+          set -euo pipefail
+          if ! xcrun simctl list runtimes | grep -q '^iOS 17\.'; then
+            xcodebuild -downloadPlatform iOS -buildVersion 17.5
+          fi
+          RUNTIME=$(xcrun simctl list runtimes -j | jq -r '[.runtimes[] | select(.isAvailable and (.name | startswith("iOS 17.")))] | last | .identifier')
+          test -n "$RUNTIME" && test "$RUNTIME" != null
+          UDID=$(xcrun simctl create "QuietFrame iOS 17" com.apple.CoreSimulator.SimDeviceType.iPhone-15 "$RUNTIME")
+          echo "IOS17_SIMULATOR=$UDID" >> "$GITHUB_ENV"
+
+      # Same ad-hoc signing as the main test step: an unsigned test host has no Keychain access.
+      - name: Run SwiftData tests on iOS 17
+        timeout-minutes: 30
+        run: |
+          set -o pipefail
+          xcodebuild             -project QuietFrame.xcodeproj             -scheme QuietFrame             -configuration Debug             -sdk iphonesimulator             -destination "id=$IOS17_SIMULATOR"             -destination-timeout 180             -only-testing:QuietFrameTests/LibraryQueryTests             -only-testing:QuietFrameTests/GallerySortingTests             -only-testing:QuietFrameTests/AlbumServiceTests             -only-testing:QuietFrameTests/TrashServiceTests             -only-testing:QuietFrameTests/StorageReconciliationServiceTests             -only-testing:QuietFrameTests/MediaExportServiceTests             CODE_SIGN_STYLE=Manual             CODE_SIGN_IDENTITY=-             DEVELOPMENT_TEAM=             PROVISIONING_PROFILE_SPECIFIER=             test
