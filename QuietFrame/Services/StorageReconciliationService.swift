@@ -9,28 +9,48 @@ struct ReconciliationResult: Sendable, Equatable {
 
 @MainActor
 final class StorageReconciliationService {
+    private struct MediaReferences {
+        var active: Set<String> = []
+        var trash: Set<String> = []
+        var thumbnails: Set<String> = []
+
+        mutating func add(_ media: [VaultMedia]) {
+            for item in media {
+                if item.isTrashed {
+                    trash.insert(item.storageIdentifier)
+                } else {
+                    active.insert(item.storageIdentifier)
+                }
+                if let thumbnailIdentifier = item.thumbnailIdentifier {
+                    thumbnails.insert(thumbnailIdentifier)
+                }
+            }
+        }
+    }
+
     private let modelContext: ModelContext
     private let storage: any SecureFileStoring
     private let operationGate: VaultOperationGate
+    private let pageSize: Int
 
     init(
         modelContext: ModelContext,
         storage: any SecureFileStoring,
-        operationGate: VaultOperationGate = VaultOperationGate()
+        operationGate: VaultOperationGate = VaultOperationGate(),
+        pageSize: Int = 500
     ) {
         self.modelContext = modelContext
         self.storage = storage
         self.operationGate = operationGate
+        self.pageSize = max(1, pageSize)
     }
 
     func reconcile() async throws -> ReconciliationResult {
         try await operationGate.withLock {
-            var descriptor = FetchDescriptor<VaultMedia>()
-            descriptor.propertiesToFetch = [\.storageIdentifier, \.thumbnailIdentifier, \.trashedAt]
-            let media = try modelContext.fetch(descriptor)
-            let activeReferences = Set(media.filter { !$0.isTrashed }.map(\.storageIdentifier))
-            let trashReferences = Set(media.filter(\.isTrashed).map(\.storageIdentifier))
-            let thumbnailReferences = Set(media.compactMap(\.thumbnailIdentifier))
+            let references = try await mediaReferences()
+            let activeReferences = references.active
+            let trashReferences = references.trash
+            let thumbnailReferences = references.thumbnails
             let allOriginalReferences = activeReferences.union(trashReferences)
 
             var mediaFiles = try await storage.allIdentifiers(location: .media)
@@ -80,5 +100,41 @@ final class StorageReconciliationService {
                 missingFiles: missing
             )
         }
+    }
+
+    /// Reads the references a page at a time, yielding the main actor between pages. Locking cancels the maintenance
+    /// task, and a cancelled read stops at the next page, before any file is touched. Offset pages partition the stored
+    /// rows only while the context has no unsaved changes, so with any the references come from one fetch, as before.
+    private func mediaReferences() async throws -> MediaReferences {
+        var references = MediaReferences()
+        var page = referencesDescriptor()
+        page.sortBy = [SortDescriptor(\VaultMedia.id, order: .forward)]
+        page.fetchLimit = pageSize
+        var offset = 0
+        var isLastPage = false
+        while !isLastPage {
+            try Task.checkCancellation()
+            if modelContext.hasChanges {
+                let allMedia = try modelContext.fetch(referencesDescriptor())
+                var unpaged = MediaReferences()
+                unpaged.add(allMedia)
+                return unpaged
+            }
+            page.fetchOffset = offset
+            let media = try modelContext.fetch(page)
+            references.add(media)
+            isLastPage = media.count < pageSize
+            if !isLastPage {
+                offset += pageSize
+                await Task.yield()
+            }
+        }
+        return references
+    }
+
+    private func referencesDescriptor() -> FetchDescriptor<VaultMedia> {
+        var descriptor = FetchDescriptor<VaultMedia>()
+        descriptor.propertiesToFetch = [\.storageIdentifier, \.thumbnailIdentifier, \.trashedAt]
+        return descriptor
     }
 }
