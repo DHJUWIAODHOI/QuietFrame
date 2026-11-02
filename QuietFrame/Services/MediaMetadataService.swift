@@ -11,7 +11,7 @@ protocol MediaMetadataReading: Sendable {
     ) async throws -> MediaMetadata
 }
 
-actor MediaMetadataService: MediaMetadataReading {
+struct MediaMetadataService: MediaMetadataReading {
     func metadata(
         for url: URL,
         mediaType: MediaType,
