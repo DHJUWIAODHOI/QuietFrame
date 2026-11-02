@@ -190,11 +190,12 @@ final class ViewerPhotoSizingTests: XCTestCase {
         }
         media.forEach { container.mainContext.insert($0) }
         let positions = MediaPositionIndex()
+        let ids = media.map(\.id)
 
-        XCTAssertEqual(positions.index(of: media[2].id, in: media), 2)
-        XCTAssertEqual(positions.index(of: media[0].id, in: Array(media.reversed())), 2)
-        XCTAssertEqual(positions.index(of: media[1].id, in: [media[1]]), 0)
-        XCTAssertNil(positions.index(of: media[2].id, in: [media[0], media[1]]))
+        XCTAssertEqual(positions.index(of: ids[2], in: ids), 2)
+        XCTAssertEqual(positions.index(of: ids[0], in: Array(ids.reversed())), 2)
+        XCTAssertEqual(positions.index(of: ids[1], in: [ids[1]]), 0)
+        XCTAssertNil(positions.index(of: ids[2], in: [ids[0], ids[1]]))
     }
 
     private func makeLoader() -> (ViewerPhotoLoader, ThumbnailStorageFake, String) {
