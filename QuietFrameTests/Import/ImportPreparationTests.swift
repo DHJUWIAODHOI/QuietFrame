@@ -69,6 +69,137 @@ final class ImportPreparationTests: XCTestCase {
         XCTAssertEqual(viewModel.summary?.importedCount, 1)
     }
 
+    func testPendingChecksResolveOnceInSelectionOrder() async throws {
+        let directory = try Benchmark.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let checks = (0..<4).map { PhotoLibraryDeletionCheck.pending(assetIdentifier: "a\($0)", providerHasLivePhoto: false) }
+        let selections = try makeSelections(count: 4, in: directory) { checks[$0] }
+        let photoLibrary = RecordingPhotoLibrary(answers: ["a0", nil, "a2", nil])
+        let viewModel = makeViewModel(photoLibrary: photoLibrary)
+        defer { viewModel.cancelPreparation() }
+
+        viewModel.prepare(selections: selections)
+        try await waitUntilPrepared(viewModel)
+
+        let requests = await photoLibrary.requests
+        XCTAssertEqual(requests, [checks])
+        XCTAssertEqual(viewModel.candidates.map(\.source.sourceLocalIdentifier), ["a0", nil, "a2", nil])
+        XCTAssertEqual(viewModel.userMessage, "automatic deletion is unavailable for 2 items in this selection.")
+    }
+
+    func testDecidedSelectionsNeverAskThePhotoLibrary() async throws {
+        let directory = try Benchmark.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selections = try makeSelections(count: 3, in: directory) { index in
+            PhotoLibraryDeletionCheck.resolved(index == 1 ? nil : "asset-\(index)")
+        }
+        let photoLibrary = RecordingPhotoLibrary(answers: [])
+        let viewModel = makeViewModel(photoLibrary: photoLibrary)
+        defer { viewModel.cancelPreparation() }
+
+        viewModel.prepare(selections: selections)
+        try await waitUntilPrepared(viewModel)
+
+        let requests = await photoLibrary.requests
+        XCTAssertTrue(requests.isEmpty)
+        XCTAssertEqual(viewModel.candidates.map(\.source.sourceLocalIdentifier), ["asset-0", nil, "asset-2"])
+        XCTAssertEqual(viewModel.userMessage, "automatic deletion is unavailable for 1 item in this selection.")
+    }
+
+    func testAShortAnswerFromThePhotoLibraryNeverOffersDeletion() async throws {
+        let directory = try Benchmark.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selections = try makeSelections(count: 3, in: directory) { index in
+            PhotoLibraryDeletionCheck.pending(assetIdentifier: "a\(index)", providerHasLivePhoto: false)
+        }
+        let viewModel = makeViewModel(photoLibrary: RecordingPhotoLibrary(answers: ["a0"]))
+        defer { viewModel.cancelPreparation() }
+
+        viewModel.prepare(selections: selections)
+        try await waitUntilPrepared(viewModel)
+
+        XCTAssertEqual(viewModel.candidates.map(\.source.sourceLocalIdentifier), ["a0", nil, nil])
+        XCTAssertEqual(viewModel.userMessage, "automatic deletion is unavailable for 2 items in this selection.")
+    }
+
+    /// The deletion warning counts every picked item, including one that then fails to prepare.
+    func testDeletionWarningCountsItemsThatFailToPrepare() async throws {
+        let directory = try Benchmark.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let identifiers: [String?] = [nil, nil, "asset-2"]
+        let selections: [PhotoLibrarySelection] = try identifiers.enumerated().map { index, identifier in
+            let name = "photo-\(index).jpg"
+            let url = directory.appendingPathComponent(name)
+            try Benchmark.photoJPEG(width: 64, height: 48, seed: UInt64(index + 1)).write(to: url)
+            return PhotoLibrarySelection(
+                itemProvider: try XCTUnwrap(NSItemProvider(contentsOf: url)),
+                typeIdentifier: "public.jpeg",
+                mediaType: .photo,
+                originalFilename: name,
+                sourceLocalIdentifier: identifier
+            )
+        }
+        let viewModel = ImportViewModel(
+            metadataReader: DelayedMetadataReader(delays: [0], failingIndices: [1]),
+            thumbnailGenerator: FixedThumbnailGenerator(failingData: Data()),
+            importer: IdleImporter(),
+            photoLibrary: IdlePhotoLibrary()
+        )
+        defer { viewModel.cancelPreparation() }
+
+        viewModel.prepare(selections: selections)
+        try await waitUntilPrepared(viewModel)
+
+        XCTAssertEqual(viewModel.candidates.map(\.source.metadata.originalFilename), ["photo-0.jpg", "photo-2.jpg"])
+        XCTAssertEqual(
+            viewModel.userMessage,
+            "automatic deletion is unavailable for 2 items in this selection; 1 item could not be prepared."
+        )
+    }
+
+    private func makeViewModel(
+        photoLibrary: any PhotoLibraryServing,
+        importer: any MediaImporting = IdleImporter()
+    ) -> ImportViewModel {
+        ImportViewModel(
+            metadataReader: DelayedMetadataReader(delays: [0]),
+            thumbnailGenerator: FixedThumbnailGenerator(failingData: Data()),
+            importer: importer,
+            photoLibrary: photoLibrary
+        )
+    }
+
+    /// Photos written to `directory` and picked in order, each with its own deletion check.
+    private func makeSelections(
+        count: Int,
+        in directory: URL,
+        width: Int = 64,
+        height: Int = 48,
+        deletionCheck: (Int) -> PhotoLibraryDeletionCheck
+    ) throws -> [PhotoLibrarySelection] {
+        var selections: [PhotoLibrarySelection] = []
+        for index in 0..<count {
+            let name = "photo-\(index).jpg"
+            let url = directory.appendingPathComponent(name)
+            try Benchmark.photoJPEG(width: width, height: height, seed: UInt64(index + 1)).write(to: url)
+            selections.append(PhotoLibrarySelection(
+                itemProvider: try XCTUnwrap(NSItemProvider(contentsOf: url)),
+                typeIdentifier: "public.jpeg",
+                mediaType: .photo,
+                originalFilename: name,
+                deletionCheck: deletionCheck(index)
+            ))
+        }
+        return selections
+    }
+
+    private func waitUntilPrepared(_ viewModel: ImportViewModel) async throws {
+        for _ in 0..<1_000 where viewModel.isPreparing {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertFalse(viewModel.isPreparing, "Preparation did not finish")
+    }
+
     private func makePreparedViewModel(importer: any MediaImporting, directory: URL) async throws -> ImportViewModel {
         let url = directory.appendingPathComponent("photo.jpg")
         try Benchmark.photoJPEG(width: 64, height: 48, seed: 9).write(to: url)
@@ -103,11 +234,13 @@ final class ImportPreparationTests: XCTestCase {
 
 private actor DelayedMetadataReader: MediaMetadataReading {
     private let delays: [TimeInterval]
+    private let failingIndices: Set<Int>
     private var activeReads = 0
     private(set) var maximumConcurrentReads = 0
 
-    init(delays: [TimeInterval]) {
+    init(delays: [TimeInterval], failingIndices: Set<Int> = []) {
         self.delays = delays
+        self.failingIndices = failingIndices
     }
 
     func metadata(for url: URL, mediaType: MediaType, originalFilename: String?) async throws -> MediaMetadata {
@@ -116,6 +249,7 @@ private actor DelayedMetadataReader: MediaMetadataReading {
         defer { activeReads -= 1 }
         let index = Int(originalFilename?.filter(\.isNumber) ?? "") ?? 0
         try await Task.sleep(nanoseconds: UInt64(delays[index % delays.count] * 1_000_000_000))
+        guard !failingIndices.contains(index) else { throw VaultError.unsupportedFileType }
         return MediaMetadata(
             mediaType: mediaType,
             contentTypeIdentifier: "public.jpeg",
@@ -163,6 +297,31 @@ private actor IdlePhotoLibrary: PhotoLibraryServing {
     }
 
     func deleteOriginals(localIdentifiers: [String]) async throws {}
+
+    func sourceIdentifiers(for checks: [PhotoLibraryDeletionCheck]) async -> [String?] {
+        checks.map { _ in nil }
+    }
+}
+
+/// Answers deletion checks with fixed identifiers and records every request.
+private actor RecordingPhotoLibrary: PhotoLibraryServing {
+    private let answers: [String?]
+    private(set) var requests: [[PhotoLibraryDeletionCheck]] = []
+
+    init(answers: [String?]) {
+        self.answers = answers
+    }
+
+    func requestImportAccess() async -> PhotoLibraryImportAccess {
+        .full
+    }
+
+    func deleteOriginals(localIdentifiers: [String]) async throws {}
+
+    func sourceIdentifiers(for checks: [PhotoLibraryDeletionCheck]) async -> [String?] {
+        requests.append(checks)
+        return answers
+    }
 }
 
 /// Reports a run of progress values from off the main thread, then succeeds. It reports only while the test holds the

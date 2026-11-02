@@ -38,8 +38,15 @@ final class ImportViewModel {
     /// Items prepared at once: enough to overlap copying, reading and preview work without holding many decodes.
     private static let preparationConcurrency = 3
 
+    private struct PreparedFile: Sendable {
+        let temporaryURL: URL
+        let metadata: MediaMetadata
+        let thumbnailJPEGData: Data?
+        let previewImage: UIImage?
+    }
+
     private enum PreparationOutcome: Sendable {
-        case prepared(ImportSource, previewImage: UIImage?, thumbnailFailed: Bool)
+        case prepared(PreparedFile)
         case failed
         case cancelled(temporaryURL: URL?)
     }
@@ -75,11 +82,14 @@ final class ImportViewModel {
         preparationThumbnailFailureCount = 0
         let metadataReader = metadataReader
         let thumbnailGenerator = thumbnailGenerator
+        let photoLibrary = photoLibrary
+        let deletionChecks = selections.map(\.deletionCheck)
 
         preparationTask = Task { [weak self] in
-            let deletionUnavailableCount = selections.reduce(into: 0) { count, selection in
-                if selection.sourceLocalIdentifier == nil { count += 1 }
-            }
+            async let resolvedSourceIdentifiers = ImportViewModel.resolveSourceIdentifiers(
+                for: deletionChecks,
+                photoLibrary: photoLibrary
+            )
             var outcomes = [PreparationOutcome?](repeating: nil, count: selections.count)
 
             await withTaskGroup(of: (Int, PreparationOutcome).self) { group in
@@ -105,16 +115,24 @@ final class ImportViewModel {
                 }
             }
 
+            let sourceIdentifiers = await resolvedSourceIdentifiers
+            let deletionUnavailableCount = sourceIdentifiers.filter { $0 == nil }.count
             var prepared: [ImportPreviewCandidate] = []
             var failedCount = pickerFailureCount
             var thumbnailFailureCount = 0
             var wasCancelled = false
-            for outcome in outcomes {
+            for (index, outcome) in outcomes.enumerated() {
                 switch outcome {
-                case .prepared(let source, let previewImage, let thumbnailFailed):
+                case .prepared(let file):
+                    let thumbnailFailed = file.thumbnailJPEGData == nil
                     prepared.append(ImportPreviewCandidate(
-                        source: source,
-                        previewImage: previewImage,
+                        source: ImportSource(
+                            temporaryURL: file.temporaryURL,
+                            metadata: file.metadata,
+                            thumbnailJPEGData: file.thumbnailJPEGData,
+                            sourceLocalIdentifier: sourceIdentifiers[index]
+                        ),
+                        previewImage: file.previewImage,
                         thumbnailFailed: thumbnailFailed
                     ))
                     if thumbnailFailed { thumbnailFailureCount += 1 }
@@ -182,21 +200,38 @@ final class ImportViewModel {
                 thumbnailData = nil
             }
             try Task.checkCancellation()
-            let source = ImportSource(
-                temporaryURL: loadedFile.temporaryURL,
-                metadata: metadata,
-                thumbnailJPEGData: thumbnailData,
-                sourceLocalIdentifier: selection.sourceLocalIdentifier
-            )
             let previewImage = thumbnailData.flatMap {
                 ThumbnailService.downsampledImage(from: $0, maximumPixelSize: ThumbnailService.storedPixelSize)
             }
-            return .prepared(source, previewImage: previewImage, thumbnailFailed: thumbnailData == nil)
+            return .prepared(PreparedFile(
+                temporaryURL: loadedFile.temporaryURL,
+                metadata: metadata,
+                thumbnailJPEGData: thumbnailData,
+                previewImage: previewImage
+            ))
         } catch is CancellationError {
             return .cancelled(temporaryURL: temporaryURL)
         } catch {
             if let temporaryURL { IncomingMediaFileStore.remove(temporaryURL) }
             return .failed
+        }
+    }
+
+    /// One identifier, or nil when deletion will not be offered, per selection and in order. PhotoKit is consulted
+    /// only when the picker left a check to it; a short answer can only withhold deletion.
+    private nonisolated static func resolveSourceIdentifiers(
+        for checks: [PhotoLibraryDeletionCheck],
+        photoLibrary: any PhotoLibraryServing
+    ) async -> [String?] {
+        guard checks.contains(where: { $0.needsPhotoLibrary }) else {
+            return checks.map { check -> String? in
+                guard case .resolved(let identifier) = check else { return nil }
+                return identifier
+            }
+        }
+        let answers = await photoLibrary.sourceIdentifiers(for: checks)
+        return checks.indices.map { index -> String? in
+            answers.indices.contains(index) ? answers[index] : nil
         }
     }
 

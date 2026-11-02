@@ -9,7 +9,7 @@ struct PhotoLibrarySelection {
     let typeIdentifier: String
     let mediaType: MediaType
     let originalFilename: String?
-    let sourceLocalIdentifier: String?
+    let deletionCheck: PhotoLibraryDeletionCheck
 
     func loadProtectedFile() async throws -> PhotoLibraryLoadedFile {
         let transferState = ProviderTransferState()
@@ -63,6 +63,53 @@ struct PhotoLibraryPickerOutput {
     let pickerFailureCount: Int
 }
 
+/// One picker result: its provider and the asset identifier Photos shared for it, if any.
+struct PhotoLibraryPickedItem {
+    let provider: NSItemProvider
+    let assetIdentifier: String?
+}
+
+extension PhotoLibraryPickerOutput {
+    /// Sorts picked items into photos and videos in pick order and counts the rest as failures. Only in-memory checks
+    /// run here; deletion eligibility is resolved later, off the main thread.
+    init(picked items: [PhotoLibraryPickedItem], allowsOriginalDeletion: Bool) {
+        var selections: [PhotoLibrarySelection] = []
+        var pickerFailureCount = 0
+        for item in items {
+            let provider = item.provider
+            let mediaType: MediaType
+            let typeIdentifier: String
+            if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                mediaType = .photo
+                typeIdentifier = UTType.image.identifier
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
+                mediaType = .video
+                typeIdentifier = UTType.movie.identifier
+            } else {
+                pickerFailureCount += 1
+                continue
+            }
+            let deletionCheck: PhotoLibraryDeletionCheck
+            if allowsOriginalDeletion {
+                deletionCheck = .pending(
+                    assetIdentifier: item.assetIdentifier,
+                    providerHasLivePhoto: provider.hasItemConformingToTypeIdentifier(UTType.livePhoto.identifier)
+                )
+            } else {
+                deletionCheck = .resolved(nil)
+            }
+            selections.append(PhotoLibrarySelection(
+                itemProvider: provider,
+                typeIdentifier: typeIdentifier,
+                mediaType: mediaType,
+                originalFilename: provider.suggestedName,
+                deletionCheck: deletionCheck
+            ))
+        }
+        self.init(selections: selections, pickerFailureCount: pickerFailureCount)
+    }
+}
+
 struct PhotoLibraryPicker: UIViewControllerRepresentable {
     let allowsOriginalDeletion: Bool
     let completion: (PhotoLibraryPickerOutput) -> Void
@@ -100,61 +147,10 @@ struct PhotoLibraryPicker: UIViewControllerRepresentable {
         }
 
         func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
-            var selections: [PhotoLibrarySelection] = []
-            var pickerFailureCount = 0
-            for result in results {
-                let provider = result.itemProvider
-                let mediaType: MediaType
-                let typeIdentifier: String
-                if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
-                    mediaType = .photo
-                    typeIdentifier = UTType.image.identifier
-                } else if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
-                    mediaType = .video
-                    typeIdentifier = UTType.movie.identifier
-                } else {
-                    pickerFailureCount += 1
-                    continue
-                }
-                selections.append(PhotoLibrarySelection(
-                    itemProvider: provider,
-                    typeIdentifier: typeIdentifier,
-                    mediaType: mediaType,
-                    originalFilename: provider.suggestedName,
-                    sourceLocalIdentifier: Self.deletionIdentifier(
-                        for: result,
-                        allowsOriginalDeletion: allowsOriginalDeletion
-                    )
-                ))
-            }
             completion(PhotoLibraryPickerOutput(
-                selections: selections,
-                pickerFailureCount: pickerFailureCount
+                picked: results.map { PhotoLibraryPickedItem(provider: $0.itemProvider, assetIdentifier: $0.assetIdentifier) },
+                allowsOriginalDeletion: allowsOriginalDeletion
             ))
-        }
-
-        private static func deletionIdentifier(
-            for result: PHPickerResult,
-            allowsOriginalDeletion: Bool
-        ) -> String? {
-            guard allowsOriginalDeletion else { return nil }
-            let identifier = result.assetIdentifier
-            let provider = result.itemProvider
-            let providerHasLivePhoto = provider.hasItemConformingToTypeIdentifier(UTType.livePhoto.identifier)
-            var asset: PHAsset?
-            if let identifier, !identifier.isEmpty, !providerHasLivePhoto {
-                let assets = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil)
-                if assets.count == 1 {
-                    asset = assets.object(at: 0)
-                }
-            }
-            return PhotoLibraryService.eligibleSourceIdentifier(
-                identifier,
-                allowsInspection: allowsOriginalDeletion,
-                assetIsAccessible: asset != nil,
-                providerHasLivePhoto: providerHasLivePhoto,
-                resourceProfileIsSafe: asset.map(PhotoLibraryService.isSafeToDeleteAfterRepresentationImport) ?? false
-            )
         }
     }
 }
