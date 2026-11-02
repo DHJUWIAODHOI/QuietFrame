@@ -2,6 +2,8 @@ import SwiftData
 import SwiftUI
 import UIKit
 
+private let albumRowLeadingSide: CGFloat = 56
+
 struct AlbumsScreen: View {
     @Environment(AppDependencies.self) private var dependencies
     @Environment(\.modelContext) private var modelContext
@@ -393,7 +395,7 @@ private struct AlbumsListRow<Leading: View>: View {
         if dynamicTypeSize.isAccessibilitySize {
             VStack(alignment: .leading, spacing: QuietFrameTheme.compactSpacing) {
                 leading
-                    .frame(width: 56, height: 56)
+                    .frame(width: albumRowLeadingSide, height: albumRowLeadingSide)
                 stackedText
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -463,7 +465,22 @@ private struct AlbumCover: View {
     let album: VaultAlbum
     let thumbnailService: ThumbnailService
 
+    @Environment(\.displayScale) private var displayScale
     @State private var image: UIImage?
+
+    private func pixelSize(for cover: VaultMedia) -> Int {
+        ThumbnailService.pixelSize(
+            fillingSquareOf: albumRowLeadingSide,
+            scale: displayScale,
+            mediaPixelSize: CGSize(width: cover.pixelWidth, height: cover.pixelHeight)
+        )
+    }
+
+    private var displayedImage: UIImage? {
+        if let image { return image }
+        guard let cover else { return nil }
+        return thumbnailService.cachedImage(for: cover, pixelSize: pixelSize(for: cover))
+    }
 
     private var cover: VaultMedia? {
         if let coverMediaID = album.coverMediaID,
@@ -482,7 +499,7 @@ private struct AlbumCover: View {
         RoundedRectangle(cornerRadius: QuietFrameTheme.tileCornerRadius, style: .continuous)
             .fill(QuietFrameTheme.inset)
             .overlay {
-                if let image {
+                if let image = displayedImage {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
@@ -493,12 +510,13 @@ private struct AlbumCover: View {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: QuietFrameTheme.tileCornerRadius, style: .continuous))
-            .task(id: coverKey) {
+            .task(id: "\(coverKey)#\(thumbnailService.generation)") {
                 guard let cover else {
                     image = nil
                     return
                 }
-                image = await thumbnailService.image(for: cover)
+                let loaded = await thumbnailService.image(for: cover, pixelSize: pixelSize(for: cover))
+                if !Task.isCancelled { image = loaded }
             }
             .accessibilityHidden(true)
     }

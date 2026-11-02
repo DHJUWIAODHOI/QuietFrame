@@ -65,6 +65,8 @@ private struct SecurePhotoPage: View {
     let onTap: () -> Void
     let onZoomChanged: (Bool) -> Void
 
+    @State private var preview: UIImage?
+
     var body: some View {
         ZStack {
             QuietFrameTheme.background
@@ -98,7 +100,7 @@ private struct SecurePhotoPage: View {
                     description: Text(errorMessage)
                 )
                 .foregroundStyle(QuietFrameTheme.ink, QuietFrameTheme.quietInk)
-            } else if let thumbnail = thumbnailService?.cachedImage(for: media) {
+            } else if let thumbnail = preview ?? thumbnailService?.cachedImage(for: media) {
                 Image(uiImage: thumbnail)
                     .resizable()
                     .scaledToFit()
@@ -119,6 +121,11 @@ private struct SecurePhotoPage: View {
         }
         .contentShape(Rectangle())
         .simultaneousGesture(TapGesture().onEnded { if isActive { onTap() } })
+        .task(id: media.id) {
+            guard let thumbnailService, photoLoader.image(for: media.id) == nil else { return }
+            let loaded = await thumbnailService.image(for: media)
+            if !Task.isCancelled { preview = loaded }
+        }
     }
 }
 
@@ -138,6 +145,7 @@ private struct SecureVideoPage: View {
     @State private var playerLooper: AVPlayerLooper?
     @State private var errorMessage: String?
     @State private var isLoading = false
+    @State private var poster: UIImage?
 
     var body: some View {
         ZStack {
@@ -150,7 +158,7 @@ private struct SecureVideoPage: View {
                 )
                 .foregroundStyle(QuietFrameTheme.ink, QuietFrameTheme.quietInk)
             } else {
-                if let thumbnail = thumbnailService?.cachedImage(for: media) {
+                if let thumbnail = poster ?? thumbnailService?.cachedImage(for: media) {
                     Image(uiImage: thumbnail)
                         .resizable()
                         .scaledToFit()
@@ -189,6 +197,11 @@ private struct SecureVideoPage: View {
         }
         .onChange(of: isActive) { _, isActive in
             if !isActive { detachPlayback() }
+        }
+        .task(id: media.id) {
+            guard let thumbnailService else { return }
+            let loaded = await thumbnailService.image(for: media)
+            if !Task.isCancelled { poster = loaded }
         }
         .onDisappear { cleanup() }
     }

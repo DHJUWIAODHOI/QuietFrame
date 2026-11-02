@@ -9,6 +9,12 @@ import XCTest
 final class ThumbnailBenchmarks: XCTestCase {
     /// An iPhone 16 Pro tile at the default (Comfortable) size, in pixels.
     private let tilePixelSide: CGFloat = 342
+    /// The decode size the grid asks for when a 4:3 photo fills that tile.
+    private let gridPixelSize = ThumbnailService.pixelSize(
+        fillingSquareOf: 114,
+        scale: 3,
+        mediaPixelSize: CGSize(width: 4_032, height: 3_024)
+    )
 
     func testAPageOfThumbnailsReachesTheScreen() throws {
         let fixture = try makeFixture(thumbnailCount: 48)
@@ -40,6 +46,49 @@ final class ThumbnailBenchmarks: XCTestCase {
             XCTAssertEqual(images.count, fixture.media.count)
             startMeasuring()
             images.forEach(drawTile)
+            stopMeasuring()
+        }
+    }
+
+    /// The same page at the size the grid requests for its tiles.
+    func testAPageOfGridSizedThumbnailsReachesTheScreen() throws {
+        let fixture = try makeFixture(thumbnailCount: 48)
+        defer { fixture.remove() }
+        let pixelSize = gridPixelSize
+
+        measure(metrics: [XCTClockMetric()], options: Benchmark.manualOptions) {
+            fixture.service.clearCache()
+            startMeasuring()
+            runBenchmark {
+                let images = await self.loadConcurrently(fixture.media, service: fixture.service, pixelSize: pixelSize)
+                XCTAssertEqual(images.count, fixture.media.count)
+                images.forEach(self.drawTile)
+            }
+            stopMeasuring()
+        }
+    }
+
+    /// Scrolls through 160 grid-sized thumbnails, then back to the first 48.
+    func testScrollingBackToEarlierGridSizedThumbnails() throws {
+        let fixture = try makeFixture(thumbnailCount: 160)
+        defer { fixture.remove() }
+        let firstScreen = Array(fixture.media.prefix(48))
+        let pixelSize = gridPixelSize
+
+        measure(metrics: [XCTClockMetric()], options: Benchmark.manualOptions) {
+            fixture.service.clearCache()
+            runBenchmark {
+                for page in stride(from: 0, to: fixture.media.count, by: 24) {
+                    let slice = Array(fixture.media[page..<min(page + 24, fixture.media.count)])
+                    _ = await self.loadConcurrently(slice, service: fixture.service, pixelSize: pixelSize)
+                }
+            }
+            startMeasuring()
+            runBenchmark {
+                let images = await self.loadConcurrently(firstScreen, service: fixture.service, pixelSize: pixelSize)
+                XCTAssertEqual(images.count, firstScreen.count)
+                images.forEach(self.drawTile)
+            }
             stopMeasuring()
         }
     }
@@ -105,11 +154,15 @@ final class ThumbnailBenchmarks: XCTestCase {
     }
 
     /// Requests every thumbnail at once, the way a page of grid tiles starts its tasks together.
-    private func loadConcurrently(_ media: [VaultMedia], service: ThumbnailService) async -> [UIImage] {
+    private func loadConcurrently(
+        _ media: [VaultMedia],
+        service: ThumbnailService,
+        pixelSize: Int = ThumbnailService.storedPixelSize
+    ) async -> [UIImage] {
         await withTaskGroup(of: UIImage?.self, returning: [UIImage].self) { group in
             for item in media {
                 group.addTask { @MainActor in
-                    await service.image(for: item)
+                    await service.image(for: item, pixelSize: pixelSize)
                 }
             }
             var images: [UIImage] = []

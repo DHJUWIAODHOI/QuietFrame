@@ -451,7 +451,7 @@ struct MediaViewer: View {
             return
         }
         viewerOpacity = 1
-        launch(ViewerZoomFlight(
+        let openingFlight = ViewerZoomFlight(
             purpose: .opening,
             image: thumbnail,
             from: .window(tileFrame),
@@ -460,11 +460,23 @@ struct MediaViewer: View {
             toCornerRadius: 0,
             duration: ViewerZoomMotion.openDuration,
             animation: ViewerZoomMotion.drawer(duration: ViewerZoomMotion.openDuration)
-        ))
+        )
+        launch(openingFlight)
+        sharpenFlight(openingFlight.id, with: media)
         withAnimation(ViewerZoomMotion.easeOut(duration: ViewerZoomMotion.backdropDuration)) {
             backdropLevel = 1
         }
         withAnimation(.easeOut(duration: 0.16).delay(0.12)) { chromeOpacity = 1 }
+    }
+
+    /// The grid caches thumbnails at tile size; the flight swaps in the full stored thumbnail as it grows.
+    private func sharpenFlight(_ flightID: UUID, with media: VaultMedia) {
+        Task {
+            guard let sharper = await dependencies.thumbnailService.image(for: media),
+                  flight?.id == flightID,
+                  flight?.image !== sharper else { return }
+            flight?.image = sharper
+        }
     }
 
     private func closeViewer() {
@@ -777,13 +789,17 @@ struct MediaViewer: View {
 
     private func permanentlyDeleteSelectedMedia() {
         guard let selectedMedia, !isWorking else { return }
+        let mediaID = selectedMedia.id
+        let thumbnailIdentifiers = [selectedMedia.thumbnailIdentifier].compactMap { $0 }
         isWorking = true
         Task {
             do {
-                try await dependencies.trashService.permanentlyDelete(ids: [selectedMedia.id])
-                dependencies.thumbnailService.clearCache()
+                try await dependencies.trashService.permanentlyDelete(ids: [mediaID])
+                dependencies.thumbnailService.removeImages(forThumbnailIdentifiers: thumbnailIdentifiers)
                 fadeOutAndDismiss(revealsTile: false)
             } catch {
+                // A delete can fail after removing the item, so its thumbnail leaves the cache either way.
+                dependencies.thumbnailService.removeImages(forThumbnailIdentifiers: thumbnailIdentifiers)
                 userMessage = (error as? VaultError)?.localizedDescription
                     ?? VaultError.fileOperationFailed.localizedDescription
                 isWorking = false

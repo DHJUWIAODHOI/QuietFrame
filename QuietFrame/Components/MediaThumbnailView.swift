@@ -4,14 +4,34 @@ import UIKit
 struct MediaThumbnailView: View {
     let media: VaultMedia
     let thumbnailService: ThumbnailService
+    /// The tile's width in points; nothing loads until it is known.
+    var tileWidth: CGFloat?
     var isSelected = false
     var selectionMode = false
     var thumbnailAspectRatio: CGFloat = 1
 
+    @Environment(\.displayScale) private var displayScale
     @ScaledMetric(relativeTo: .caption) private var badgeSize: CGFloat = 24
     @State private var image: UIImage?
 
     private static let badgeInset: CGFloat = 6
+
+    private struct ThumbnailRequest: Equatable {
+        let identifier: String?
+        let pixelSize: Int?
+        let cacheGeneration: UInt64
+    }
+
+    /// Large enough for the image to fill the tile, whose longer side is its height when it is taller than wide.
+    private var pixelSize: Int? {
+        guard let tileWidth else { return nil }
+        let longestTileSide = tileWidth * max(1, 1 / max(thumbnailAspectRatio, 0.01))
+        return ThumbnailService.pixelSize(
+            fillingSquareOf: longestTileSide,
+            scale: displayScale,
+            mediaPixelSize: CGSize(width: media.pixelWidth, height: media.pixelHeight)
+        )
+    }
 
     private var tileShape: RoundedRectangle {
         RoundedRectangle(cornerRadius: QuietFrameTheme.tileCornerRadius, style: .continuous)
@@ -49,17 +69,31 @@ struct MediaThumbnailView: View {
             }
         }
         .contentShape(tileShape)
-        .task(id: media.thumbnailIdentifier) {
-            image = await thumbnailService.image(for: media)
+        .task(id: ThumbnailRequest(
+            identifier: media.thumbnailIdentifier,
+            pixelSize: pixelSize,
+            cacheGeneration: thumbnailService.generation
+        )) {
+            guard let pixelSize else { return }
+            let loaded = await thumbnailService.image(for: media, pixelSize: pixelSize)
+            if !Task.isCancelled { image = loaded }
         }
+        .onDisappear { image = nil }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilitySummary)
         .accessibilityValue(selectionMode ? (isSelected ? "Selected" : "Not selected") : "")
     }
 
+    /// A tile that comes back into view shows a cached image straight away instead of a placeholder.
+    private var displayedImage: UIImage? {
+        if let image { return image }
+        guard let pixelSize else { return nil }
+        return thumbnailService.cachedImage(for: media, pixelSize: pixelSize)
+    }
+
     @ViewBuilder
     private var thumbnail: some View {
-        if let image {
+        if let image = displayedImage {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFill()

@@ -17,6 +17,7 @@ final class GalleryViewModel {
     private let pageSize: Int
     private var loadGeneration = UUID()
     private var searchTask: Task<Void, Never>?
+    @ObservationIgnored private var itemIndexes: [UUID: Int] = [:]
 
     init(repository: VaultRepository, query: GalleryQuery, pageSize: Int = 80) {
         self.repository = repository
@@ -148,5 +149,19 @@ final class GalleryViewModel {
 
     func clearError() {
         errorMessage = nil
+    }
+
+    /// The position of a loaded item, from an index that is rebuilt whenever it no longer matches the items.
+    func index(of id: UUID) -> Int? {
+        if let index = itemIndexes[id], items.indices.contains(index), items[index].id == id {
+            return index
+        }
+        var indexes: [UUID: Int] = [:]
+        indexes.reserveCapacity(items.count)
+        for (index, item) in items.enumerated() where indexes[item.id] == nil {
+            indexes[item.id] = index
+        }
+        itemIndexes = indexes
+        return indexes[id]
     }
 }

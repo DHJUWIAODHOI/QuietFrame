@@ -14,24 +14,45 @@ struct GalleryGridView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.displayScale) private var displayScale
+
+    @State private var gridWidth: CGFloat = 0
 
     // Fits the default thumbnail size to three columns on iPhone inside the page margins.
     private static let tileWidthScale: CGFloat = 0.85
+    private static let contentSpace = "gallery-grid-content"
+    /// How many tiles ahead of and behind an appearing tile get their thumbnails decoded early.
+    private static let prefetchDistance = 12
 
     private var tileShape: RoundedRectangle {
         RoundedRectangle(cornerRadius: QuietFrameTheme.tileCornerRadius, style: .continuous)
     }
 
+    private var minimumTileWidth: CGFloat {
+        dynamicTypeSize.isAccessibilitySize ? 280 : minimumCellWidth * Self.tileWidthScale
+    }
+
+    private var maximumTileWidth: CGFloat {
+        dynamicTypeSize.isAccessibilitySize ? QuietFrameTheme.readableWidth : minimumCellWidth * 1.45
+    }
+
     private var columns: [GridItem] {
-        let isAccessibilitySize = dynamicTypeSize.isAccessibilitySize
-        return [GridItem(
-            .adaptive(
-                minimum: isAccessibilitySize ? 280 : minimumCellWidth * Self.tileWidthScale,
-                maximum: isAccessibilitySize ? QuietFrameTheme.readableWidth : minimumCellWidth * 1.45
-            ),
+        [GridItem(
+            .adaptive(minimum: minimumTileWidth, maximum: maximumTileWidth),
             spacing: QuietFrameTheme.gridSpacing,
             alignment: .top
         )]
+    }
+
+    /// Tile width at the grid's current width; nil until the width is known.
+    private var tileWidth: CGFloat? {
+        guard gridWidth > 0 else { return nil }
+        return adaptiveGridTileWidth(
+            availableWidth: gridWidth - QuietFrameTheme.pagePadding * 2,
+            minimum: minimumTileWidth,
+            maximum: maximumTileWidth,
+            spacing: QuietFrameTheme.gridSpacing
+        )
     }
 
     var body: some View {
@@ -54,6 +75,7 @@ struct GalleryGridView: View {
                                 MediaThumbnailView(
                                     media: media,
                                     thumbnailService: thumbnailService,
+                                    tileWidth: tileWidth,
                                     isSelected: viewModel.selectedIDs.contains(media.id),
                                     selectionMode: viewModel.isSelecting
                                 )
@@ -61,6 +83,7 @@ struct GalleryGridView: View {
                             .buttonStyle(.plain)
                             .opacity(media.id == hiddenMediaID ? 0 : 1)
                             .background { tileFrameReporter(for: media.id) }
+                            .onAppear { prefetchThumbnails(around: media) }
                             .contentShape(.contextMenuPreview, tileShape)
                             .onLongPressGesture(minimumDuration: 0.35) {
                                 viewModel.beginSelection(with: media.id)
@@ -84,6 +107,8 @@ struct GalleryGridView: View {
                             }
                         }
                     }
+                    .background { contentOriginReporter }
+                    .coordinateSpace(name: Self.contentSpace)
                     .padding(.horizontal, QuietFrameTheme.pagePadding)
                     .padding(.vertical, QuietFrameTheme.compactSpacing)
 
@@ -98,6 +123,7 @@ struct GalleryGridView: View {
                 .background { viewportReporter }
             }
         }
+        .background { widthReporter }
         .background(QuietFrameTheme.background)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: viewModel.items.count)
     }
@@ -107,16 +133,53 @@ struct GalleryGridView: View {
         viewModel.hasMore && media.id == viewModel.items.last?.id
     }
 
+    private func prefetchThumbnails(around media: VaultMedia) {
+        guard let tileWidth, let index = viewModel.index(of: media.id) else { return }
+        let items = viewModel.items
+        let lower = max(index - Self.prefetchDistance, 0)
+        let upper = min(index + Self.prefetchDistance, items.count - 1)
+        guard lower <= upper else { return }
+        let scale = displayScale
+        thumbnailService.prefetch(Array(items[lower...upper])) { item in
+            ThumbnailService.pixelSize(
+                fillingSquareOf: tileWidth,
+                scale: scale,
+                mediaPixelSize: CGSize(width: item.pixelWidth, height: item.pixelHeight)
+            )
+        }
+    }
+
+    /// Frames in the grid's own space change only when the layout does, not on every scrolled frame.
     @ViewBuilder
     private func tileFrameReporter(for mediaID: UUID) -> some View {
         if let tileFrames {
             GeometryReader { proxy in
-                let tileFrame = proxy.frame(in: .global)
+                let tileFrame = proxy.frame(in: .named(Self.contentSpace))
                 Color.clear
                     .onAppear { tileFrames.set(tileFrame, for: mediaID) }
                     .onChange(of: tileFrame) { _, newFrame in tileFrames.set(newFrame, for: mediaID) }
                     .onDisappear { tileFrames.remove(mediaID) }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var contentOriginReporter: some View {
+        if let tileFrames {
+            GeometryReader { proxy in
+                let origin = proxy.frame(in: .global).origin
+                Color.clear
+                    .onAppear { tileFrames.contentOrigin = origin }
+                    .onChange(of: origin) { _, newOrigin in tileFrames.contentOrigin = newOrigin }
+            }
+        }
+    }
+
+    private var widthReporter: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .onAppear { gridWidth = proxy.size.width }
+                .onChange(of: proxy.size.width) { _, newWidth in gridWidth = newWidth }
         }
     }
 
@@ -190,4 +253,13 @@ struct GalleryGridView: View {
             .scrollBounceBehavior(.basedOnSize)
         }
     }
+}
+
+/// The width an adaptive grid column gives each tile: as many columns as fit at the minimum width share the space,
+/// up to the maximum width.
+func adaptiveGridTileWidth(availableWidth: CGFloat, minimum: CGFloat, maximum: CGFloat, spacing: CGFloat) -> CGFloat {
+    guard availableWidth > 0, minimum > 0 else { return max(minimum, 1) }
+    let columnCount = max(1, Int(((availableWidth + spacing) / (minimum + spacing)).rounded(.down)))
+    let width = (availableWidth - spacing * CGFloat(columnCount - 1)) / CGFloat(columnCount)
+    return min(max(width, 1), max(maximum, minimum))
 }

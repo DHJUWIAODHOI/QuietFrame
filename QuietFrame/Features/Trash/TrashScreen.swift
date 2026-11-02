@@ -59,7 +59,9 @@ private struct TrashScreenContent: View {
         .safeAreaInset(edge: .bottom) { selectionBar }
         .task {
             do {
-                _ = try await dependencies.trashService.purgeExpiredItems()
+                if try await dependencies.trashService.purgeExpiredItems() > 0 {
+                    dependencies.thumbnailService.clearCache()
+                }
             } catch {
                 userMessage = (error as? VaultError)?.localizedDescription
                     ?? VaultError.fileOperationFailed.localizedDescription
@@ -272,28 +274,49 @@ private struct TrashScreenContent: View {
 
     private func permanentlyDeleteSelection() {
         let ids = viewModel.selectedIDs
-        perform {
+        let thumbnailIdentifiers = viewModel.items.filter { ids.contains($0.id) }.compactMap(\.thumbnailIdentifier)
+        perform(evicting: .thumbnails(thumbnailIdentifiers)) {
             try await dependencies.trashService.permanentlyDelete(ids: ids)
         }
     }
 
     private func emptyTrash() {
-        perform {
+        perform(evicting: .allThumbnails) {
             try await dependencies.trashService.emptyTrash()
         }
     }
 
-    private func perform(_ operation: @escaping () async throws -> Void) {
+    /// Thumbnails of permanently deleted media leave the memory cache with them.
+    private enum ThumbnailEviction {
+        case none
+        case thumbnails([String])
+        case allThumbnails
+    }
+
+    private func evictThumbnails(_ eviction: ThumbnailEviction) {
+        switch eviction {
+        case .none:
+            break
+        case .thumbnails(let identifiers):
+            dependencies.thumbnailService.removeImages(forThumbnailIdentifiers: identifiers)
+        case .allThumbnails:
+            dependencies.thumbnailService.clearCache()
+        }
+    }
+
+    private func perform(evicting eviction: ThumbnailEviction = .none, _ operation: @escaping () async throws -> Void) {
         guard !isWorking else { return }
         isWorking = true
         Task {
             do {
                 try await operation()
                 viewModel.endSelection()
-                dependencies.thumbnailService.clearCache()
+                evictThumbnails(eviction)
                 await viewModel.refreshLoadedItems()
                 HapticFeedback.success()
             } catch {
+                // A delete can fail after removing some items, so their thumbnails leave the cache either way.
+                evictThumbnails(eviction)
                 userMessage = (error as? VaultError)?.localizedDescription
                     ?? VaultError.fileOperationFailed.localizedDescription
             }

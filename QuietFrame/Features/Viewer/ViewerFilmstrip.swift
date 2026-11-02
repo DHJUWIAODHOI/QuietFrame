@@ -120,7 +120,16 @@ private struct FilmstripTile: View {
     let thumbnailService: ThumbnailService
     let isSelected: Bool
 
+    @Environment(\.displayScale) private var displayScale
     @State private var image: UIImage?
+
+    private var pixelSize: Int {
+        ThumbnailService.pixelSize(
+            fillingSquareOf: max(filmstripSelectedTileWidth, filmstripTileHeight),
+            scale: displayScale,
+            mediaPixelSize: CGSize(width: media.pixelWidth, height: media.pixelHeight)
+        )
+    }
 
     var body: some View {
         let thumbnail = image ?? thumbnailService.cachedImage(for: media)
@@ -137,8 +146,9 @@ private struct FilmstripTile: View {
             .opacity(isSelected ? 1 : 0.7)
             .frame(height: filmstripHeight, alignment: .top)
             .contentShape(Rectangle())
-            .task(id: media.id) {
-                image = await thumbnailService.image(for: media)
+            .task(id: "\(media.id)#\(thumbnailService.generation)") {
+                let loaded = await thumbnailService.image(for: media, pixelSize: pixelSize)
+                if !Task.isCancelled { image = loaded }
             }
     }
 }

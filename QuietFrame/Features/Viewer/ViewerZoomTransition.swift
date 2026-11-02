@@ -2,10 +2,13 @@ import SwiftUI
 import UIKit
 
 /// Window frames of the gallery tiles currently on screen, so the viewer can open from and return to a tile.
-/// Deliberately not observable: tiles report their frames while scrolling without re-rendering anything.
+/// Tiles report frames in the grid's own coordinate space, which scrolling leaves unchanged, and a single reporter
+/// tracks where the grid sits in the window. Deliberately not observable, so reporting re-renders nothing.
 @MainActor
 final class MediaTileFrames {
     private var frames: [UUID: CGRect] = [:]
+    /// Where the grid's coordinate space starts in the window; it moves as the grid scrolls.
+    var contentOrigin: CGPoint = .zero
     /// The window rect where the grid's tiles are visible, outside the navigation, filter and tab bars.
     var viewport: CGRect?
 
@@ -18,7 +21,7 @@ final class MediaTileFrames {
     }
 
     func frame(for mediaID: UUID) -> CGRect? {
-        frames[mediaID]
+        frames[mediaID]?.offsetBy(dx: contentOrigin.x, dy: contentOrigin.y)
     }
 }
 
@@ -124,7 +127,7 @@ struct ViewerZoomFlight: Identifiable {
 
     let id = UUID()
     let purpose: Purpose
-    let image: UIImage
+    var image: UIImage
     let from: ViewerZoomEndpoint
     let to: ViewerZoomEndpoint
     let fromCornerRadius: CGFloat
