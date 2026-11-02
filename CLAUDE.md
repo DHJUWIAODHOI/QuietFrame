@@ -75,14 +75,16 @@ QuietFrame/
 - **On disk:**
   - Encrypted files: `Application Support/QuietFrameVault/{media,thumbnails,trash}/<uuid>.qfe`
   - In-progress encryption: `.../staging/<uuid>.partial`
-  - Decrypted temp files: `Caches/QuietFrameTemporary/`
-  - Picker copies: `tmp/QuietFrameIncoming/`
+  - Decrypted temp files (Share and Save to Photos only): `Caches/QuietFrameTemporary/`. Video playback streams from the encrypted file through `EncryptedVideoStream`, and thumbnails and viewer photos decode in memory.
+  - Picker copies: `tmp/QuietFrameIncoming/`, each removed as soon as its item is imported.
   - SwiftData: `default.store` in Application Support
   - Reset marker: `Application Support/reset-in-progress`
 - **Consistency rules:**
   - Moves (trash, restore, album delete): move the files first, then save metadata. If the save fails, move the files back.
   - Deletes: remove metadata first, then files.
-  - `StorageReconciliationService` runs after every unlock as a backstop.
+  - Every save that changes media or albums must call `repository.changes.recordChange()` (`LibraryChangeCounter`). Galleries skip a refresh when the counter has not moved, so a missing call shows stale data.
+  - `StorageReconciliationService` runs 0.75 s after every unlock as a backstop, in batches that stop if the vault locks.
+- **Performance:** the rewrite on `perf-rewrite` is documented in `Docs/Performance/` (`AUDIT.md`, `PROGRESS.md`). Crypto methods are `nonisolated` so reads run in parallel; never block one of Swift's cooperative threads (the simulator has very few), and run blocking ImageIO or PhotoKit work through `BlockingWork`.
 
 ## Security invariants (do not regress)
 
@@ -134,13 +136,13 @@ QuietFrame/
   - Use low PBKDF2 cost via `AuthenticationService.Policy`, and temp dirs with `applyFileProtection: false`.
 - **Commits:** small and focused, with imperative subjects ("Add ...", "Fix ...", "Simplify ...").
 
-## Status (2026-10-08)
+## Status (2026-11-02)
 
+- The app is for the owner's personal use and is never published, so App Store requirements do not apply. It is installed from the unsigned IPA that CI builds.
 - The v1 feature set is implemented. There are no TODO/FIXME markers; open work is in README "Known Limitations" and the unchecked items of the SECURITY.md checklist.
-- `main` and `origin/main` are in sync. CI runs the full test suite and passes (run 37814853905, commit `261e0f4`). The simulator test step must stay ad-hoc signed (`CODE_SIGN_IDENTITY=-`): an unsigned test host has no Keychain access, which fails `KeychainServiceTests` and leaves the UI test on the retry screen. `refactor-ui-fork` (= `fork/main`) is an older branch with a shortened CI test list.
-- **Tests:** 167 unit tests in 25 files, plus 1 UI test. No tests cover reset-journal recovery, thumbnails, metadata extraction, ImportViewModel, biometrics, iterated PBKDF2, or most container tamper cases.
+- `main` (`1c8d5d0`) is in sync with `origin/main`. The performance rewrite lives on `perf-rewrite` until the owner approves a merge; its state is in `Docs/Performance/PROGRESS.md`. The repository is public, so CI minutes are free; never commit secrets or personal media. The simulator test step must stay ad-hoc signed (`CODE_SIGN_IDENTITY=-`): an unsigned test host has no Keychain access, which fails `KeychainServiceTests` and leaves the UI test on the retry screen. CI also runs the SwiftData test classes on iOS 18.5 and an installed iOS 17.5, and the benchmarks in their own optimized step; `-f compare=true` adds a same-run comparison against `6d83bea`. On iOS 17, never insert both ends of a new relationship: insert and save one side first, or SwiftData traps with "Duplicate registration attempt". `refactor-ui-fork` (= `fork/main`) is an older branch with a shortened CI test list, and the `fork` remote no longer exists.
+- **Tests (on `perf-rewrite`):** 377 unit tests in 47 files, 1 UI test, and 49 benchmarks in 11 classes. No tests cover reset-journal recovery or biometrics.
 - **Stale docs:**
-  - README: says 28 tests and a V1 schema, and claims CI doesn't run the tests.
   - PHASE_REPORT.md:114: says the viewer decrypts only the active page. Photos are now prepared for the selected page and its neighbours, one at a time, at screen size by `ViewerPhotoLoader`; videos stream from their encrypted files for the active page.
 - **Half-finished:**
   - Tags can be searched, but nothing creates them.
@@ -150,7 +152,6 @@ QuietFrame/
   - No bulk unfavorite.
 
 ### Known issues (verified; remove each one when it is fixed)
-- With the default "Immediately", auto-lock fires on the app's own system prompts: Face ID enable, Photos permission, the delete confirmation, Save to Photos (`App/VaultLockCoordinator.swift:348`).
-- Backgrounding during an in-flight unlock leaves the vault unlocked past the auto-lock grace period (`VaultLockCoordinator.swift:348-382`).
-- App Store: the app icon is SVG only (~30 MB `Assets.car`, alpha risk); convert it to PNG. The `ITSAppUsesNonExemptEncryption` key is missing.
+- With the default "Immediately", auto-lock fires on the app's own system prompts: Face ID enable, Photos permission, the delete confirmation, Save to Photos (`VaultLockCoordinator.handleLifecycle`).
+- Backgrounding during an in-flight unlock leaves the vault unlocked past the auto-lock grace period (`VaultLockCoordinator.handleLifecycle`).
 - Hosted reset tests write the real reset-journal marker. An aborted run on a device could wipe that device's vault on the next launch.

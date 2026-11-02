@@ -8,7 +8,7 @@ The app targets iOS 17 or later and uses the installed iOS SDK, so it can be bui
 
 The project and shared scheme are checked in at `QuietFrame.xcodeproj`. All source, resource, unit-test, and UI-test targets are present.
 
-The GitHub Actions macOS workflow successfully archives an unsigned device build with Xcode 16.4 and publishes an IPA artifact on every push to `main`. Unit and UI tests still require a separate Simulator test run before release.
+The GitHub Actions macOS workflow (Xcode 16.4) runs the full unit and UI test suite on an iPhone 16 Pro simulator, runs the SwiftData tests again on iOS 18.5 and iOS 17.5, runs the performance benchmarks in a separate optimized step, and then archives an unsigned device build and publishes the IPA. It runs on every push to `main` and on manual dispatch.
 
 ## Setup
 
@@ -86,10 +86,10 @@ The root view renders `MainTabView` only while `VaultLockCoordinator.State` is `
 
 ## Data Model
 
-The versioned SwiftData V1 schema contains:
+The current SwiftData schema is V3. V1 and V2 stores migrate in place through `VaultMigrationPlan`. It contains:
 
 - `VaultMedia`: opaque storage IDs, keyed duplicate token, media metadata, favorite state, tags, album relation, and trash state
-- `VaultAlbum`: name, dates, cover ID, and media relation
+- `VaultAlbum`: name, dates, manual position, cover ID, and media relation
 - `AppSettings`: biometric preference, auto-lock, retention, appearance, thumbnail size, and album sort
 - `ImportRecord`: import counts, state, and timestamps
 
@@ -201,21 +201,22 @@ Original Photos assets are never deleted automatically. The import summary offer
 
 ## Tests
 
-The unit target contains 28 tests covering:
+The unit target contains 377 tests in 47 files, covering:
 
-- PBKDF2 known vector
-- passcode creation, unlock, wrong attempts, lockout, change, and reset
+- PBKDF2 against independent vectors, including a full 210,000-iteration comparison with the previous implementation
+- passcode creation, unlock, wrong attempts, lockout, change, reset, and the storage check that runs after unlock
 - Keychain create/update/read/delete
-- multi-chunk encryption round trip
-- authenticated tamper rejection
-- active-operation revocation on lock
-- secure storage and temporary lease cleanup
-- encrypted import, metadata persistence, and exact duplicate detection
-- album create, rename, keep-media deletion, and Trash deletion
-- Trash move, restore, permanent delete, and retention purge
-- immediate and delayed auto-lock behavior
-- export lease cleanup
-- storage analysis and reconciliation
+- the encrypted container format against documented vectors, multi-chunk round trips, tampering, truncation, padding, oversized headers, and revocation on lock
+- encrypted video streaming end to end through AVFoundation, with no plaintext written to disk
+- secure storage, bulk listings and batch moves and deletes, and temporary lease cleanup
+- library queries, paging, search results across locales and time zones, and skipped refreshes
+- thumbnail decoding, caching, prefetch and cancellation, and the viewer's photo loader
+- video playback and scrubbing
+- import preparation, progress, in-memory thumbnail encryption, per-item cleanup, previews, and duplicate detection
+- albums, Album counts, Trash, retention purge, reconciliation, and storage analysis
+- on-disk migrations from V1 and V2 to V3
+
+49 performance benchmarks in 11 classes live in `QuietFrameTests/Benchmarks`. CI runs them in their own optimized step, and `Docs/Performance/PROGRESS.md` records the results.
 
 The UI target verifies that launch cannot expose the tab hierarchy before onboarding, unlock, or recovery authentication.
 
@@ -242,15 +243,15 @@ Tests use in-memory SwiftData stores and protocol mocks. Security file tests use
 17. Once a user hands a decrypted item to Photos or an activity extension, the destination may retain, upload, thumbnail, sync, or back up its copy. QuietFrame cannot control that behavior.
 18. iOS has no public API that fully blocks screenshots. QuietFrame covers inactive snapshots and locks on active capture, but screenshot notification is post-capture.
 19. APFS and flash storage do not support verifiable application-level secure overwrite. Reset relies primarily on cryptographic key destruction.
-20. Metadata schema V1 is ready for future migration stages, but no shipped legacy schema exists. The keyed deduplication-token change assumes this is the first public release.
+20. The metadata schema is at V3. V1 and V2 stores migrate in place, and on-disk migration tests cover both stages.
 21. Localization is English-only in v1.
 
 ## Release Checklist
 
 - Run Debug and Release builds with the latest stable Xcode.
-- Run all unit and UI tests on at least one iOS 17 simulator and the latest iOS simulator.
+- CI runs every unit and UI test on the latest iOS simulator and the SwiftData tests on iOS 18.5 and 17.5. Run the full suite on an iOS 17 simulator or device before relying on it there.
 - Exercise Face ID/Touch ID, device lock, enrollment changes, background transitions, Photos limited access, denied permissions, and low-storage behavior on physical devices.
-- Validate app icons, launch screen, privacy manifest, signing, and an App Store archive.
+- Validate the app icon, launch screen, privacy manifest, and signing for your own install. QuietFrame is for personal use and is not published to the App Store.
 - Use Accessibility Inspector with VoiceOver, maximum Dynamic Type, Increase Contrast, Reduce Motion, landscape, iPad split view, and keyboard navigation.
 - Use Instruments with thousands of metadata records, large HEIC/JPEG images, and multi-gigabyte videos.
 - Review `SECURITY.md` and `Docs/PHASE_REPORT.md` before release.
