@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 60
 
     env:
-      BENCHMARK_CLASSES: CryptoBenchmarks ThumbnailBenchmarks LibraryBenchmarks ViewerBenchmarks ImportBenchmarks
+      BENCHMARK_CLASSES: CryptoBenchmarks ThumbnailBenchmarks LibraryBenchmarks ViewerBenchmarks ImportBenchmarks CryptoEngineBenchmarks StorageBenchmarks GalleryBenchmarks ImportPipelineBenchmarks VideoScrubbingBenchmarks ReconcileBenchmarks
 
     steps:
       - name: Check out repository
@@ -82,6 +82,11 @@ jobs:
             -only-testing:QuietFrameTests/TrashServiceTests \
             -only-testing:QuietFrameTests/StorageReconciliationServiceTests \
             -only-testing:QuietFrameTests/MediaExportServiceTests \
+            -only-testing:QuietFrameTests/AlbumCountsTests \
+            -only-testing:QuietFrameTests/AlbumsScreenTests \
+            -only-testing:QuietFrameTests/GalleryRefreshTests \
+            -only-testing:QuietFrameTests/GallerySearchMatcherTests \
+            -only-testing:QuietFrameTests/StorageAnalysisServiceTests \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY=- \
             DEVELOPMENT_TEAM= \
@@ -215,7 +220,7 @@ jobs:
     timeout-minutes: 120
 
     env:
-      BENCHMARK_CLASSES: CryptoBenchmarks ThumbnailBenchmarks LibraryBenchmarks ViewerBenchmarks ImportBenchmarks
+      BENCHMARK_CLASSES: CryptoBenchmarks ThumbnailBenchmarks LibraryBenchmarks ViewerBenchmarks ImportBenchmarks CryptoEngineBenchmarks StorageBenchmarks GalleryBenchmarks ImportPipelineBenchmarks VideoScrubbingBenchmarks ReconcileBenchmarks
       DESTINATION: platform=iOS Simulator,name=iPhone 16 Pro,OS=latest
 
     steps:
@@ -325,7 +330,7 @@ jobs:
         timeout-minutes: 30
         run: |
           set -o pipefail
-          xcodebuild             -project QuietFrame.xcodeproj             -scheme QuietFrame             -configuration Debug             -sdk iphonesimulator             -destination "id=$IOS17_SIMULATOR"             -destination-timeout 180             -parallel-testing-enabled NO             -resultBundlePath "$RUNNER_TEMP/SwiftDataIOS17.xcresult"             -only-testing:QuietFrameTests/LibraryQueryTests             -only-testing:QuietFrameTests/GallerySortingTests             -only-testing:QuietFrameTests/AlbumServiceTests             -only-testing:QuietFrameTests/TrashServiceTests             -only-testing:QuietFrameTests/StorageReconciliationServiceTests             -only-testing:QuietFrameTests/MediaExportServiceTests             CODE_SIGN_STYLE=Manual             CODE_SIGN_IDENTITY=-             DEVELOPMENT_TEAM=             PROVISIONING_PROFILE_SPECIFIER=             test
+          xcodebuild             -project QuietFrame.xcodeproj             -scheme QuietFrame             -configuration Debug             -sdk iphonesimulator             -destination "id=$IOS17_SIMULATOR"             -destination-timeout 180             -parallel-testing-enabled NO             -resultBundlePath "$RUNNER_TEMP/SwiftDataIOS17.xcresult"             -only-testing:QuietFrameTests/LibraryQueryTests             -only-testing:QuietFrameTests/GallerySortingTests             -only-testing:QuietFrameTests/AlbumServiceTests             -only-testing:QuietFrameTests/TrashServiceTests             -only-testing:QuietFrameTests/StorageReconciliationServiceTests             -only-testing:QuietFrameTests/MediaExportServiceTests             -only-testing:QuietFrameTests/AlbumCountsTests             -only-testing:QuietFrameTests/AlbumsScreenTests             -only-testing:QuietFrameTests/GalleryRefreshTests             -only-testing:QuietFrameTests/GallerySearchMatcherTests             -only-testing:QuietFrameTests/StorageAnalysisServiceTests             CODE_SIGN_STYLE=Manual             CODE_SIGN_IDENTITY=-             DEVELOPMENT_TEAM=             PROVISIONING_PROFILE_SPECIFIER=             test
 
       - name: Upload iOS 17 results on failure
         if: failure()
