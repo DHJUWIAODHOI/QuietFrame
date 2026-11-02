@@ -312,7 +312,7 @@ final class LibraryQueryTests: XCTestCase {
         generations.append(changes.generation)
         try await trash.moveToTrash(ids: [media[5].id])
         generations.append(changes.generation)
-        try await trash.emptyTrash()
+        _ = try await trash.emptyTrash()
         generations.append(changes.generation)
         try await trash.moveToTrash(ids: [media[6].id])
         generations.append(changes.generation)
