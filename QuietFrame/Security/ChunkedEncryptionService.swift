@@ -15,6 +15,8 @@ protocol FileEncrypting: Sendable {
         progress: FileProgressHandler?
     ) async throws -> EncryptionResult
 
+    func encryptData(_ plaintext: Data, to outputURL: URL) async throws -> EncryptionResult
+
     func decryptFile(
         at inputURL: URL,
         to outputURL: URL,
@@ -96,20 +98,57 @@ actor ChunkedEncryptionService: FileEncrypting {
         to outputURL: URL,
         progress: FileProgressHandler? = nil
     ) async throws -> EncryptionResult {
-        guard inputURL.standardizedFileURL != outputURL.standardizedFileURL,
-              chunkByteCount >= 64 * 1_024,
-              chunkByteCount <= 16 * 1_024 * 1_024 else {
+        guard inputURL.standardizedFileURL != outputURL.standardizedFileURL, hasSupportedChunkByteCount else {
             throw VaultError.invalidInput("The encryption file parameters are invalid.")
         }
 
         let keyAccess = try await session.keyAccess()
         let input = try FileHandle(forReadingFrom: inputURL)
+        defer { input.closeFile() }
         let plaintextByteCount = try input.seekToEnd()
         try input.seek(toOffset: 0)
-        guard plaintextByteCount > 0 else {
-            input.closeFile()
-            throw VaultError.unsupportedFileType
+        return try await encrypt(
+            plaintextByteCount: plaintextByteCount,
+            keyAccess: keyAccess,
+            to: outputURL,
+            progress: progress
+        ) { byteCount in
+            try input.readExactly(byteCount)
         }
+    }
+
+    /// Writes the same container as `encryptFile` from bytes held in memory, so they never reach disk unencrypted.
+    func encryptData(_ plaintext: Data, to outputURL: URL) async throws -> EncryptionResult {
+        guard hasSupportedChunkByteCount else {
+            throw VaultError.invalidInput("The encryption file parameters are invalid.")
+        }
+
+        let keyAccess = try await session.keyAccess()
+        var offset = plaintext.startIndex
+        return try await encrypt(
+            plaintextByteCount: UInt64(plaintext.count),
+            keyAccess: keyAccess,
+            to: outputURL,
+            progress: nil
+        ) { byteCount in
+            let end = offset + byteCount
+            defer { offset = end }
+            return plaintext.subdata(in: offset..<end)
+        }
+    }
+
+    private var hasSupportedChunkByteCount: Bool {
+        chunkByteCount >= 64 * 1_024 && chunkByteCount <= 16 * 1_024 * 1_024
+    }
+
+    private func encrypt(
+        plaintextByteCount: UInt64,
+        keyAccess: VaultSession.KeyAccess,
+        to outputURL: URL,
+        progress: FileProgressHandler?,
+        readChunk: (Int) throws -> Data
+    ) async throws -> EncryptionResult {
+        guard plaintextByteCount > 0 else { throw VaultError.unsupportedFileType }
 
         let salt = try Data.secureRandom(count: 16)
         let noncePrefix = try Data.secureRandom(count: 8)
@@ -127,13 +166,11 @@ actor ChunkedEncryptionService: FileEncrypting {
             contents: nil,
             attributes: [.protectionKey: FileProtectionType.complete]
         ) else {
-            input.closeFile()
             throw VaultError.fileOperationFailed
         }
         let output = try FileHandle(forWritingTo: outputURL)
         var completed = false
         defer {
-            input.closeFile()
             output.closeFile()
             if !completed { try? fileManager.removeItem(at: outputURL) }
         }
@@ -149,7 +186,7 @@ actor ChunkedEncryptionService: FileEncrypting {
                 try await session.validate(keyAccess.generation)
                 let remaining = plaintextByteCount - processed
                 let readCount = Int(min(UInt64(chunkByteCount), remaining))
-                let plaintext = try input.readExactly(readCount)
+                let plaintext = try readChunk(readCount)
                 hasher.update(data: plaintext)
 
                 let nonce = try Self.makeNonce(prefix: noncePrefix, chunkIndex: chunkIndex)

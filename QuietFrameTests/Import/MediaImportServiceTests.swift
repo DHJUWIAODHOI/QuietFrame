@@ -226,6 +226,57 @@ final class MediaImportServiceTests: XCTestCase {
         XCTAssertTrue(thumbnailIdentifiers.isEmpty)
     }
 
+    func testEachIncomingCopyIsRemovedOnceItsItemIsDone() async throws {
+        let environment = try await makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.root) }
+        let incoming = environment.root.appendingPathComponent("QuietFrameIncoming", isDirectory: true)
+        try FileManager.default.createDirectory(at: incoming, withIntermediateDirectories: true)
+        let thumbnails = (0..<3).map { Data(repeating: UInt8(0x60 + $0), count: 4_096) }
+        let sources = try (0..<3).map { index in
+            try makeSource(
+                at: incoming.appendingPathComponent("item-\(index).jpg"),
+                bytes: Data(repeating: UInt8(0x40 + index), count: 150_000),
+                mediaType: .photo,
+                filename: "item-\(index).jpg",
+                thumbnailData: thumbnails[index]
+            )
+        }
+        let paths = sources.map(\.temporaryURL.path)
+        let snapshots = IncomingFileSnapshots()
+
+        let summary = try await environment.importer.importMedia(
+            sources,
+            albumID: nil,
+            preflightFailureCount: 0,
+            preflightThumbnailFailureCount: 0
+        ) { progress in
+            guard progress.currentItemFraction > 0 else { return }
+            await snapshots.record(
+                encryptingItem: progress.completedItems,
+                present: paths.map { FileManager.default.fileExists(atPath: $0) }
+            )
+        }
+
+        XCTAssertEqual(summary.importedCount, 3)
+        XCTAssertEqual(summary.thumbnailFailureCount, 0)
+        let recorded = await snapshots.values
+        XCTAssertEqual(Set(recorded.map { $0.item }), [0, 1, 2])
+        for snapshot in recorded {
+            XCTAssertEqual(snapshot.present, (0..<3).map { $0 >= snapshot.item }, "While item \(snapshot.item) encrypts")
+        }
+        XCTAssertFalse(paths.contains { FileManager.default.fileExists(atPath: $0) })
+        var storedThumbnails: Set<Data> = []
+        for identifier in try await environment.storage.allIdentifiers(location: .thumbnails) {
+            let thumbnail = try await environment.storage.decryptData(
+                identifier: identifier,
+                location: .thumbnails,
+                maximumByteCount: 100_000
+            )
+            storedThumbnails.insert(thumbnail)
+        }
+        XCTAssertEqual(storedThumbnails, Set(thumbnails))
+    }
+
     private func makeEnvironment() async throws -> (
         root: URL,
         cache: URL,
@@ -287,5 +338,13 @@ final class MediaImportServiceTests: XCTestCase {
         ])
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         return try ModelContainer(for: schema, configurations: [configuration])
+    }
+}
+
+private actor IncomingFileSnapshots {
+    private(set) var values: [(item: Int, present: [Bool])] = []
+
+    func record(encryptingItem item: Int, present: [Bool]) {
+        values.append((item, present))
     }
 }

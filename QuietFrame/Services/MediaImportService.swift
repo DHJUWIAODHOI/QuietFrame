@@ -102,6 +102,7 @@ actor MediaImportService: MediaImporting {
             defer { sources.forEach { IncomingMediaFileStore.remove($0.temporaryURL) } }
 
             for (index, source) in sources.enumerated() {
+                defer { IncomingMediaFileStore.remove(source.temporaryURL) }
                 do {
                     try Task.checkCancellation()
                     guard generation == operationGeneration else { throw CancellationError() }
@@ -137,17 +138,10 @@ actor MediaImportService: MediaImporting {
                     var thumbnailIdentifier: String?
                     if let thumbnailData = source.thumbnailJPEGData {
                         do {
-                            let thumbnailURL = try IncomingMediaFileStore.writeProtectedData(
-                                thumbnailData,
-                                fileExtension: "jpg"
-                            )
-                            defer { IncomingMediaFileStore.remove(thumbnailURL) }
-                            let storedThumbnail = try await storage.store(
-                                plaintextURL: thumbnailURL,
-                                location: .thumbnails,
-                                progress: nil
-                            )
-                            thumbnailIdentifier = storedThumbnail.identifier
+                            thumbnailIdentifier = try await storage.store(
+                                plaintextData: thumbnailData,
+                                location: .thumbnails
+                            ).identifier
                         } catch is CancellationError {
                             try? await storage.delete(identifier: storedMedia.identifier, location: .media)
                             throw CancellationError()

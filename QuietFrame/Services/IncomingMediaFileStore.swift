@@ -16,20 +16,6 @@ enum IncomingMediaFileStore {
         }
     }
 
-    static func writeProtectedData(_ data: Data, fileExtension: String? = nil) throws -> URL {
-        let directory = try incomingDirectory()
-        let suffix = fileExtension.map { ".\($0)" } ?? ""
-        let destination = directory.appendingPathComponent(UUID().uuidString.lowercased() + suffix)
-        do {
-            try data.write(to: destination, options: [.atomic, .completeFileProtection])
-            try protectAndExclude(destination)
-            return destination
-        } catch {
-            try? FileManager.default.removeItem(at: destination)
-            throw error
-        }
-    }
-
     static func remove(_ url: URL) {
         guard isIncomingURL(url) else { return }
         try? FileManager.default.removeItem(at: url)

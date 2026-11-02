@@ -222,6 +222,10 @@ private actor RecordingPhotoStorage: SecureFileStoring {
         throw VaultError.fileOperationFailed
     }
 
+    func store(plaintextData: Data, location: EncryptedAssetLocation) async throws -> StoredEncryptedFile {
+        throw VaultError.fileOperationFailed
+    }
+
     func temporaryDecryptedFile(
         identifier: String,
         location: EncryptedAssetLocation,
@@ -288,6 +292,10 @@ private actor GatedPhotoStorage: SecureFileStoring {
         location: EncryptedAssetLocation,
         progress: FileProgressHandler?
     ) async throws -> StoredEncryptedFile {
+        throw VaultError.fileOperationFailed
+    }
+
+    func store(plaintextData: Data, location: EncryptedAssetLocation) async throws -> StoredEncryptedFile {
         throw VaultError.fileOperationFailed
     }
 

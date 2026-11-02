@@ -82,4 +82,46 @@ final class ChunkedEncryptionServiceTests: XCTestCase {
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: encryptedURL.path))
     }
+
+    func testEncryptingDataWritesTheSameContainerAsEncryptingTheFile() async throws {
+        let directory = try XCTUnwrap(directory)
+        let sourceURL = directory.appendingPathComponent("source.bin")
+        let fromFileURL = directory.appendingPathComponent("from-file.qfe")
+        let fromDataURL = directory.appendingPathComponent("from-data.qfe")
+        let source = Data((0..<150_000).map { UInt8($0 % 239) })
+        try source.write(to: sourceURL)
+        let slice = (Data(repeating: 0, count: 10) + source).dropFirst(10)
+
+        let session = VaultSession()
+        try await session.unlock(with: Data(repeating: 0x3c, count: 32))
+        let service = ChunkedEncryptionService(session: session, chunkByteCount: 65_536)
+        let fileResult = try await service.encryptFile(at: sourceURL, to: fromFileURL, progress: nil)
+        let dataResult = try await service.encryptData(slice, to: fromDataURL)
+
+        XCTAssertEqual(dataResult, fileResult)
+        let fromFile = try Data(contentsOf: fromFileURL)
+        let fromData = try Data(contentsOf: fromDataURL)
+        XCTAssertEqual(fromData.count, 48 + source.count + 16 * 3)
+        XCTAssertEqual(fromData.count, fromFile.count)
+        XCTAssertEqual(fromData.prefix(24), fromFile.prefix(24))
+        XCTAssertNotEqual(fromData.subdata(in: 24..<48), fromFile.subdata(in: 24..<48))
+        let decrypted = try await service.decryptData(at: fromDataURL, maximumByteCount: 1_000_000)
+        XCTAssertEqual(decrypted, source)
+    }
+
+    func testEncryptingEmptyDataIsRejectedWithoutOutput() async throws {
+        let directory = try XCTUnwrap(directory)
+        let outputURL = directory.appendingPathComponent("empty.qfe")
+        let session = VaultSession()
+        try await session.unlock(with: Data(repeating: 0x3d, count: 32))
+        let service = ChunkedEncryptionService(session: session, chunkByteCount: 65_536)
+
+        do {
+            _ = try await service.encryptData(Data(), to: outputURL)
+            XCTFail("Empty data must be rejected.")
+        } catch {
+            XCTAssertEqual(error as? VaultError, .unsupportedFileType)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+    }
 }

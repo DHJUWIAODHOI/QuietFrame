@@ -17,6 +17,7 @@ protocol SecureFileStoring: Sendable {
         location: EncryptedAssetLocation,
         progress: FileProgressHandler?
     ) async throws -> StoredEncryptedFile
+    func store(plaintextData: Data, location: EncryptedAssetLocation) async throws -> StoredEncryptedFile
     func decryptData(identifier: String, location: EncryptedAssetLocation, maximumByteCount: Int) async throws -> Data
     func temporaryDecryptedFile(
         identifier: String,
@@ -100,16 +101,28 @@ actor SecureFileStorageService: SecureFileStoring {
         location: EncryptedAssetLocation,
         progress: FileProgressHandler? = nil
     ) async throws -> StoredEncryptedFile {
+        try await storeEncryptedFile(in: location) { partialURL in
+            try await encryption.encryptFile(at: plaintextURL, to: partialURL, progress: progress)
+        }
+    }
+
+    /// Encrypts bytes held in memory, such as a thumbnail, without writing them to disk unencrypted first.
+    func store(plaintextData: Data, location: EncryptedAssetLocation) async throws -> StoredEncryptedFile {
+        try await storeEncryptedFile(in: location) { partialURL in
+            try await encryption.encryptData(plaintextData, to: partialURL)
+        }
+    }
+
+    private func storeEncryptedFile(
+        in location: EncryptedAssetLocation,
+        encrypt: (URL) async throws -> EncryptionResult
+    ) async throws -> StoredEncryptedFile {
         let identifier = UUID().uuidString.lowercased()
         let partialURL = stagingURL.appendingPathComponent("\(identifier).partial")
         let finalURL = try encryptedURL(identifier: identifier, location: location)
 
         do {
-            let result = try await encryption.encryptFile(
-                at: plaintextURL,
-                to: partialURL,
-                progress: progress
-            )
+            let result = try await encrypt(partialURL)
             try protectAndExcludeFromBackup(partialURL)
             try fileManager.moveItem(at: partialURL, to: finalURL)
             try protectAndExcludeFromBackup(finalURL)

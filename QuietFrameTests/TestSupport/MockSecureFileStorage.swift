@@ -25,6 +25,10 @@ actor MockSecureFileStorage: SecureFileStoring {
         throw VaultError.fileOperationFailed
     }
 
+    func store(plaintextData: Data, location: EncryptedAssetLocation) async throws -> StoredEncryptedFile {
+        throw VaultError.fileOperationFailed
+    }
+
     func decryptData(
         identifier: String,
         location: EncryptedAssetLocation,

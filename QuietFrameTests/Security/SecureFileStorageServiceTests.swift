@@ -46,4 +46,45 @@ final class SecureFileStorageServiceTests: XCTestCase {
         lease.cleanup()
         XCTAssertFalse(FileManager.default.fileExists(atPath: leasedURL.path))
     }
+
+    func testStoringDataFromMemoryWritesOnlyTheEncryptedFile() async throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let cache = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: base)
+            try? FileManager.default.removeItem(at: cache)
+        }
+
+        let session = VaultSession()
+        try await session.unlock(with: Data(repeating: 0x36, count: 32))
+        let storage = try SecureFileStorageService(
+            encryption: ChunkedEncryptionService(session: session, chunkByteCount: 65_536),
+            baseURL: base,
+            temporaryBaseURL: cache,
+            applyFileProtection: false
+        )
+        let thumbnail = Data((0..<20_000).map { UInt8($0 % 181) })
+
+        let stored = try await storage.store(plaintextData: thumbnail, location: .thumbnails)
+
+        XCTAssertEqual(stored.result.plaintextByteCount, Int64(thumbnail.count))
+        let thumbnails = try await storage.allIdentifiers(location: .thumbnails)
+        XCTAssertEqual(thumbnails, [stored.identifier])
+        let decrypted = try await storage.decryptData(
+            identifier: stored.identifier,
+            location: .thumbnails,
+            maximumByteCount: 100_000
+        )
+        XCTAssertEqual(decrypted, thumbnail)
+        for directory in [
+            base.appendingPathComponent("QuietFrameVault/staging"),
+            cache.appendingPathComponent("QuietFrameTemporary")
+        ] {
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), [])
+        }
+    }
 }
