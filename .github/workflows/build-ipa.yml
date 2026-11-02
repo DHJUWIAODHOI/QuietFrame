@@ -23,7 +23,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Show Xcode version
-        run: xcodebuild -version
+        run: |
+          xcodebuild -version
+          echo "Runner: $(sysctl -n machdep.cpu.brand_string), $(sysctl -n hw.ncpu) CPUs, $(( $(sysctl -n hw.memsize) / 1073741824 )) GB"
+          xcrun simctl list runtimes
 
       # Simulator apps need an (ad-hoc) code signature for Keychain access;
       # an unsigned test host fails every SecItem call.
