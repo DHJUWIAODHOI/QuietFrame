@@ -8,30 +8,93 @@ compatibility risks and strategy) is in [AUDIT.md](AUDIT.md).
 
 - Nothing can be built on the development machine (Windows, no Xcode). Every phase is pushed to `perf-rewrite` and
   checked by CI: `gh workflow run build-ipa.yml --ref perf-rewrite -R DHJUWIAODHOI/QuietFrame`.
-- CI runs the full unit and UI test suite, then the benchmarks in `QuietFrameTests/Benchmarks/` on their own:
-  serially, with `-O` and whole-module optimisation, on an iPhone 16 Pro simulator. The timings go to the job
-  summary and the `QuietFrame-benchmarks` artifact (kept 30 days).
-- Benchmark numbers come from a shared GitHub runner and a simulator, not a device. They show relative change
-  between runs on matching runner hardware (the summary records the CPU); they are not device timings. Scroll hitches,
-  Instruments traces, battery and thermal behaviour have not been measured: no device or Instruments is available.
-- Benchmarks use temporary directories and in-test stores only. They never touch a real vault.
+- CI runs the full unit and UI test suite on iOS 26.2, the SwiftData test classes again on iOS 18.5, and, in a
+  parallel job, the SwiftData classes on an installed iOS 17.5 simulator (the deployment target). Then it runs the
+  benchmarks in `QuietFrameTests/Benchmarks/` on their own: serially, with `-O` and whole-module optimisation, on an
+  iPhone 16 Pro simulator. Timings go to the job summary and the `QuietFrame-benchmarks` artifact.
+- For before/after numbers, dispatch with `-f compare=true`: a separate job builds the baseline (`6d83bea`, the
+  original app with the benchmarks) and HEAD on one runner and runs their benchmarks alternately, twice each.
+  Numbers from different runs or runners are not compared; even within one job, unchanged code moves by about
+  25-30%, so only larger differences mean anything.
+- Benchmark numbers come from a shared GitHub runner (Apple M1 virtual machine, 3 CPUs, 7 GB) and a simulator, not a
+  device. Scroll hitches, Instruments traces, memory limits, battery and thermal behaviour have not been measured: no
+  device or Instruments is available.
+- Every phase gets an adversarial review by independent agents (compile, concurrency or data semantics, behaviour,
+  privacy or tests) whose findings are verified before they are fixed.
+- Benchmarks and tests use temporary directories and in-test stores only. They never touch a real vault.
 
 ## Phases
 
-| Phase | Scope | State |
-| --- | --- | --- |
-| 0 | Audit, benchmarks, CI benchmark step | Done (`96ba12b`, `6d83bea`) |
-| 1 | Thumbnail pipeline: off-main decode at fill size, per-size cache, prefetch, cancellation, cheaper tile-frame tracking, targeted eviction, 720 px viewer previews | Reviewed (4 lenses, 9 confirmed findings fixed); in CI |
-| 2 | Viewer photos: screen-size decode, full resolution on zoom, cancellable neighbour prefetch, thumbnail preview, O(1) page lookups | Planned |
-| 3 | Video: play encrypted files without a whole-file plaintext copy | Planned |
-| 4 | Unlock: system PBKDF2 (byte-identical, known-answer and differential tests), then maintenance timing (needs sign-off) | PBKDF2 in CI |
-| 5 | Library: fetch by IDs, counts without loading every item, search snapshot, batched saves | Planned |
-| 6 | Import: coalesced progress, thumbnails encrypted from memory, parallel preparation | Planned |
+"Verified" means every CI job passed on the commit that contains it. The latest full pass is run 41411193189 at
+`61afc35`: 249 tests on iOS 26.2 (248 unit, 1 UI), the 56 SwiftData tests on iOS 18.5 and on iOS 17.5, the
+benchmarks and the unsigned archive.
 
-## Baseline
+| Phase | Scope (audit IDs) | Commits | State |
+| --- | --- | --- | --- |
+| 0 | Audit, benchmarks, CI benchmark step, same-run comparison job, SwiftData jobs on iOS 18.5 and 17.5 | `96ba12b` `6d83bea` `afd04e4` `c8fffa6` `b6a6eed` | Verified |
+| 1 | Thumbnails: off-main decode at the size a tile fills, per-size memory cache, prefetch and cancellation, cached tiles shown at once, cheaper tile-frame tracking, targeted eviction, 720 px viewer previews (P01, P02, P16, P26, P30, P34) | `f74efa0` | Verified |
+| 2 | Viewer photos: screen-size decode with a sharper copy on zoom, O(1) page lookups, drags and page changes without whole-viewer re-renders (P06; P10 and P35 in part) | `f72e4c5` | Verified |
+| 3 | Video plays from the encrypted file; no plaintext copy (P07) | `81abc2c` | Verified |
+| 4 | Unlock: system PBKDF2 (P14); the vault opens before the storage check (P03) | `5f1df5b` `22a1ef8` | Verified |
+| 5 | Library: ID lookups (P08), store counts for the Albums tab (P05), search pages from one scan (P04 in part), lighter reconcile, name-based listings (P41), bulk Favorite in one save (P23) | `95e9764` `ef22709` `16f995e` | Verified |
+| 6 | Import: parallel preparation with "Preparing N of M" (P09), progress that never waits for the main thread (P17), thumbnails encrypted from memory and incoming copies removed per item (P37 in part) | `7e96ff3` `306b8ea` `61afc35` | Verified |
+| 7 | Crypto engine (P31, P20), storage bulk operations (P15, P40, P38), refresh skip (P11), import previews, thumbnail generation and picker (P13, P39, P22), scrubbing (P36), review follow-ups | — | Designing |
 
-CI run 41375230861 (commit `6d83bea`, app code identical to `1c8d5d0`), iPhone 16 Pro simulator, Xcode 16 on the
-`macos-15` runner, optimised build, 5 iterations each. Average seconds, with the relative standard deviation.
+Test fixes on the way: two tests crashed on iOS 17 because their setup inserted both ends of a new relationship,
+which iOS 17's SwiftData registers twice; the test files were unchanged from `main`, so the crash predates the
+rewrite (`136dd47`). A thumbnail test timed out once during a long simulator stall; its waits are now 30 s
+(`a237794`).
+
+Needs the owner's sign-off before it can be done (AUDIT.md 6.4): the mass-deletion guard, the album fallback cover
+order, the launch screen colour, export UX (P18), parallel viewer decode (P24) and the listed quirk fixes.
+
+## Behaviour changes approved by the owner (2026-11-02)
+
+1. Unlock opens the vault first; the storage check runs right after and a failure no longer blocks unlock.
+2. Videos play straight from the encrypted file; Share and Save to Photos still use temporary copies.
+3. Bulk Favorite saves once, all or nothing.
+4. Import preparation runs a few items at once and shows "Preparing N of M".
+
+## Tests
+
+248 unit tests in 32 files plus 1 UI test (the original app had 167 in 25 files), and 26 benchmarks in 5 classes
+that run in their own CI step. New coverage includes thumbnail loading and caching, the viewer loader, iterated
+PBKDF2 against independent vectors, container tampering and truncation, encrypted streaming end to end through
+AVFoundation, library queries, unlock maintenance ordering, import preparation and progress, and per-item import
+cleanup. Still uncovered: reset-journal recovery, metadata extraction and biometrics.
+
+## Results
+
+### Same-run comparison
+
+CI run 41405788548, job "Compare benchmarks with a baseline": `6d83bea` (original app code) against `ef22709`
+(phases 1, 2, 4a and 5), one runner, each side twice, averages. Seconds.
+
+| Benchmark | Before | After | Change |
+| --- | --- | --- | --- |
+| Passcode key derivation (210,000 iterations) | 0.527 | 0.045 | 12x faster |
+| 5,000 items: move 50 to Trash | 0.334 | 0.057 | 6x faster |
+| 5,000 items: five pages of one search (old cost reproduced by saving between pages) | 1.166 | 0.270 | 4.3x faster |
+| 5,000 items: Albums tab first appearance (old method replicated, fresh context) | 0.201 | 0.054 | 3.7x faster |
+| Draw 48 newly loaded thumbnails on the main thread | 0.228 | 0.092 | 2.5x less main-thread time |
+| Open a 12 MP photo (old 4096 px decode vs. screen-size decode) | 0.110 | 0.063 | 1.7x faster |
+| A page of 48 thumbnails reaches the screen | 0.230 | 0.173 | within noise |
+| 5,000 items: reconcile storage after unlock | 0.405 | 0.345 | within noise; no longer on the unlock path |
+| 5,000 items: first search page | 0.285 | 0.291 | unchanged (still one scan) |
+
+Deterministic effects, computed from the code rather than measured:
+
+- A decoded 12 MP photo held by the viewer: 48.8 MB at the old 4096 px (4032x3024) vs. 7.8 MB at screen size
+  (1608x1206 on an iPhone 16 Pro); the viewer holds up to three.
+- A grid thumbnail filling an iPhone 16 Pro Comfortable tile: 512x384 (786 KB) instead of 720x540 (1.56 MB), so the
+  96 MiB cache (64 MiB before, on devices with at least 4 GB) holds about 120 instead of 43.
+- Video playback writes no plaintext copy and needs no free space; the old path decrypted the whole file to disk
+  first, again on every visit.
+
+### Baseline
+
+CI run 41375230861 (commit `6d83bea`, app code identical to `1c8d5d0`), 5 iterations each. Average seconds, with the
+relative standard deviation. Kept for reference; compare only within the same run.
 
 | Benchmark | Average (s) | RSD |
 | --- | --- | --- |
@@ -55,11 +118,13 @@ CI run 41375230861 (commit `6d83bea`, app code identical to `1c8d5d0`), iPhone 1
 | 5,000 items: Trash tab purge check | 0.010 | 18% |
 | 5,000 items: Albums tab counts (one body evaluation) | 0.768 | 22% |
 
-High RSDs (thumbnails, decrypts) come from the shared runner; compare averages only when the spread allows it.
-
 ## Decisions
 
 - Keep SwiftUI, SwiftData, the container format, the Keychain layout and every versioned identifier. The rewrite
-  replaces hot paths, not the stack.
+  replaces hot paths, not the stack. No schema change; the V3 checksum is unchanged.
 - Thumbnails stay encrypted on disk. Decoded thumbnails live only in memory, cached per 64-pixel size step, and the
   cache is still emptied whenever the vault locks.
+- PBKDF2 uses CommonCrypto; its output is pinned to vectors computed independently with Python's hashlib and to the
+  previous CryptoKit loop, including one full 210,000-iteration comparison.
+- Change detection for the Albums counts and search pages uses an in-app change counter plus store fingerprints, not
+  `ModelContext.didSave`, which may not be posted on iOS 17.
