@@ -28,7 +28,7 @@ final class ReconcileBenchmarks: XCTestCase {
         )
 
         measure(metrics: [XCTClockMetric()], options: Benchmark.manualOptions) {
-            let reconciliation = Task { try await service.reconcile() }
+            let reconciliation = Task { @MainActor in try await service.reconcile() }
             runBenchmark {}
             waitForReconciliationToQueueItsFirstStep()
             startMeasuring()
