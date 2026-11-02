@@ -62,6 +62,52 @@ struct VideoSeekChase: Equatable {
     }
 }
 
+/// Puts frames into the scrubber strip from left to right, whatever order they arrive in. A failed request ends the
+/// strip at its slot, as the one-at-a-time loop did; frames before it still join when they arrive.
+struct FrameStripAssembly<Time: Equatable, Frame> {
+    private let times: [Time]
+    private var waitingSlots: [Int]
+    private var arrivedFrames: [Int: Frame] = [:]
+    private var end: Int
+    private var publishedCount = 0
+
+    init(times: [Time]) {
+        self.times = times
+        waitingSlots = Array(times.indices)
+        end = times.count
+    }
+
+    var isFinished: Bool {
+        publishedCount >= end
+    }
+
+    var isComplete: Bool {
+        publishedCount == times.count
+    }
+
+    /// The frames that can join the strip now, in slot order. `frame` is nil when its request failed. A result whose
+    /// time matches no waiting slot takes the leftmost one.
+    mutating func receive(_ frame: Frame?, requestedAt time: Time?) -> [Frame] {
+        guard !waitingSlots.isEmpty else { return [] }
+        var position = 0
+        if let time, let match = waitingSlots.firstIndex(where: { times[$0] == time }) {
+            position = match
+        }
+        let slot = waitingSlots.remove(at: position)
+        if let frame {
+            arrivedFrames[slot] = frame
+        } else {
+            end = min(end, slot)
+        }
+        var ready: [Frame] = []
+        while publishedCount < end, let next = arrivedFrames.removeValue(forKey: publishedCount) {
+            ready.append(next)
+            publishedCount += 1
+        }
+        return ready
+    }
+}
+
 /// Transport for the selected video: the page that owns the player attaches it, the chrome drives it.
 @MainActor
 @Observable
@@ -92,6 +138,7 @@ final class ViewerVideoPlayback {
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var frameRequest: FrameRequest?
     @ObservationIgnored private var frameTask: Task<Void, Never>?
+    @ObservationIgnored private var frameGenerator: AVAssetImageGenerator?
     @ObservationIgnored private var seekChase = VideoSeekChase()
     /// Changes whenever a chase ends, so completions of its seeks that arrive later are ignored.
     @ObservationIgnored private var seekToken: UInt64 = 0
@@ -215,42 +262,68 @@ final class ViewerVideoPlayback {
         seek(player, to: min(max(currentTime + seconds, 0), duration))
     }
 
-    /// Decodes `count` small frames of the attached video in memory, one at a time. Nothing is written to disk.
+    /// Decodes `count` small frames of the attached video in memory, all requested at once. Nothing is written to
+    /// disk.
     func requestFrames(count: Int) {
         guard let mediaID, let frameAsset, count > 0 else { return }
         let request = FrameRequest(mediaID: mediaID, count: count)
         guard frameRequest != request else { return }
-        frameTask?.cancel()
-        frameTask = nil
+        cancelFrames()
         if !frames.isEmpty { frames = [] }
         let times = videoFrameTimes(count: count, duration: duration)
-        guard !times.isEmpty else {
-            frameRequest = nil
-            return
-        }
+        guard !times.isEmpty else { return }
         frameRequest = request
+        generateFrames(for: request, times: times, asset: frameAsset)
+    }
+
+    private func generateFrames(for request: FrameRequest, times: [TimeInterval], asset: AVAsset) {
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 120, height: 120)
+        generator.requestedTimeToleranceBefore = CMTime(seconds: 0.5, preferredTimescale: 600)
+        generator.requestedTimeToleranceAfter = CMTime(seconds: 0.5, preferredTimescale: 600)
+        let requestedTimes = times.map { CMTime(seconds: $0, preferredTimescale: 600) }
+        frameGenerator = generator
         frameTask = Task { [weak self] in
-            let generator = AVAssetImageGenerator(asset: frameAsset)
-            generator.appliesPreferredTrackTransform = true
-            generator.maximumSize = CGSize(width: 120, height: 120)
-            generator.requestedTimeToleranceBefore = CMTime(seconds: 0.5, preferredTimescale: 600)
-            generator.requestedTimeToleranceAfter = CMTime(seconds: 0.5, preferredTimescale: 600)
-            for time in times {
-                guard !Task.isCancelled, self != nil else { return }
-                do {
-                    let frame = try await generator.image(at: CMTime(seconds: time, preferredTimescale: 600))
-                    guard !Task.isCancelled, let self else { return }
-                    self.appendFrame(UIImage(cgImage: frame.image), for: request)
-                } catch {
+            var assembly = FrameStripAssembly<CMTime, UIImage>(times: requestedTimes)
+            for await result in generator.images(for: requestedTimes) {
+                guard !Task.isCancelled, let self, self.frameRequest == request else { return }
+                let ready: [UIImage]
+                if case let .success(requestedTime, image, _) = result {
+                    ready = assembly.receive(UIImage(cgImage: image), requestedAt: requestedTime)
+                } else if case let .failure(requestedTime, _) = result {
+                    ready = assembly.receive(nil, requestedAt: requestedTime)
+                } else {
+                    ready = assembly.receive(nil, requestedAt: nil)
+                }
+                if !ready.isEmpty {
+                    self.frames.append(contentsOf: ready)
+                }
+                if assembly.isFinished {
+                    self.finishFrames(for: request)
                     return
                 }
             }
+            guard !Task.isCancelled, let self, self.frameRequest == request else { return }
+            self.finishFrames(for: request)
         }
     }
 
-    private func appendFrame(_ frame: UIImage, for request: FrameRequest) {
+    /// The request stays recorded, so a strip that stopped at a failure is decoded again only after a new attach.
+    private func finishFrames(for request: FrameRequest) {
         guard frameRequest == request else { return }
-        frames.append(frame)
+        frameGenerator?.cancelAllCGImageGeneration()
+        frameGenerator = nil
+        frameTask = nil
+    }
+
+    /// The generator may not watch for task cancellation, so its pending images are cancelled directly.
+    private func cancelFrames() {
+        frameTask?.cancel()
+        frameTask = nil
+        frameGenerator?.cancelAllCGImageGeneration()
+        frameGenerator = nil
+        frameRequest = nil
     }
 
     private func seek(_ player: AVPlayer, to seconds: TimeInterval) {
@@ -329,9 +402,7 @@ final class ViewerVideoPlayback {
             player.removeTimeObserver(timeObserver)
         }
         timeObserver = nil
-        frameTask?.cancel()
-        frameTask = nil
-        frameRequest = nil
+        cancelFrames()
         abandonChase()
     }
 

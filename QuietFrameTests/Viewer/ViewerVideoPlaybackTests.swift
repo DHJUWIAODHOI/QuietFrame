@@ -368,6 +368,101 @@ final class ViewerVideoPlaybackTests: XCTestCase {
         playback.detach(mediaID: secondID)
     }
 
+    func testFrameStripTakesFramesInOrderOneAtATime() {
+        var strip = FrameStripAssembly<Int, String>(times: [10, 20, 30])
+
+        let first = strip.receive("a", requestedAt: 10)
+        let second = strip.receive("b", requestedAt: 20)
+        XCTAssertFalse(strip.isFinished)
+        let third = strip.receive("c", requestedAt: 30)
+
+        XCTAssertEqual(first, ["a"])
+        XCTAssertEqual(second, ["b"])
+        XCTAssertEqual(third, ["c"])
+        XCTAssertTrue(strip.isFinished)
+        XCTAssertTrue(strip.isComplete)
+    }
+
+    func testFrameStripHoldsAnEarlyFrameUntilTheOnesBeforeItArrive() {
+        var strip = FrameStripAssembly<Int, String>(times: [10, 20, 30])
+
+        let early = strip.receive("c", requestedAt: 30)
+        let first = strip.receive("a", requestedAt: 10)
+        let rest = strip.receive("b", requestedAt: 20)
+
+        XCTAssertEqual(early, [])
+        XCTAssertEqual(first, ["a"])
+        XCTAssertEqual(rest, ["b", "c"])
+        XCTAssertTrue(strip.isComplete)
+    }
+
+    func testFrameStripEndsAtAFailedSlot() {
+        var strip = FrameStripAssembly<Int, String>(times: [10, 20, 30])
+
+        let first = strip.receive("a", requestedAt: 10)
+        let failed = strip.receive(nil, requestedAt: 20)
+
+        XCTAssertEqual(first, ["a"])
+        XCTAssertEqual(failed, [])
+        XCTAssertTrue(strip.isFinished)
+        XCTAssertFalse(strip.isComplete)
+        let afterTheFailure = strip.receive("c", requestedAt: 30)
+        XCTAssertEqual(afterTheFailure, [])
+    }
+
+    func testFrameStripStillShowsTheFramesBeforeALaterFailure() {
+        var strip = FrameStripAssembly<Int, String>(times: [10, 20, 30])
+
+        let failed = strip.receive(nil, requestedAt: 30)
+        let second = strip.receive("b", requestedAt: 20)
+        XCTAssertFalse(strip.isFinished)
+        let first = strip.receive("a", requestedAt: 10)
+
+        XCTAssertEqual(failed, [])
+        XCTAssertEqual(second, [])
+        XCTAssertEqual(first, ["a", "b"])
+        XCTAssertTrue(strip.isFinished)
+        XCTAssertFalse(strip.isComplete)
+    }
+
+    func testFrameStripFillsRepeatedTimesFromTheLeft() {
+        var strip = FrameStripAssembly<Int, String>(times: [10, 10, 20])
+
+        let first = strip.receive("a", requestedAt: 10)
+        let second = strip.receive("b", requestedAt: 10)
+        let third = strip.receive("c", requestedAt: 20)
+
+        XCTAssertEqual(first, ["a"])
+        XCTAssertEqual(second, ["b"])
+        XCTAssertEqual(third, ["c"])
+        XCTAssertTrue(strip.isComplete)
+    }
+
+    func testFrameStripPutsAnUnmatchedResultInTheLeftmostWaitingSlot() {
+        var strip = FrameStripAssembly<Int, String>(times: [10, 20, 30])
+
+        let matched = strip.receive("b", requestedAt: 20)
+        let unmatched = strip.receive("a", requestedAt: 99)
+        let unknown = strip.receive(nil, requestedAt: nil)
+
+        XCTAssertEqual(matched, [])
+        XCTAssertEqual(unmatched, ["a", "b"])
+        XCTAssertEqual(unknown, [])
+        XCTAssertTrue(strip.isFinished)
+        XCTAssertFalse(strip.isComplete)
+    }
+
+    func testFrameStripIgnoresResultsOnceEverySlotHasOne() {
+        var strip = FrameStripAssembly<Int, String>(times: [10])
+
+        let first = strip.receive("a", requestedAt: 10)
+        let extra = strip.receive("b", requestedAt: 10)
+
+        XCTAssertEqual(first, ["a"])
+        XCTAssertEqual(extra, [])
+        XCTAssertTrue(strip.isComplete)
+    }
+
     private func assertSeeks(
         _ recorder: SeekRecorder,
         _ expected: [TimeInterval],

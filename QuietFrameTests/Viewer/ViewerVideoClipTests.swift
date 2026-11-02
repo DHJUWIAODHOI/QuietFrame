@@ -1,4 +1,5 @@
 import AVFoundation
+import UniformTypeIdentifiers
 import XCTest
 @testable import QuietFrame
 
@@ -6,6 +7,88 @@ import XCTest
 @MainActor
 final class ViewerVideoClipTests: XCTestCase {
     private let clipDuration: TimeInterval = 2
+
+    func testFramesFillTheStripFromTheEncryptedFileInMemory() async throws {
+        let vault = try await BenchmarkVault.make()
+        defer { vault.remove() }
+        let clipURL = vault.directory.appendingPathComponent("clip.mov")
+        try await TestVideoWriter.writeVideo(to: clipURL, frameCount: 60, framesPerSecond: 30)
+        let identifier = try await vault.storage.store(plaintextURL: clipURL, location: .media, progress: nil).identifier
+        try FileManager.default.removeItem(at: clipURL)
+        let reader = try await vault.storage.openEncryptedReader(identifier: identifier, location: .media)
+        let stream = try EncryptedVideoStream(reader: reader, contentTypeIdentifier: UTType.quickTimeMovie.identifier)
+        defer { stream.invalidate() }
+        let playback = ViewerVideoPlayback()
+        let mediaID = UUID()
+        let player = AVPlayer(playerItem: AVPlayerItem(asset: stream.asset))
+        playback.attach(player: player, asset: stream.asset, mediaID: mediaID, fallbackDuration: clipDuration)
+
+        playback.requestFrames(count: 6)
+        try await waitUntil { playback.frames.count == 6 }
+
+        XCTAssertEqual(playback.frames.count, 6)
+        for frame in playback.frames {
+            XCTAssertLessThanOrEqual(max(frame.size.width, frame.size.height), 120)
+        }
+        for path in ["Caches/QuietFrameTemporary", "ApplicationSupport/QuietFrameVault/staging"] {
+            let leftovers = try FileManager.default.contentsOfDirectory(
+                atPath: vault.directory.appendingPathComponent(path).path
+            )
+            XCTAssertEqual(leftovers, [], "\(path) must stay empty while the strip fills")
+        }
+        playback.detach(mediaID: mediaID)
+    }
+
+    func testRequestingAnotherCountReplacesTheStripBeingFilled() async throws {
+        let clipURL = try await makeClip()
+        defer { removeClip(at: clipURL) }
+        let playback = ViewerVideoPlayback()
+        let mediaID = UUID()
+        attachClip(clipURL, to: playback, mediaID: mediaID)
+
+        playback.requestFrames(count: 6)
+        playback.requestFrames(count: 7)
+        try await waitUntil { playback.frames.count >= 7 }
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        XCTAssertEqual(playback.frames.count, 7)
+        playback.detach(mediaID: mediaID)
+    }
+
+    func testDetachingMidFillPublishesNothingLate() async throws {
+        let clipURL = try await makeClip()
+        defer { removeClip(at: clipURL) }
+        let playback = ViewerVideoPlayback()
+        let mediaID = UUID()
+        attachClip(clipURL, to: playback, mediaID: mediaID)
+
+        playback.requestFrames(count: 6)
+        playback.detach(mediaID: mediaID)
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+
+        XCTAssertTrue(playback.frames.isEmpty)
+
+        attachClip(clipURL, to: playback, mediaID: mediaID)
+        playback.requestFrames(count: 6)
+        try await waitUntil { playback.frames.count == 6 }
+        playback.detach(mediaID: mediaID)
+    }
+
+    func testUndecodableVideoKeepsThePlaceholders() async throws {
+        let directory = try Benchmark.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("broken.mov")
+        try Benchmark.randomData(byteCount: 200_000, seed: 36).write(to: url)
+        let playback = ViewerVideoPlayback()
+        let mediaID = UUID()
+        attachClip(url, to: playback, mediaID: mediaID)
+
+        playback.requestFrames(count: 6)
+        try await Task.sleep(nanoseconds: 2_000_000_000)
+
+        XCTAssertTrue(playback.frames.isEmpty)
+        playback.detach(mediaID: mediaID)
+    }
 
     /// Only the first position goes out at once; the last one has to follow from the first seek's completion.
     func testScrubbingAPlayerChasesToTheLastPositionBeforeRelease() async throws {
@@ -28,6 +111,13 @@ final class ViewerVideoClipTests: XCTestCase {
         playback.endScrub()
         XCTAssertEqual(player.currentTime().seconds, 1.8, accuracy: 0.01)
         playback.detach(mediaID: mediaID)
+    }
+
+    /// A new asset and player over the file, as a rebuilt video page makes them.
+    private func attachClip(_ url: URL, to playback: ViewerVideoPlayback, mediaID: UUID) {
+        let asset = AVURLAsset(url: url)
+        let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+        playback.attach(player: player, asset: asset, mediaID: mediaID, fallbackDuration: clipDuration)
     }
 
     private func makeClip() async throws -> URL {
