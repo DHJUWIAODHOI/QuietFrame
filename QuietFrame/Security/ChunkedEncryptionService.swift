@@ -27,12 +27,6 @@ protocol FileEncrypting: Sendable {
     func openReader(at inputURL: URL) async throws -> EncryptedFileReader
 }
 
-extension FileEncrypting {
-    func openReader(at inputURL: URL) async throws -> EncryptedFileReader {
-        throw VaultError.fileOperationFailed
-    }
-}
-
 actor ChunkedEncryptionService: FileEncrypting {
     private struct Header {
         static let magic = Data([0x51, 0x46, 0x52, 0x41, 0x4d, 0x45, 0x30, 0x31]) // QFRAME01
