@@ -205,6 +205,25 @@ final class LibraryQueryTests: XCTestCase {
         )
     }
 
+    func testASearchFinishedWhileLockedKeepsNoSnapshot() throws {
+        let container = try makeContainer()
+        let media = insertMedia(count: 6, in: container)
+        let repository = VaultRepository(modelContext: container.mainContext)
+        let query = GalleryQuery(sort: .name, searchText: "IMG_")
+        repository.setSearchSnapshotsKept(false)
+        XCTAssertEqual(try repository.fetchMedia(query: query, offset: 0, limit: 3).items.count, 3)
+        // Filenames never change in the app; this unstamped rename only shows whether the next page rescans.
+        media[4].originalFilename = "renamed.jpg"
+        try container.mainContext.save()
+
+        repository.setSearchSnapshotsKept(true)
+
+        XCTAssertEqual(
+            try repository.fetchMedia(query: query, offset: 3, limit: 3).items.map(\.id),
+            [media[3].id, media[5].id]
+        )
+    }
+
     func testARecentlyAddedSearchScansAgainOnceAnItemAgesOut() throws {
         let container = try makeContainer()
         let threeDaysAgo = Date().addingTimeInterval(-3 * 86_400)

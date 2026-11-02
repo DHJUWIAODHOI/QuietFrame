@@ -62,6 +62,7 @@ final class VaultRepository: VaultRepositoryProtocol {
     let modelContext: ModelContext
     let changes: LibraryChangeCounter
     private var searchSnapshot: SearchSnapshot?
+    private var keepsSearchSnapshots = true
 
     init(modelContext: ModelContext, changes: LibraryChangeCounter = LibraryChangeCounter()) {
         self.modelContext = modelContext
@@ -210,7 +211,9 @@ final class VaultRepository: VaultRepositoryProtocol {
         let allMatchingScope = try modelContext.fetch(descriptor)
         var matcher = GallerySearchMatcher(search: search, dateFormatter: dateFormatter, calendar: Calendar.current)
         let searched = allMatchingScope.filter { matcher.matches($0) }
-        searchSnapshot = SearchSnapshot(query: query, fingerprint: fingerprint, mediaIDs: searched.map(\.id))
+        if keepsSearchSnapshots {
+            searchSnapshot = SearchSnapshot(query: query, fingerprint: fingerprint, mediaIDs: searched.map(\.id))
+        }
         guard offset < searched.count else { return ([], false) }
         let end = min(offset + limit, searched.count)
         return (Array(searched[offset..<end]), end < searched.count)
@@ -230,9 +233,15 @@ final class VaultRepository: VaultRepositoryProtocol {
         )
     }
 
-    /// Forgets the last search's text and matches, so they do not stay in memory while the vault is locked.
+    /// Forgets the last search's text and matches.
     func clearSearchSnapshot() {
         searchSnapshot = nil
+    }
+
+    /// While the vault is locked no search keeps its text and matches, even one that finishes after the lock.
+    func setSearchSnapshotsKept(_ kept: Bool) {
+        keepsSearchSnapshots = kept
+        if !kept { searchSnapshot = nil }
     }
 
     func createAlbum(name: String) throws -> VaultAlbum {

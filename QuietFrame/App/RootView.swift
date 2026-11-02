@@ -110,9 +110,9 @@ private struct AuthenticatedRootView: View {
             lifecycleTask = Task { await handle(newValue) }
         }
         .onChange(of: coordinator.state) { _, newState in
+            dependencies.repository.setSearchSnapshotsKept(newState == .unlocked)
             if newState != .unlocked {
                 dependencies.thumbnailService.clearCache()
-                dependencies.repository.clearSearchSnapshot()
             }
         }
         .onPreferenceChange(PasscodeIrisPreferenceKey.self) { snapshot in
