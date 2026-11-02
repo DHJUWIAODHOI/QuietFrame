@@ -58,7 +58,7 @@ SwiftData metadata is not encrypted with the QuietFrame passcode. While the devi
 
 ## Lock Boundary
 
-The root removes all vault navigation before cleanup. Lock increments a session generation, and crypto validates that generation before every chunk and before completion, including each chunk a playing video reads. Import operations have their own generation and are cancelled on lock. Protected incoming, staging, and export files are then deleted; thumbnail memory is purged.
+The root removes all vault navigation before cleanup. Lock increments a session generation, and crypto validates that generation before every chunk and before completion, including each chunk a playing video reads. Import operations have their own generation and are cancelled on lock. Protected incoming, staging, and export files are then deleted; thumbnail memory is purged, and the last search's text and matches are dropped and not kept again until the next unlock. Review previews and decoded viewer photos exist only in memory and go with the vault's view tree.
 
 Video playback never writes plaintext: AVFoundation reads byte ranges through a private resource-loader scheme, and each chunk is decrypted and authenticated in memory as it is read. A container whose size does not match its header is rejected before playback starts.
 
@@ -75,10 +75,11 @@ On flash storage, unlinking files does not guarantee physical overwrite. Destroy
 ## Import and Export
 
 - Read/write Photos access is requested only after the user starts an import so QuietFrame can inspect and revalidate exact assets before deletion. Picker import remains available without that access, but original deletion does not.
-- Incoming picker files are plaintext but random-named, complete-protected, backup-excluded, cancellation-tracked, and removed after import or lock.
+- Incoming picker files are plaintext but random-named, complete-protected, backup-excluded, cancellation-tracked, and removed as soon as their item is imported, and on lock.
+- Import thumbnails are encrypted straight from memory; they never exist as plaintext files.
 - Originals are never deleted automatically.
 - Export asks for Photos authorization before decryption.
-- Share and Save to Photos decrypt into random protected leases with completion and deinit cleanup. Video playback creates no lease: it reads the encrypted file through the private resource loader and writes no plaintext.
+- Share and Save to Photos decrypt into random protected leases with completion and deinit cleanup. These temporary files are not flushed to disk with fsync; after a crash, a partial one is removed by the launch cleanup. Video playback creates no lease: it reads the encrypted file through the private resource loader and writes no plaintext.
 - Reconciliation deletes encrypted files not referenced by metadata and repairs interrupted media/Trash moves.
 
 Once data is transferred to another app or Photos, destination behavior is outside QuietFrame's security boundary.
