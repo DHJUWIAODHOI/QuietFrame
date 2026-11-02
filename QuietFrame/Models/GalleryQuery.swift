@@ -26,6 +26,10 @@ struct GalleryQuery: Equatable, Sendable {
         self.searchText = searchText
         self.includesTrash = includesTrash
     }
+
+    var appliesRecentlyAddedCutoff: Bool {
+        !includesTrash && albumID == nil && collection == .recentlyAdded
+    }
 }
 
 enum AlbumDeletionMode: Equatable, Sendable {

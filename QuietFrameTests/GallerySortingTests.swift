@@ -230,6 +230,7 @@ final class GallerySortingTests: XCTestCase {
         viewModel.beginSelection(with: kept.id)
         trashed.trashedAt = Date(timeIntervalSince1970: 600)
         try fixture.container.mainContext.save()
+        fixture.repository.changes.recordChange()
 
         await viewModel.refreshLoadedItems()
 
@@ -269,6 +270,7 @@ final class GallerySortingTests: XCTestCase {
             album: fixture.album
         ))
         try fixture.container.mainContext.save()
+        fixture.repository.changes.recordChange()
 
         await viewModel.refreshLoadedItems()
         XCTAssertEqual(viewModel.items.map(\.storageIdentifier), ["4", "3", "2"])

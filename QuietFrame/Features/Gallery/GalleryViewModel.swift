@@ -21,6 +21,8 @@ final class GalleryViewModel {
     private var loadGeneration = UUID()
     private var searchTask: Task<Void, Never>?
     private let positions = MediaPositionIndex()
+    /// What every loaded page was fetched under, or nil when the loaded items might differ from a fresh fetch.
+    @ObservationIgnored private var loadedSignature: GalleryFetchSignature?
 
     init(repository: VaultRepository, query: GalleryQuery, pageSize: Int = 80) {
         self.repository = repository
@@ -35,16 +37,19 @@ final class GalleryViewModel {
         hasMore = true
         errorMessage = nil
         selectedIDs.removeAll()
+        let signature = repository.fetchSignature(for: query)
 
         do {
             let page = try repository.fetchMedia(query: query, offset: 0, limit: pageSize)
             guard loadGeneration == generation else { return }
             replaceItems(with: page.items)
             hasMore = page.hasMore
+            loadedSignature = signature
         } catch {
             guard loadGeneration == generation else { return }
             replaceItems(with: [])
             hasMore = false
+            loadedSignature = nil
             errorMessage = (error as? VaultError)?.localizedDescription
                 ?? VaultError.persistenceFailure.localizedDescription
         }
@@ -56,9 +61,17 @@ final class GalleryViewModel {
 
     /// Re-fetches as many items as are already loaded, so the grid keeps its scroll depth
     /// while items that left the query drop out and the selection keeps the ones that remain.
+    /// While the fetch signature is unchanged the fetch would return the loaded items, so it is skipped,
+    /// and only what changed is written, so an unchanged grid is not invalidated.
     func refreshLoadedItems() async {
         guard hasLoaded else {
             await loadInitial()
+            return
+        }
+        let signature = repository.fetchSignature(for: query)
+        if let signature, signature == loadedSignature {
+            keepSelectionWithinLoadedItems()
+            if errorMessage != nil { errorMessage = nil }
             return
         }
         let generation = UUID()
@@ -67,16 +80,20 @@ final class GalleryViewModel {
         do {
             let page = try repository.fetchMedia(query: query, offset: 0, limit: max(items.count, pageSize))
             guard loadGeneration == generation else { return }
-            replaceItems(with: page.items)
-            hasMore = page.hasMore
-            errorMessage = nil
-            selectedIDs.formIntersection(page.items.map(\.id))
+            if !page.items.elementsEqual(items, by: { $0 === $1 }) {
+                replaceItems(with: page.items)
+            }
+            if hasMore != page.hasMore { hasMore = page.hasMore }
+            if errorMessage != nil { errorMessage = nil }
+            keepSelectionWithinLoadedItems()
+            loadedSignature = signature
         } catch {
             guard loadGeneration == generation else { return }
+            loadedSignature = nil
             errorMessage = (error as? VaultError)?.localizedDescription
                 ?? VaultError.persistenceFailure.localizedDescription
         }
-        if loadGeneration == generation { isLoading = false }
+        if loadGeneration == generation, isLoading { isLoading = false }
     }
 
     func loadNextIfNeeded(currentItem: VaultMedia) async {
@@ -87,7 +104,11 @@ final class GalleryViewModel {
             appendItems(page.items)
             hasMore = page.hasMore
             errorMessage = nil
+            if loadedSignature != nil, loadedSignature != repository.fetchSignature(for: query) {
+                loadedSignature = nil
+            }
         } catch {
+            loadedSignature = nil
             errorMessage = (error as? VaultError)?.localizedDescription
                 ?? VaultError.persistenceFailure.localizedDescription
         }
@@ -176,5 +197,10 @@ final class GalleryViewModel {
         guard !newItems.isEmpty else { return }
         items.append(contentsOf: newItems)
         itemIDs.append(contentsOf: newItems.map(\.id))
+    }
+
+    private func keepSelectionWithinLoadedItems() {
+        let kept = selectedIDs.filter { index(of: $0) != nil }
+        if kept.count != selectedIDs.count { selectedIDs = kept }
     }
 }

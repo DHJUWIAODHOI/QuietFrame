@@ -23,6 +23,18 @@ protocol VaultRepositoryProtocol: AnyObject {
     func setFavorite(mediaID: UUID, isFavorite: Bool) throws
 }
 
+/// Every input of a gallery fetch except the clock: the query, the library through its change counter, and the
+/// locale settings that searching and sorting use. While it stays equal, a fetch returns the same items in the
+/// same order.
+struct GalleryFetchSignature: Equatable {
+    let query: GalleryQuery
+    let libraryGeneration: Int
+    let localeIdentifier: String
+    let timeZoneIdentifier: String
+    let calendarIdentifier: Calendar.Identifier
+    let mediumDateSample: String?
+}
+
 @MainActor
 final class VaultRepository: VaultRepositoryProtocol {
     /// The IDs a search matched, in sort order, so its later pages and refreshes skip the full scan.
@@ -202,6 +214,20 @@ final class VaultRepository: VaultRepositoryProtocol {
         guard offset < searched.count else { return ([], false) }
         let end = min(offset + limit, searched.count)
         return (Array(searched[offset..<end]), end < searched.count)
+    }
+
+    /// Nil when the result depends on the clock (the Recently Added cutoff), so every refresh of it fetches.
+    func fetchSignature(for query: GalleryQuery) -> GalleryFetchSignature? {
+        guard !query.appliesRecentlyAddedCutoff else { return nil }
+        let searches = !query.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return GalleryFetchSignature(
+            query: query,
+            libraryGeneration: changes.generation,
+            localeIdentifier: Locale.current.identifier,
+            timeZoneIdentifier: TimeZone.current.identifier,
+            calendarIdentifier: Calendar.current.identifier,
+            mediumDateSample: searches ? Self.mediumDateSample(Self.searchDateFormatter()) : nil
+        )
     }
 
     /// Forgets the last search's text and matches, so they do not stay in memory while the vault is locked.
@@ -406,7 +432,7 @@ final class VaultRepository: VaultRepositoryProtocol {
             }
         }
 
-        if query.collection == .recentlyAdded {
+        if query.appliesRecentlyAddedCutoff {
             let cutoff = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? .distantPast
             switch query.filter {
             case .photos:

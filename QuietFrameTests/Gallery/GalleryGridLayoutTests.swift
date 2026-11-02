@@ -56,7 +56,8 @@ final class GalleryGridLayoutTests: XCTestCase {
         }
         media.forEach { context.insert($0) }
         try context.save()
-        let viewModel = GalleryViewModel(repository: VaultRepository(modelContext: context), query: GalleryQuery())
+        let repository = VaultRepository(modelContext: context)
+        let viewModel = GalleryViewModel(repository: repository, query: GalleryQuery())
         await viewModel.loadInitial()
 
         XCTAssertEqual(viewModel.index(of: media[3].id), 0)
@@ -64,6 +65,7 @@ final class GalleryGridLayoutTests: XCTestCase {
 
         media[2].trashedAt = Date()
         try context.save()
+        repository.changes.recordChange()
         await viewModel.refreshLoadedItems()
 
         XCTAssertEqual(viewModel.index(of: media[1].id), 1)

@@ -262,32 +262,107 @@ final class LibraryQueryTests: XCTestCase {
         XCTAssertNil(media[0].album)
     }
 
-    func testEverySavedLibraryEditMovesTheChangeCounter() async throws {
+    /// Galleries skip refreshes while the counter stands still, so every path that saves media or albums moves it.
+    func testEveryLibraryWritePathMovesTheChangeCounter() async throws {
         let container = try makeContainer()
         let context = container.mainContext
+        context.insert(AppSettings(trashRetentionPeriod: .sevenDays))
+        try context.save()
         let changes = LibraryChangeCounter()
         let repository = VaultRepository(modelContext: context, changes: changes)
-        let trash = TrashService(modelContext: context, storage: MockSecureFileStorage(), changes: changes)
-        let album = try repository.createAlbum(name: "Holiday")
-        let media = insertMedia(count: 3, in: container)
+        let storage = MockSecureFileStorage()
+        let trash = TrashService(modelContext: context, storage: storage, changes: changes)
+        let albums = AlbumService(repository: repository, modelContext: context, storage: storage)
         var generations = [changes.generation]
+        let album = try repository.createAlbum(name: "Holiday")
+        generations.append(changes.generation)
+        let media = insertMedia(count: 8, in: container)
 
         try repository.setFavorite(mediaID: media[0].id, isFavorite: true)
         generations.append(changes.generation)
-        try repository.moveMedia(ids: [media[1].id], toAlbumID: album.id)
+        try repository.setFavorite(mediaIDs: [media[1].id, media[2].id], isFavorite: true)
         generations.append(changes.generation)
-        try await trash.moveToTrash(ids: [media[2].id])
+        try repository.moveMedia(ids: [media[1].id, media[3].id], toAlbumID: album.id)
         generations.append(changes.generation)
-        try await trash.restore(ids: [media[2].id])
-        generations.append(changes.generation)
-        try await trash.moveToTrash(ids: [media[2].id])
-        try await trash.permanentlyDelete(ids: [media[2].id])
+        try repository.setAlbumCover(albumID: album.id, mediaID: media[1].id)
         generations.append(changes.generation)
         try repository.renameAlbum(id: album.id, name: "Archive")
+        generations.append(changes.generation)
+        let second = try albums.createAlbum(name: "Second")
+        generations.append(changes.generation)
+        try repository.reorderAlbums(ids: [second.id, album.id])
+        generations.append(changes.generation)
+        let importedID = try repository.insertImportedMedia(
+            storageIdentifier: "imported",
+            thumbnailIdentifier: nil,
+            fingerprint: "imported-fingerprint",
+            metadata: Benchmark.metadata(filename: "IMPORTED.JPG", width: 10, height: 10, byteCount: 10),
+            albumID: second.id
+        )
+        generations.append(changes.generation)
+        try repository.deleteImportedMedia(id: importedID)
+        generations.append(changes.generation)
+        try await trash.moveToTrash(ids: [media[4].id])
+        generations.append(changes.generation)
+        try await trash.restore(ids: [media[4].id])
+        generations.append(changes.generation)
+        try await trash.moveToTrash(ids: [media[4].id])
+        generations.append(changes.generation)
+        try await trash.permanentlyDelete(ids: [media[4].id])
+        generations.append(changes.generation)
+        try await trash.moveToTrash(ids: [media[5].id])
+        generations.append(changes.generation)
+        try await trash.emptyTrash()
+        generations.append(changes.generation)
+        try await trash.moveToTrash(ids: [media[6].id])
+        generations.append(changes.generation)
+        media[6].trashedAt = Date().addingTimeInterval(-8 * 86_400)
+        try context.save()
+        let purgedCount = try await trash.purgeExpiredItems()
+        XCTAssertEqual(purgedCount, 1)
+        generations.append(changes.generation)
+        try await albums.deleteAlbum(id: second.id, mode: .keepMedia)
+        generations.append(changes.generation)
+        try await albums.deleteAlbum(id: album.id, mode: .moveMediaToTrash)
         generations.append(changes.generation)
 
         XCTAssertEqual(generations, generations.sorted())
         XCTAssertEqual(Set(generations).count, generations.count)
+    }
+
+    func testFetchSignatureFollowsEveryResultInput() throws {
+        let container = try makeContainer()
+        let repository = VaultRepository(modelContext: container.mainContext)
+        let query = GalleryQuery()
+        let signature = try XCTUnwrap(repository.fetchSignature(for: query))
+
+        XCTAssertEqual(repository.fetchSignature(for: query), signature)
+        XCTAssertEqual(signature.localeIdentifier, Locale.current.identifier)
+        XCTAssertEqual(signature.timeZoneIdentifier, TimeZone.current.identifier)
+        XCTAssertEqual(signature.calendarIdentifier, Calendar.current.identifier)
+        XCTAssertNil(signature.mediumDateSample)
+        XCTAssertNotEqual(repository.fetchSignature(for: GalleryQuery(filter: .videos)), signature)
+        XCTAssertNil(repository.fetchSignature(for: GalleryQuery(searchText: "  "))?.mediumDateSample)
+        let search = try XCTUnwrap(repository.fetchSignature(for: GalleryQuery(searchText: "IMG")))
+        XCTAssertNotNil(search.mediumDateSample)
+        XCTAssertEqual(repository.fetchSignature(for: GalleryQuery(searchText: "IMG")), search)
+
+        repository.changes.recordChange()
+
+        XCTAssertNotEqual(repository.fetchSignature(for: query), signature)
+        XCTAssertNotEqual(repository.fetchSignature(for: GalleryQuery(searchText: "IMG")), search)
+    }
+
+    func testOnlyTheRecentlyAddedCollectionDependsOnTheClock() throws {
+        let container = try makeContainer()
+        let repository = VaultRepository(modelContext: container.mainContext)
+
+        XCTAssertNil(repository.fetchSignature(for: GalleryQuery(collection: .recentlyAdded)))
+        XCTAssertNil(repository.fetchSignature(for: GalleryQuery(collection: .recentlyAdded, filter: .videos)))
+        XCTAssertNotNil(repository.fetchSignature(for: GalleryQuery(collection: .recentlyAdded, albumID: UUID())))
+        XCTAssertNotNil(repository.fetchSignature(for: GalleryQuery(collection: .recentlyAdded, includesTrash: true)))
+        XCTAssertNotNil(repository.fetchSignature(for: GalleryQuery(collection: .favorites)))
+        XCTAssertNotNil(repository.fetchSignature(for: GalleryQuery(collection: nil, albumID: UUID())))
     }
 
     func testAlbumCountsMatchTheItemsTheyDescribe() throws {
