@@ -126,6 +126,31 @@ final class EncryptedStreamingTests: XCTestCase {
         }
     }
 
+    func testTheFourMostRecentChunksAreReadFromMemory() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.remove() }
+        let plaintext = Benchmark.randomData(byteCount: chunkByteCount * 6, seed: 27)
+        let identifier = try await fixture.store(plaintext)
+        let reader = try await fixture.storage.openEncryptedReader(identifier: identifier, location: .media)
+        for chunk in 0..<4 {
+            _ = try await reader.read(offset: Int64(chunk * chunkByteCount), length: 10)
+        }
+        try damageChunk(0, in: fixture.encryptedURL(identifier))
+
+        let keptBytes = try await reader.read(offset: 100, length: 10)
+        XCTAssertEqual(keptBytes, plaintext[100..<110], "A recently read chunk comes from memory")
+        for chunk in 2..<6 {
+            _ = try await reader.read(offset: Int64(chunk * chunkByteCount), length: 10)
+        }
+        do {
+            _ = try await reader.read(offset: 100, length: 10)
+            XCTFail("Chunk 0 must be read from the file again once four newer chunks are kept")
+        } catch {
+            XCTAssertEqual(error as? VaultError, .corruptedFile)
+        }
+        await reader.close()
+    }
+
     func testOversizedHeaderSizeIsRejectedOnOpen() async throws {
         let fixture = try await makeFixture()
         defer { fixture.remove() }
@@ -198,6 +223,17 @@ final class EncryptedStreamingTests: XCTestCase {
         func remove() {
             try? FileManager.default.removeItem(at: directory)
         }
+    }
+
+    /// Flips one ciphertext byte of a chunk in place, through a separate handle on the same file.
+    private func damageChunk(_ chunk: Int, in url: URL) throws {
+        let handle = try FileHandle(forUpdating: url)
+        defer { try? handle.close() }
+        let offset = UInt64(48 + chunk * (chunkByteCount + 16) + 7)
+        try handle.seek(toOffset: offset)
+        let original = try handle.readExactly(1)
+        try handle.seek(toOffset: offset)
+        try handle.write(contentsOf: Data([original[original.startIndex] ^ 0x01]))
     }
 
     private func makeFixture() async throws -> Fixture {

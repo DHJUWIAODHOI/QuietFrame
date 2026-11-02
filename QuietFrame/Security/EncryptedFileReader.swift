@@ -4,6 +4,15 @@ import Foundation
 /// Random-access reads of one encrypted file, so media can play without a plaintext copy on disk. Every chunk is
 /// authenticated as it is read, and reads stop working as soon as the vault locks.
 actor EncryptedFileReader {
+    private struct DecryptedChunk {
+        let index: UInt32
+        let plaintext: Data
+    }
+
+    /// Playback and the frame strip read the same video at different offsets, so a few recent chunks are kept rather
+    /// than one; a failed session check or closing drops them all.
+    private static let keptChunkLimit = 4
+
     nonisolated let plaintextByteCount: Int64
 
     private let handle: FileHandle
@@ -13,7 +22,7 @@ actor EncryptedFileReader {
     private let encodedHeader: Data
     private let noncePrefix: Data
     private let chunkByteCount: Int
-    private var lastChunk: (index: UInt32, plaintext: Data)?
+    private var recentChunks: [DecryptedChunk] = []
     private var isClosed = false
 
     init(
@@ -64,7 +73,7 @@ actor EncryptedFileReader {
     func close() {
         guard !isClosed else { return }
         isClosed = true
-        lastChunk = nil
+        recentChunks.removeAll()
         try? handle.close()
     }
 
@@ -74,11 +83,15 @@ actor EncryptedFileReader {
         do {
             try await session.validate(generation)
         } catch {
-            lastChunk = nil
+            recentChunks.removeAll()
             throw error
         }
         guard !isClosed else { throw VaultError.fileOperationFailed }
-        if let lastChunk, lastChunk.index == index { return lastChunk.plaintext }
+        if let position = recentChunks.firstIndex(where: { $0.index == index }) {
+            let kept = recentChunks.remove(at: position)
+            recentChunks.append(kept)
+            return kept.plaintext
+        }
         let chunkStart = Int64(index) * Int64(chunkByteCount)
         let plaintextCount = Int(min(Int64(chunkByteCount), plaintextByteCount - chunkStart))
         let fileOffset = UInt64(encodedHeader.count) + UInt64(index) * UInt64(chunkByteCount + 16)
@@ -95,7 +108,10 @@ actor EncryptedFileReader {
                 using: fileKey,
                 authenticating: ChunkedEncryptionService.additionalData(header: encodedHeader, chunkIndex: index)
             )
-            lastChunk = (index, plaintext)
+            if recentChunks.count == Self.keptChunkLimit {
+                recentChunks.removeFirst()
+            }
+            recentChunks.append(DecryptedChunk(index: index, plaintext: plaintext))
             return plaintext
         } catch let error as VaultError {
             throw error
