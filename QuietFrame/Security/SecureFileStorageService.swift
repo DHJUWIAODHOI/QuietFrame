@@ -259,8 +259,8 @@ actor SecureFileStorageService: SecureFileStoring {
         }
     }
 
-    /// Bulk moves and deletes let other work on this actor, such as opening a video stream, preparing a share and
-    /// the lock's cleanup, run after this many files instead of waiting for the whole batch.
+    /// Bulk moves and deletes let other work on this actor, such as opening a video stream and the lock's cleanup,
+    /// run after this many files instead of waiting for the whole batch.
     private static let batchYieldInterval = 32
 
     func move(

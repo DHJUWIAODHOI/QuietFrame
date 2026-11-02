@@ -2,14 +2,21 @@ import XCTest
 @testable import QuietFrame
 
 /// Import preparation from picked files to the review screen, and how thumbnail work shares the machine with other
-/// Swift tasks. Only APIs that exist at the baseline are used, so a same-run comparison measures each side's own code.
+/// Swift tasks. Apart from the review-layout variants, only APIs that exist at 2ce13cd are used, so a same-run
+/// comparison against it measures each side's own code.
 @MainActor
 final class ImportPipelineBenchmarks: XCTestCase {
     private static let photoCount = 24
 
-    /// Twenty-four camera-sized photos picked at once, prepared until the review can appear.
+    /// Twenty-four camera-sized photos picked at once, prepared until the review can appear. No review layout is
+    /// set, so this build decodes no previews here; the review-layout variant includes them.
     func testPreparingTwentyFourPhotos() throws {
         try measurePreparingPhotos(metrics: [XCTClockMetric()])
+    }
+
+    /// The same preparation with the review's first screen decoded before it appears, as in the app.
+    func testPreparingTwentyFourPhotosForTheReviewScreen() throws {
+        try measurePreparingPhotos(metrics: [XCTClockMetric()], layout: Self.reviewLayout)
     }
 
     /// The memory the same preparation leaves held for the review, kept apart from the timing because the comparison
@@ -17,6 +24,14 @@ final class ImportPipelineBenchmarks: XCTestCase {
     func testMemoryHeldAfterPreparingTwentyFourPhotos() throws {
         try measurePreparingPhotos(metrics: [XCTMemoryMetric()])
     }
+
+    /// The memory held once the review's first screen of previews is decoded too.
+    func testMemoryHeldAfterPreparingTwentyFourPhotosForTheReviewScreen() throws {
+        try measurePreparingPhotos(metrics: [XCTMemoryMetric()], layout: Self.reviewLayout)
+    }
+
+    /// An iPhone 16 Pro review grid: 114-point tiles at 3x, nine rows of three on the first screen.
+    private static let reviewLayout = ImportPreviewLayout(tileWidth: 114, scale: 3, firstScreenCount: 27)
 
     /// Round trips through Swift's cooperative pool while a thumbnail is made on every core. Thumbnail work that holds
     /// cooperative threads makes each round trip wait for it.
@@ -52,7 +67,7 @@ final class ImportPipelineBenchmarks: XCTestCase {
         }
     }
 
-    private func measurePreparingPhotos(metrics: [XCTMetric]) throws {
+    private func measurePreparingPhotos(metrics: [XCTMetric], layout: ImportPreviewLayout? = nil) throws {
         let vault = try awaitBenchmark { try await BenchmarkVault.make() }
         defer { vault.remove() }
         let photo = Benchmark.photoJPEG(width: 4_032, height: 3_024, seed: 11)
@@ -69,6 +84,7 @@ final class ImportPipelineBenchmarks: XCTestCase {
             ),
             photoLibrary: PhotoLibraryService()
         )
+        viewModel.previewLayout = layout
         defer { viewModel.cleanupIfIdle() }
 
         measure(metrics: metrics, options: Benchmark.manualOptions) {

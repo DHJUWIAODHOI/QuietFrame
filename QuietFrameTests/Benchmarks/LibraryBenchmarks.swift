@@ -31,18 +31,24 @@ final class LibraryBenchmarks: XCTestCase {
         }
     }
 
+    /// The first page of a new search; no iteration starts with the previous one's kept results.
     func testSearchingTheGallery() throws {
         let library = try BenchmarkLibrary.make(itemCount: itemCount)
         defer { library.remove() }
         let repository = VaultRepository(modelContext: library.context)
         let query = GalleryQuery(searchText: "IMG_12")
 
-        measure(metrics: [XCTClockMetric()], options: Benchmark.options) {
-            XCTAssertEqual((try? repository.fetchMedia(query: query, offset: 0, limit: 80))?.items.count, 80)
+        measure(metrics: [XCTClockMetric()], options: Benchmark.manualOptions) {
+            repository.clearSearchSnapshot()
+            startMeasuring()
+            let count = (try? repository.fetchMedia(query: query, offset: 0, limit: 80))?.items.count
+            stopMeasuring()
+            XCTAssertEqual(count, 80)
         }
     }
 
-    /// Closing the viewer after scrolling through five pages re-fetches every loaded item.
+    /// Closing the viewer after scrolling through five pages with nothing changed. The original app fetched every
+    /// loaded item again; the refresh is now skipped. GalleryBenchmarks covers a refresh after an edit.
     func testRefreshingFivePagesAfterTheViewerCloses() throws {
         let library = try BenchmarkLibrary.make(itemCount: itemCount)
         defer { library.remove() }
@@ -178,7 +184,9 @@ final class LibraryBenchmarks: XCTestCase {
         let query = GalleryQuery(searchText: "IMG_")
         let album = library.albums[0]
 
-        measure(metrics: [XCTClockMetric()], options: Benchmark.options) {
+        measure(metrics: [XCTClockMetric()], options: Benchmark.manualOptions) {
+            repository.clearSearchSnapshot()
+            startMeasuring()
             runBenchmark {
                 for page in 0..<5 {
                     if savingBetweenPages {
@@ -190,6 +198,7 @@ final class LibraryBenchmarks: XCTestCase {
                     XCTAssertEqual(result.items.count, 80)
                 }
             }
+            stopMeasuring()
         }
     }
 

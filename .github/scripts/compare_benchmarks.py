@@ -6,7 +6,7 @@ from pathlib import Path
 
 PATTERN = re.compile(
     r"-\[QuietFrameTests\.(\w+) (\w+)\]' measured \[([^\]]+)\] average: (-?[0-9.]+), "
-    r"relative standard deviation: ([0-9.]+)%"
+    r"relative standard deviation: ([^%]*)%"
 )
 
 

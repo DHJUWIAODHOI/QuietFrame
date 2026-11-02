@@ -139,7 +139,7 @@ jobs:
             echo "| --- | --- | --- | --- | --- | --- |"
             if [ -f "$LOG" ]; then
               grep -E "measured \[" "$LOG" \
-                | sed -E "s/.*-\[QuietFrameTests\.([A-Za-z0-9_]+) ([A-Za-z0-9_]+)\]' measured \[([^]]+)\] average: ([0-9.]+), relative standard deviation: ([0-9.]+%), values: \[([^]]*)\].*/| \1 | \2 | \3 | \4 | \5 | \6 |/" \
+                | sed -E "s/.*-\[QuietFrameTests\.([A-Za-z0-9_]+) ([A-Za-z0-9_]+)\]' measured \[([^]]+)\] average: (-?[0-9.]+), relative standard deviation: ([^%]*%), values: \[([^]]*)\].*/| \1 | \2 | \3 | \4 | \5 | \6 |/" \
                 || true
             fi
           } >> "$GITHUB_STEP_SUMMARY"
