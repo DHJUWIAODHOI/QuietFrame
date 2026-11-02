@@ -5,7 +5,9 @@ import Foundation
 /// service makes.
 actor CountingSecureFileStorage: SecureFileStoring {
     private(set) var moveCalls = 0
+    private(set) var batchMoveCalls = 0
     private(set) var deleteCalls = 0
+    private(set) var batchDeleteCalls = 0
     private(set) var fileByteCountCalls = 0
     private(set) var fileByteCountsCalls = 0
     private let storage: any SecureFileStoring
@@ -15,7 +17,7 @@ actor CountingSecureFileStorage: SecureFileStoring {
     }
 
     var totalCalls: Int {
-        moveCalls + deleteCalls + fileByteCountCalls + fileByteCountsCalls
+        moveCalls + batchMoveCalls + deleteCalls + batchDeleteCalls + fileByteCountCalls + fileByteCountsCalls
     }
 
     func store(
@@ -55,9 +57,23 @@ actor CountingSecureFileStorage: SecureFileStoring {
         try await storage.move(identifier: identifier, from: from, to: to)
     }
 
+    func move(
+        identifiers: [String],
+        from: EncryptedAssetLocation,
+        to: EncryptedAssetLocation
+    ) async -> EncryptedFileMoveResult {
+        batchMoveCalls += 1
+        return await storage.move(identifiers: identifiers, from: from, to: to)
+    }
+
     func delete(identifier: String, location: EncryptedAssetLocation) async throws {
         deleteCalls += 1
         try await storage.delete(identifier: identifier, location: location)
+    }
+
+    func deleteFiles(ofItems items: [[EncryptedFileReference]]) async -> Int {
+        batchDeleteCalls += 1
+        return await storage.deleteFiles(ofItems: items)
     }
 
     func cleanupTemporaryFiles() async {

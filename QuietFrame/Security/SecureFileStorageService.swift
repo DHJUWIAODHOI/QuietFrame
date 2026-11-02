@@ -11,6 +11,18 @@ struct StoredEncryptedFile: Sendable, Equatable {
     let result: EncryptionResult
 }
 
+struct EncryptedFileReference: Hashable, Sendable {
+    let identifier: String
+    let location: EncryptedAssetLocation
+}
+
+struct EncryptedFileMoveResult: Sendable {
+    /// The files moved before the first failure, in order.
+    let moved: [String]
+    /// The error the failing move threw, unchanged.
+    let failure: (any Error)?
+}
+
 protocol SecureFileStoring: Sendable {
     func store(
         plaintextURL: URL,
@@ -25,7 +37,15 @@ protocol SecureFileStoring: Sendable {
         preferredExtension: String?
     ) async throws -> SecureTemporaryFileLease
     func move(identifier: String, from: EncryptedAssetLocation, to: EncryptedAssetLocation) async throws
+    /// Moves the files in order and stops at the first failure, leaving the files already moved where they are.
+    func move(
+        identifiers: [String],
+        from: EncryptedAssetLocation,
+        to: EncryptedAssetLocation
+    ) async -> EncryptedFileMoveResult
     func delete(identifier: String, location: EncryptedAssetLocation) async throws
+    /// Deletes each item's files in order. A failure skips the rest of that item only. Returns how many items failed.
+    func deleteFiles(ofItems items: [[EncryptedFileReference]]) async -> Int
     func cleanupTemporaryFiles() async
     func removeAllEncryptedData() async throws
     func fileByteCount(identifier: String, location: EncryptedAssetLocation) async throws -> Int64
@@ -36,6 +56,37 @@ protocol SecureFileStoring: Sendable {
 }
 
 extension SecureFileStoring {
+    func move(
+        identifiers: [String],
+        from source: EncryptedAssetLocation,
+        to destination: EncryptedAssetLocation
+    ) async -> EncryptedFileMoveResult {
+        var moved: [String] = []
+        for identifier in identifiers {
+            do {
+                try await move(identifier: identifier, from: source, to: destination)
+            } catch {
+                return EncryptedFileMoveResult(moved: moved, failure: error)
+            }
+            moved.append(identifier)
+        }
+        return EncryptedFileMoveResult(moved: moved, failure: nil)
+    }
+
+    func deleteFiles(ofItems items: [[EncryptedFileReference]]) async -> Int {
+        var failedItemCount = 0
+        for files in items {
+            do {
+                for file in files {
+                    try await delete(identifier: file.identifier, location: file.location)
+                }
+            } catch {
+                failedItemCount += 1
+            }
+        }
+        return failedItemCount
+    }
+
     func fileByteCounts(location: EncryptedAssetLocation) async throws -> [String: Int64] {
         [:]
     }
@@ -210,10 +261,52 @@ actor SecureFileStorageService: SecureFileStoring {
         }
     }
 
+    /// Bulk moves and deletes let other work on this actor, such as thumbnail decrypts and the lock's cleanup, run
+    /// after this many files instead of waiting for the whole batch.
+    private static let batchYieldInterval = 32
+
+    func move(
+        identifiers: [String],
+        from source: EncryptedAssetLocation,
+        to destination: EncryptedAssetLocation
+    ) async -> EncryptedFileMoveResult {
+        var moved: [String] = []
+        moved.reserveCapacity(identifiers.count)
+        for (offset, identifier) in identifiers.enumerated() {
+            if offset > 0, offset.isMultiple(of: Self.batchYieldInterval) {
+                await Task.yield()
+            }
+            do {
+                try move(identifier: identifier, from: source, to: destination)
+            } catch {
+                return EncryptedFileMoveResult(moved: moved, failure: error)
+            }
+            moved.append(identifier)
+        }
+        return EncryptedFileMoveResult(moved: moved, failure: nil)
+    }
+
     func delete(identifier: String, location: EncryptedAssetLocation) throws {
         let url = try encryptedURL(identifier: identifier, location: location)
         guard fileManager.fileExists(atPath: url.path) else { return }
         try fileManager.removeItem(at: url)
+    }
+
+    func deleteFiles(ofItems items: [[EncryptedFileReference]]) async -> Int {
+        var failedItemCount = 0
+        for (offset, files) in items.enumerated() {
+            if offset > 0, offset.isMultiple(of: Self.batchYieldInterval) {
+                await Task.yield()
+            }
+            do {
+                for file in files {
+                    try delete(identifier: file.identifier, location: file.location)
+                }
+            } catch {
+                failedItemCount += 1
+            }
+        }
+        return failedItemCount
     }
 
     func cleanupTemporaryFiles() {

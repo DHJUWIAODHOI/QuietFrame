@@ -33,17 +33,13 @@ final class TrashService: TrashServicing {
         try await operationGate.withLock {
             let media = try fetchMedia(ids: ids).filter { !$0.isTrashed }
             guard media.count == ids.count else { throw VaultError.persistenceFailure }
-            var moved: [String] = []
 
-            do {
-                for item in media {
-                    try await storage.move(identifier: item.storageIdentifier, from: .media, to: .trash)
-                    moved.append(item.storageIdentifier)
-                }
-            } catch {
-                await restorePhysicalFiles(moved)
-                throw error
+            let batch = await storage.move(identifiers: media.map(\.storageIdentifier), from: .media, to: .trash)
+            if let failure = batch.failure {
+                await restorePhysicalFiles(batch.moved)
+                throw failure
             }
+            let moved = batch.moved
 
             let deletionDate = Date()
             for item in media {
@@ -71,17 +67,13 @@ final class TrashService: TrashServicing {
         try await operationGate.withLock {
             let media = try fetchMedia(ids: ids).filter(\.isTrashed)
             guard media.count == ids.count else { throw VaultError.persistenceFailure }
-            var moved: [String] = []
 
-            do {
-                for item in media {
-                    try await storage.move(identifier: item.storageIdentifier, from: .trash, to: .media)
-                    moved.append(item.storageIdentifier)
-                }
-            } catch {
-                await movePhysicalFilesBackToTrash(moved)
-                throw error
+            let batch = await storage.move(identifiers: media.map(\.storageIdentifier), from: .trash, to: .media)
+            if let failure = batch.failure {
+                await movePhysicalFilesBackToTrash(batch.moved)
+                throw failure
             }
+            let moved = batch.moved
 
             let albums = try modelContext.fetch(FetchDescriptor<VaultAlbum>())
             let restoredAt = Date()
@@ -115,8 +107,12 @@ final class TrashService: TrashServicing {
         let media = try fetchMedia(ids: ids).filter(\.isTrashed)
         guard media.count == ids.count else { throw VaultError.persistenceFailure }
 
-        let fileReferences = media.map {
-            (storageIdentifier: $0.storageIdentifier, thumbnailIdentifier: $0.thumbnailIdentifier)
+        let filesPerItem = media.map { item -> [EncryptedFileReference] in
+            var files = [EncryptedFileReference(identifier: item.storageIdentifier, location: .trash)]
+            if let thumbnailIdentifier = item.thumbnailIdentifier {
+                files.append(EncryptedFileReference(identifier: thumbnailIdentifier, location: .thumbnails))
+            }
+            return files
         }
         media.forEach { modelContext.delete($0) }
         do {
@@ -127,18 +123,8 @@ final class TrashService: TrashServicing {
         }
         changes.recordChange()
 
-        var deletionFailed = false
-        for reference in fileReferences {
-            do {
-                try await storage.delete(identifier: reference.storageIdentifier, location: .trash)
-                if let thumbnailIdentifier = reference.thumbnailIdentifier {
-                    try await storage.delete(identifier: thumbnailIdentifier, location: .thumbnails)
-                }
-            } catch {
-                deletionFailed = true
-            }
-        }
-        if deletionFailed {
+        let failedItemCount = await storage.deleteFiles(ofItems: filesPerItem)
+        if failedItemCount > 0 {
             // Metadata is already gone, so inaccessible encrypted orphans are removed by reconciliation.
             throw VaultError.fileOperationFailed
         }

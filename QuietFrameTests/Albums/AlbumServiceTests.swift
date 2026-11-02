@@ -62,6 +62,46 @@ final class AlbumServiceTests: XCTestCase {
         XCTAssertEqual(moveCount, 1)
     }
 
+    func testFailedDeleteToTrashKeepsTheAlbumAndItsFiles() async throws {
+        let container = try makeContainer()
+        let repository = VaultRepository(modelContext: container.mainContext)
+        let vault = try TemporaryVaultStorage()
+        defer { vault.remove() }
+        let service = AlbumService(
+            repository: repository,
+            modelContext: container.mainContext,
+            storage: vault.storage
+        )
+        let album = try repository.createAlbum(name: "Receipts")
+        let albumID = album.id
+        var media: [VaultMedia] = []
+        for _ in 0..<3 {
+            let identifier = try vault.place(in: .media)
+            let item = makeMedia(album: album, storageIdentifier: identifier)
+            container.mainContext.insert(item)
+            media.append(item)
+        }
+        try container.mainContext.save()
+        let blocked = media[1].storageIdentifier
+        try vault.place(blocked, in: .trash)
+
+        do {
+            try await service.deleteAlbum(id: albumID, mode: .moveMediaToTrash)
+            XCTFail("The move into a taken name should fail.")
+        } catch {
+            XCTAssertEqual(error as? VaultError, .fileOperationFailed)
+        }
+
+        XCTAssertEqual(try container.mainContext.fetchCount(FetchDescriptor<VaultAlbum>()), 1)
+        for item in media {
+            XCTAssertEqual(item.album?.id, albumID)
+            XCTAssertNil(item.trashedAt)
+            XCTAssertNil(item.previousAlbumID)
+            XCTAssertTrue(vault.contains(item.storageIdentifier, in: .media))
+        }
+        XCTAssertEqual(try vault.fileNames(in: .trash), ["\(blocked).qfe"])
+    }
+
     func testInitialOrderingAndCreationAfterReorder() throws {
         let container = try makeContainer()
         let repository = VaultRepository(modelContext: container.mainContext)
@@ -473,9 +513,9 @@ final class AlbumServiceTests: XCTestCase {
         })
     }
 
-    private func makeMedia(album: VaultAlbum) -> VaultMedia {
+    private func makeMedia(album: VaultAlbum, storageIdentifier: String = UUID().uuidString) -> VaultMedia {
         VaultMedia(
-            storageIdentifier: UUID().uuidString,
+            storageIdentifier: storageIdentifier,
             contentFingerprint: UUID().uuidString,
             metadata: MediaMetadata(
                 mediaType: .photo,

@@ -201,6 +201,199 @@ final class SecureFileStorageServiceTests: XCTestCase {
             XCTAssertEqual(measured, size, identifier)
         }
     }
+
+    func testBatchMoveStopsAtTheFirstFailure() async throws {
+        let vault = try TemporaryVaultStorage()
+        defer { vault.remove() }
+        let first = try vault.place(in: .media)
+        let blocked = try vault.place(in: .media)
+        let last = try vault.place(in: .media)
+        try vault.place(blocked, in: .trash)
+
+        let result = await vault.storage.move(identifiers: [first, blocked, last], from: .media, to: .trash)
+
+        XCTAssertEqual(result.moved, [first])
+        XCTAssertEqual(result.failure as? VaultError, .fileOperationFailed)
+        XCTAssertTrue(vault.contains(first, in: .trash))
+        XCTAssertFalse(vault.contains(first, in: .media))
+        XCTAssertTrue(vault.contains(blocked, in: .media))
+        XCTAssertTrue(vault.contains(last, in: .media))
+        XCTAssertFalse(vault.contains(last, in: .trash))
+    }
+
+    func testBatchMoveReappliesBackupExclusion() async throws {
+        let vault = try TemporaryVaultStorage()
+        defer { vault.remove() }
+        var identifiers: [String] = []
+        for _ in 0..<3 {
+            let identifier = try vault.place(in: .media)
+            var url = vault.url(of: identifier, in: .media)
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = false
+            try url.setResourceValues(values)
+            identifiers.append(identifier)
+        }
+
+        let result = await vault.storage.move(identifiers: identifiers, from: .media, to: .trash)
+
+        XCTAssertNil(result.failure)
+        XCTAssertEqual(result.moved, identifiers)
+        for identifier in identifiers {
+            let values = try vault.url(of: identifier, in: .trash).resourceValues(forKeys: [.isExcludedFromBackupKey])
+            XCTAssertEqual(values.isExcludedFromBackup, true)
+        }
+    }
+
+    func testBatchDeleteSkipsTheRestOfAFailedItem() async throws {
+        let vault = try TemporaryVaultStorage()
+        defer { vault.remove() }
+        let keptThumbnail = try vault.place(in: .thumbnails)
+        let original = try vault.place(in: .trash)
+        let thumbnail = try vault.place(in: .thumbnails)
+
+        let failedItemCount = await vault.storage.deleteFiles(ofItems: [
+            [
+                EncryptedFileReference(identifier: "not-a-uuid", location: .trash),
+                EncryptedFileReference(identifier: keptThumbnail, location: .thumbnails)
+            ],
+            [
+                EncryptedFileReference(identifier: original, location: .trash),
+                EncryptedFileReference(identifier: thumbnail, location: .thumbnails)
+            ]
+        ])
+
+        XCTAssertEqual(failedItemCount, 1)
+        XCTAssertTrue(vault.contains(keptThumbnail, in: .thumbnails))
+        XCTAssertFalse(vault.contains(original, in: .trash))
+        XCTAssertFalse(vault.contains(thumbnail, in: .thumbnails))
+    }
+
+    /// Test doubles get the protocol's batch defaults; the real storage runs its own loops. Both must agree.
+    func testProtocolDefaultsMatchTheBatchImplementation() async throws {
+        let batched = try TemporaryVaultStorage()
+        let defaulted = try TemporaryVaultStorage()
+        defer {
+            batched.remove()
+            defaulted.remove()
+        }
+        let moved = UUID().uuidString.lowercased()
+        let blocked = UUID().uuidString.lowercased()
+        let notReached = UUID().uuidString.lowercased()
+        let original = UUID().uuidString.lowercased()
+        let thumbnail = UUID().uuidString.lowercased()
+        let keptThumbnail = UUID().uuidString.lowercased()
+        for vault in [batched, defaulted] {
+            try vault.place(moved, in: .media)
+            try vault.place(blocked, in: .media)
+            try vault.place(blocked, in: .trash)
+            try vault.place(notReached, in: .media)
+            try vault.place(original, in: .trash)
+            try vault.place(thumbnail, in: .thumbnails)
+            try vault.place(keptThumbnail, in: .thumbnails)
+        }
+        let identifiers = [moved, blocked, notReached]
+        let items = [
+            [
+                EncryptedFileReference(identifier: "not-a-uuid", location: .trash),
+                EncryptedFileReference(identifier: keptThumbnail, location: .thumbnails)
+            ],
+            [EncryptedFileReference(identifier: UUID().uuidString.lowercased(), location: .trash)],
+            [
+                EncryptedFileReference(identifier: original, location: .trash),
+                EncryptedFileReference(identifier: thumbnail, location: .thumbnails)
+            ]
+        ]
+        let batchedStorage: any SecureFileStoring = batched.storage
+        let defaultedStorage: any SecureFileStoring = SingleFileStorage(wrapping: defaulted.storage)
+
+        let batchedMove = await batchedStorage.move(identifiers: identifiers, from: .media, to: .trash)
+        let defaultedMove = await defaultedStorage.move(identifiers: identifiers, from: .media, to: .trash)
+        let batchedFailures = await batchedStorage.deleteFiles(ofItems: items)
+        let defaultedFailures = await defaultedStorage.deleteFiles(ofItems: items)
+        let defaultedSizes = try await defaultedStorage.fileByteCounts(location: .media)
+
+        XCTAssertEqual(batchedMove.moved, [moved])
+        XCTAssertEqual(defaultedMove.moved, batchedMove.moved)
+        XCTAssertEqual(batchedMove.failure as? VaultError, .fileOperationFailed)
+        XCTAssertEqual(defaultedMove.failure as? VaultError, .fileOperationFailed)
+        XCTAssertEqual(batchedFailures, 1)
+        XCTAssertEqual(defaultedFailures, batchedFailures)
+        XCTAssertTrue(defaultedSizes.isEmpty)
+        for location in [EncryptedAssetLocation.media, .trash, .thumbnails] {
+            let batchedNames = try batched.fileNames(in: location)
+            let defaultedNames = try defaulted.fileNames(in: location)
+            XCTAssertEqual(defaultedNames, batchedNames, location.rawValue)
+        }
+    }
+}
+
+/// Implements only the single-file calls, so the protocol's batch and listing defaults run over real storage.
+private actor SingleFileStorage: SecureFileStoring {
+    private let storage: any SecureFileStoring
+
+    init(wrapping storage: any SecureFileStoring) {
+        self.storage = storage
+    }
+
+    func store(
+        plaintextURL: URL,
+        location: EncryptedAssetLocation,
+        progress: FileProgressHandler?
+    ) async throws -> StoredEncryptedFile {
+        try await storage.store(plaintextURL: plaintextURL, location: location, progress: progress)
+    }
+
+    func store(plaintextData: Data, location: EncryptedAssetLocation) async throws -> StoredEncryptedFile {
+        try await storage.store(plaintextData: plaintextData, location: location)
+    }
+
+    func decryptData(
+        identifier: String,
+        location: EncryptedAssetLocation,
+        maximumByteCount: Int
+    ) async throws -> Data {
+        try await storage.decryptData(identifier: identifier, location: location, maximumByteCount: maximumByteCount)
+    }
+
+    func temporaryDecryptedFile(
+        identifier: String,
+        location: EncryptedAssetLocation,
+        preferredExtension: String?
+    ) async throws -> SecureTemporaryFileLease {
+        try await storage.temporaryDecryptedFile(
+            identifier: identifier,
+            location: location,
+            preferredExtension: preferredExtension
+        )
+    }
+
+    func move(identifier: String, from: EncryptedAssetLocation, to: EncryptedAssetLocation) async throws {
+        try await storage.move(identifier: identifier, from: from, to: to)
+    }
+
+    func delete(identifier: String, location: EncryptedAssetLocation) async throws {
+        try await storage.delete(identifier: identifier, location: location)
+    }
+
+    func cleanupTemporaryFiles() async {
+        await storage.cleanupTemporaryFiles()
+    }
+
+    func removeAllEncryptedData() async throws {
+        try await storage.removeAllEncryptedData()
+    }
+
+    func fileByteCount(identifier: String, location: EncryptedAssetLocation) async throws -> Int64 {
+        try await storage.fileByteCount(identifier: identifier, location: location)
+    }
+
+    func allIdentifiers(location: EncryptedAssetLocation) async throws -> Set<String> {
+        try await storage.allIdentifiers(location: location)
+    }
+
+    func openEncryptedReader(identifier: String, location: EncryptedAssetLocation) async throws -> EncryptedFileReader {
+        try await storage.openEncryptedReader(identifier: identifier, location: location)
+    }
 }
 
 private extension SecureFileStorageService {

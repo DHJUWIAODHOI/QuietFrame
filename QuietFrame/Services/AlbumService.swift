@@ -60,16 +60,17 @@ final class AlbumService: AlbumServicing {
             var physicallyMoved: [String] = []
 
             if mode == .moveMediaToTrash {
-                do {
-                    for media in activeMedia {
-                        try await storage.move(identifier: media.storageIdentifier, from: .media, to: .trash)
-                        physicallyMoved.append(media.storageIdentifier)
-                    }
-                } catch {
+                let batch = await storage.move(
+                    identifiers: activeMedia.map(\.storageIdentifier),
+                    from: .media,
+                    to: .trash
+                )
+                physicallyMoved = batch.moved
+                if let failure = batch.failure {
                     for identifier in physicallyMoved.reversed() {
                         try? await storage.move(identifier: identifier, from: .trash, to: .media)
                     }
-                    throw error
+                    throw failure
                 }
             }
 
