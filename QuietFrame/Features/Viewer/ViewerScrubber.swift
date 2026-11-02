@@ -58,9 +58,13 @@ struct ViewerScrubber: View {
             .lineLimit(1)
 
             ZStack(alignment: .leading) {
-                frameStrip
-                    .frame(height: scrubberStripHeight)
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                ViewerFrameStrip(
+                    frames: isAttached ? playback.frames : [],
+                    frameCount: frameCount,
+                    placeholder: thumbnailService.cachedImage(for: media)
+                )
+                .frame(height: scrubberStripHeight)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 playhead
             }
             .frame(height: scrubberStripHeight + scrubberPlayheadOverhang * 2)
@@ -94,30 +98,6 @@ struct ViewerScrubber: View {
         }
     }
 
-    private var frameStrip: some View {
-        let frames = isAttached ? playback.frames : []
-        let placeholder = thumbnailService.cachedImage(for: media)
-        return HStack(spacing: 1) {
-            ForEach(0..<frameCount, id: \.self) { index in
-                QuietFrameTheme.elevated
-                    .frame(maxWidth: .infinity)
-                    .overlay {
-                        if let image = stripImage(at: index, frames: frames, placeholder: placeholder) {
-                            Image(uiImage: image)
-                                .resizable()
-                                .scaledToFill()
-                        }
-                    }
-                    .clipped()
-            }
-        }
-        .background(QuietFrameTheme.background)
-    }
-
-    private func stripImage(at index: Int, frames: [UIImage], placeholder: UIImage?) -> UIImage? {
-        frames.indices.contains(index) ? frames[index] : placeholder
-    }
-
     private var playhead: some View {
         let fraction = CGFloat(playbackFraction(at: currentTime, duration: duration))
         let x = min(max(fraction * width - 1, 0), max(width - 2, 0))
@@ -144,5 +124,34 @@ struct ViewerScrubber: View {
             .onEnded { _ in
                 playback.endScrub()
             }
+    }
+}
+
+/// The strip on its own, so a time tick or a drag event redraws only the times and the playhead.
+private struct ViewerFrameStrip: View {
+    let frames: [UIImage]
+    let frameCount: Int
+    let placeholder: UIImage?
+
+    var body: some View {
+        HStack(spacing: 1) {
+            ForEach(0..<frameCount, id: \.self) { index in
+                QuietFrameTheme.elevated
+                    .frame(maxWidth: .infinity)
+                    .overlay {
+                        if let image = stripImage(at: index) {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFill()
+                        }
+                    }
+                    .clipped()
+            }
+        }
+        .background(QuietFrameTheme.background)
+    }
+
+    private func stripImage(at index: Int) -> UIImage? {
+        frames.indices.contains(index) ? frames[index] : placeholder
     }
 }
