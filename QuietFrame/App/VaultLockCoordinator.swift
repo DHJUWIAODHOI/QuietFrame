@@ -386,10 +386,6 @@ final class VaultLockCoordinator {
         }
     }
 
-    func clearMessage() {
-        userMessage = nil
-    }
-
     func clearExpiredLockoutIfNeeded() {
         guard let lockoutDate, lockoutDate <= now() else { return }
         self.lockoutDate = nil
