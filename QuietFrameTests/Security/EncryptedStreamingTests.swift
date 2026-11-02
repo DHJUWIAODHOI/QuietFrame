@@ -107,7 +107,7 @@ final class EncryptedStreamingTests: XCTestCase {
         let fixture = try await makeFixture()
         defer { fixture.remove() }
         let videoURL = fixture.directory.appendingPathComponent("clip.mov")
-        try await writeVideo(to: videoURL, frameCount: 30, framesPerSecond: 30)
+        try await TestVideoWriter.writeVideo(to: videoURL, frameCount: 30, framesPerSecond: 30)
         let videoSize = try XCTUnwrap(try FileManager.default.attributesOfItem(atPath: videoURL.path)[.size] as? NSNumber)
         XCTAssertGreaterThan(videoSize.intValue, chunkByteCount * 2, "The clip spans several chunks")
         let identifier = try await fixture.storage.store(plaintextURL: videoURL, location: .media, progress: nil).identifier
@@ -171,53 +171,5 @@ final class EncryptedStreamingTests: XCTestCase {
             applyFileProtection: false
         )
         return Fixture(directory: directory, session: session, storage: storage)
-    }
-
-    /// A short H.264 clip of noisy frames, so it compresses to several container chunks.
-    private func writeVideo(to url: URL, frameCount: Int, framesPerSecond: Int32) async throws {
-        let width = 160
-        let height = 120
-        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
-        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
-            AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: width,
-            AVVideoHeightKey: height,
-            AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 4_000_000]
-        ])
-        input.expectsMediaDataInRealTime = false
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-            kCVPixelBufferWidthKey as String: width,
-            kCVPixelBufferHeightKey as String: height
-        ])
-        writer.add(input)
-        guard writer.startWriting() else { throw writer.error ?? VaultError.fileOperationFailed }
-        writer.startSession(atSourceTime: .zero)
-        var generator = SeededGenerator(seed: 99)
-        for frameIndex in 0..<frameCount {
-            while !input.isReadyForMoreMediaData {
-                try await Task.sleep(nanoseconds: 2_000_000)
-            }
-            guard let pool = adaptor.pixelBufferPool else { throw VaultError.fileOperationFailed }
-            var pixelBuffer: CVPixelBuffer?
-            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pixelBuffer)
-            guard let pixelBuffer else { throw VaultError.fileOperationFailed }
-            CVPixelBufferLockBaseAddress(pixelBuffer, [])
-            if let base = CVPixelBufferGetBaseAddress(pixelBuffer) {
-                let bytes = base.bindMemory(to: UInt8.self, capacity: CVPixelBufferGetDataSize(pixelBuffer))
-                for index in 0..<CVPixelBufferGetDataSize(pixelBuffer) {
-                    bytes[index] = UInt8(truncatingIfNeeded: generator.next())
-                }
-            }
-            CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
-            let time = CMTime(value: CMTimeValue(frameIndex), timescale: framesPerSecond)
-            guard adaptor.append(pixelBuffer, withPresentationTime: time) else {
-                throw writer.error ?? VaultError.fileOperationFailed
-            }
-        }
-        input.markAsFinished()
-        writer.endSession(atSourceTime: CMTime(value: CMTimeValue(frameCount), timescale: framesPerSecond))
-        await writer.finishWriting()
-        guard writer.status == .completed else { throw writer.error ?? VaultError.fileOperationFailed }
     }
 }
