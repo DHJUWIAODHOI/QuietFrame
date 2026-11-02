@@ -28,10 +28,48 @@ func videoFrameCount(forStripWidth width: CGFloat) -> Int {
     return max(6, Int(width / 28.5))
 }
 
+/// Scrubbing keeps one exact seek in flight. A newer position waits for it and replaces any older waiting one,
+/// so the player always ends on the last position asked for.
+struct VideoSeekChase: Equatable {
+    private(set) var isSeeking = false
+    private(set) var waitingTime: TimeInterval?
+
+    /// The position to send now, or nil when it has to wait for the seek in flight.
+    mutating func request(_ time: TimeInterval) -> TimeInterval? {
+        guard isSeeking else {
+            isSeeking = true
+            return time
+        }
+        waitingTime = time
+        return nil
+    }
+
+    /// The waiting position to send next, once the seek in flight has finished or been replaced.
+    mutating func seekDidFinish() -> TimeInterval? {
+        guard let next = waitingTime else {
+            isSeeking = false
+            return nil
+        }
+        waitingTime = nil
+        return next
+    }
+
+    /// The position asked for but not sent yet. The chase is over either way.
+    mutating func finish() -> TimeInterval? {
+        let waiting = waitingTime
+        self = VideoSeekChase()
+        return waiting
+    }
+}
+
 /// Transport for the selected video: the page that owns the player attaches it, the chrome drives it.
 @MainActor
 @Observable
 final class ViewerVideoPlayback {
+    /// Sends one exact seek. The completion, when there is one, runs on the main actor once the seek has finished
+    /// or been replaced.
+    typealias ExactSeek = @MainActor (AVPlayer, TimeInterval, (@MainActor @Sendable () -> Void)?) -> Void
+
     private struct FrameRequest: Equatable {
         let mediaID: UUID
         let count: Int
@@ -48,11 +86,37 @@ final class ViewerVideoPlayback {
     /// A video that could not be prepared or played, so the transport offers no playback for it.
     private(set) var unavailableMediaID: UUID?
 
+    private let exactSeek: ExactSeek
     @ObservationIgnored private var player: AVPlayer?
     @ObservationIgnored private var frameAsset: AVAsset?
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var frameRequest: FrameRequest?
     @ObservationIgnored private var frameTask: Task<Void, Never>?
+    @ObservationIgnored private var seekChase = VideoSeekChase()
+    /// Changes whenever a chase ends, so completions of its seeks that arrive later are ignored.
+    @ObservationIgnored private var seekToken: UInt64 = 0
+
+    init(exactSeek: @escaping ExactSeek = ViewerVideoPlayback.systemExactSeek) {
+        self.exactSeek = exactSeek
+    }
+
+    /// AVPlayer does not document which queue runs a seek's completion, so it hops to the main actor.
+    static func systemExactSeek(
+        _ player: AVPlayer,
+        _ seconds: TimeInterval,
+        _ completion: (@MainActor @Sendable () -> Void)?
+    ) {
+        let time = CMTime(seconds: seconds, preferredTimescale: 600)
+        guard let completion else {
+            player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+            return
+        }
+        player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { @Sendable (_: Bool) in
+            Task { @MainActor in
+                completion()
+            }
+        }
+    }
 
     func attach(player newPlayer: AVPlayer, asset: AVAsset, mediaID newMediaID: UUID, fallbackDuration: TimeInterval?) {
         guard player !== newPlayer || mediaID != newMediaID else { return }
@@ -116,7 +180,10 @@ final class ViewerVideoPlayback {
 
     func pause() {
         if isPlaying { isPlaying = false }
-        if isScrubbing { isScrubbing = false }
+        if isScrubbing {
+            isScrubbing = false
+            finishChase()
+        }
         player?.pause()
     }
 
@@ -126,19 +193,25 @@ final class ViewerVideoPlayback {
             isScrubbing = true
             player.pause()
         }
-        seek(player, to: playbackTime(forFraction: fraction, duration: duration))
+        let seconds = playbackTime(forFraction: fraction, duration: duration)
+        currentTime = seconds
+        guard player.currentItem != nil, let next = seekChase.request(seconds) else { return }
+        sendChasedSeek(player, to: next)
     }
 
     func endScrub() {
         guard isScrubbing else { return }
         isScrubbing = false
+        finishChase()
         if isPlaying {
             player?.play()
         }
     }
 
+    /// Never chased: each adjustment starts from `currentTime`, which the time observer rewrites outside a scrub.
     func seek(by seconds: TimeInterval) {
         guard let player, seconds.isFinite else { return }
+        abandonChase()
         seek(player, to: min(max(currentTime + seconds, 0), duration))
     }
 
@@ -182,12 +255,39 @@ final class ViewerVideoPlayback {
 
     private func seek(_ player: AVPlayer, to seconds: TimeInterval) {
         currentTime = seconds
+        sendExactSeek(player, to: seconds)
+    }
+
+    private func sendExactSeek(_ player: AVPlayer, to seconds: TimeInterval) {
         guard player.currentItem != nil else { return }
-        player.seek(
-            to: CMTime(seconds: seconds, preferredTimescale: 600),
-            toleranceBefore: .zero,
-            toleranceAfter: .zero
-        )
+        exactSeek(player, seconds, nil)
+    }
+
+    private func sendChasedSeek(_ player: AVPlayer, to seconds: TimeInterval) {
+        let token = seekToken
+        exactSeek(player, seconds, { [weak self] in
+            self?.chasedSeekDidFinish(token: token)
+        })
+    }
+
+    private func chasedSeekDidFinish(token: UInt64) {
+        guard token == seekToken, let player, player.currentItem != nil,
+              let next = seekChase.seekDidFinish() else { return }
+        sendChasedSeek(player, to: next)
+    }
+
+    /// Sends the last position if it is still waiting, as the last drag event did before the chase.
+    private func finishChase() {
+        let waiting = seekChase.finish()
+        seekToken &+= 1
+        if let player, let waiting {
+            sendExactSeek(player, to: waiting)
+        }
+    }
+
+    private func abandonChase() {
+        seekChase = VideoSeekChase()
+        seekToken &+= 1
     }
 
     private func observeTime(of player: AVPlayer) {
@@ -232,6 +332,7 @@ final class ViewerVideoPlayback {
         frameTask?.cancel()
         frameTask = nil
         frameRequest = nil
+        abandonChase()
     }
 
     private static func itemDuration(of player: AVPlayer) -> TimeInterval? {
