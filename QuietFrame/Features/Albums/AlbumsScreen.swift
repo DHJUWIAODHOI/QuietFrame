@@ -25,8 +25,8 @@ struct AlbumsScreen: View {
         let libraryGeneration: Int
     }
 
-    private var sortedAlbums: [VaultAlbum] {
-        switch settingsRecords.first?.albumSort ?? .modifiedDate {
+    static func sortedAlbums(_ albums: [VaultAlbum], by option: AlbumSortOption) -> [VaultAlbum] {
+        switch option {
         case .manual:
             albums
         case .name:
@@ -38,10 +38,21 @@ struct AlbumsScreen: View {
         }
     }
 
+    /// The chosen cover while it is an active member, otherwise the first active member in the relationship's
+    /// unspecified order.
+    static func cover(of album: VaultAlbum) -> VaultMedia? {
+        if let coverMediaID = album.coverMediaID,
+           let selected = album.media.first(where: { $0.id == coverMediaID && !$0.isTrashed }) {
+            return selected
+        }
+        return album.media.first(where: { !$0.isTrashed })
+    }
+
     var body: some View {
+        let sortedAlbums = Self.sortedAlbums(albums, by: settingsRecords.first?.albumSort ?? .modifiedDate)
         List {
             collectionsSection
-            userAlbumsSection
+            userAlbumsSection(sortedAlbums)
         }
         .listStyle(.insetGrouped)
         .quietFormStyle()
@@ -136,7 +147,7 @@ struct AlbumsScreen: View {
         .quietRows()
     }
 
-    private var userAlbumsSection: some View {
+    private func userAlbumsSection(_ sortedAlbums: [VaultAlbum]) -> some View {
         Section {
             if sortedAlbums.isEmpty {
                 Button {
@@ -485,30 +496,23 @@ private struct AlbumCover: View {
         )
     }
 
-    private var displayedImage: UIImage? {
+    private func displayedImage(of cover: VaultMedia?) -> UIImage? {
         if let image { return image }
         guard let cover else { return nil }
         return thumbnailService.cachedImage(for: cover, pixelSize: pixelSize(for: cover))
     }
 
-    private var cover: VaultMedia? {
-        if let coverMediaID = album.coverMediaID,
-           let selected = album.media.first(where: { $0.id == coverMediaID && !$0.isTrashed }) {
-            return selected
-        }
-        return album.media.first(where: { !$0.isTrashed })
-    }
-
-    private var coverKey: String {
+    private func coverKey(of cover: VaultMedia?) -> String {
         guard let cover else { return "" }
         return "\(cover.id.uuidString)-\(cover.thumbnailIdentifier ?? "")"
     }
 
     var body: some View {
+        let cover = AlbumsScreen.cover(of: album)
         RoundedRectangle(cornerRadius: QuietFrameTheme.tileCornerRadius, style: .continuous)
             .fill(QuietFrameTheme.inset)
             .overlay {
-                if let image = displayedImage {
+                if let image = displayedImage(of: cover) {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
@@ -519,7 +523,7 @@ private struct AlbumCover: View {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: QuietFrameTheme.tileCornerRadius, style: .continuous))
-            .task(id: "\(coverKey)#\(thumbnailService.generation)") {
+            .task(id: "\(coverKey(of: cover))#\(thumbnailService.generation)") {
                 guard let cover else {
                     image = nil
                     return
