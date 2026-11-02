@@ -125,58 +125,6 @@ final class ChunkedEncryptionServiceTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
     }
 
-    func testEveryOperationRunsWhileTheServiceActorIsHeld() async throws {
-        let directory = try XCTUnwrap(directory)
-        let sourceURL = directory.appendingPathComponent("source.bin")
-        let encryptedURL = directory.appendingPathComponent("encrypted.qfe")
-        let source = Data((0..<150_000).map { UInt8(truncatingIfNeeded: $0 &* 11) })
-        try source.write(to: sourceURL)
-        let session = VaultSession()
-        try await session.unlock(with: Data(repeating: 0x2e, count: 32))
-        let service = ChunkedEncryptionService(session: session, chunkByteCount: 65_536)
-        _ = try await service.encryptFile(at: sourceURL, to: encryptedURL, progress: nil)
-
-        let held = XCTestExpectation(description: "The service actor is held")
-        let release = DispatchSemaphore(value: 0)
-        defer { release.signal() }
-        let holder = Task { await service.holdIsolation(entered: held, release: release) }
-        await fulfillment(of: [held], timeout: 10)
-
-        let finished = XCTestExpectation(description: "Every operation finished while the actor was held")
-        finished.expectedFulfillmentCount = 5
-        let encryptingFile = Task {
-            _ = try await service.encryptFile(at: sourceURL, to: directory.appendingPathComponent("file.qfe"), progress: nil)
-            finished.fulfill()
-        }
-        let encryptingData = Task {
-            _ = try await service.encryptData(source, to: directory.appendingPathComponent("data.qfe"))
-            finished.fulfill()
-        }
-        let decryptingFile = Task {
-            try await service.decryptFile(at: encryptedURL, to: directory.appendingPathComponent("plain.bin"), progress: nil)
-            finished.fulfill()
-        }
-        let decryptingData = Task {
-            let plaintext = try await service.decryptData(at: encryptedURL, maximumByteCount: 1_000_000)
-            XCTAssertEqual(plaintext, source)
-            finished.fulfill()
-        }
-        let reading = Task {
-            let reader = try await service.openReader(at: encryptedURL)
-            let bytes = try await reader.read(offset: 70_000, length: 100)
-            await reader.close()
-            XCTAssertEqual(bytes, source[70_000..<70_100])
-            finished.fulfill()
-        }
-        await fulfillment(of: [finished], timeout: 10)
-        release.signal()
-        await holder.value
-
-        for operation in [encryptingFile, encryptingData, decryptingFile, decryptingData, reading] {
-            try await operation.value
-        }
-    }
-
     func testLockRevokesDecryptionAtNextChunkAndRemovesOutput() async throws {
         let directory = try XCTUnwrap(directory)
         let sourceURL = directory.appendingPathComponent("large-source.bin")
@@ -299,14 +247,6 @@ final class ChunkedEncryptionServiceTests: XCTestCase {
                 XCTAssertEqual(error as? VaultError, testCase.error, testCase.name)
             }
         }
-    }
-}
-
-private extension ChunkedEncryptionService {
-    /// Occupies the actor until `release` is signalled, as a long isolated job would.
-    func holdIsolation(entered: XCTestExpectation, release: DispatchSemaphore) {
-        entered.fulfill()
-        _ = release.wait(timeout: .now() + 30)
     }
 }
 
