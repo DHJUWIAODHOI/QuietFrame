@@ -67,20 +67,38 @@ cleanup. Still uncovered: reset-journal recovery, metadata extraction and biomet
 
 ### Same-run comparison
 
-CI run 41405788548, job "Compare benchmarks with a baseline": `6d83bea` (original app code) against `ef22709`
-(phases 1, 2, 4a and 5), one runner, each side twice, averages. Seconds.
+CI run 41414595318, job "Compare benchmarks with a baseline": `6d83bea` (original app code) against `95abab1`
+(phases 1-6), one runner, each side twice in alternation, averages of 10 iterations. Seconds. Each side builds and runs
+its own benchmark code, so a benchmark that copies the app's behaviour (such as progress delivery) measures each
+version's own behaviour. "Same build" rows compare the old method, replicated, with the new one inside the candidate
+build, because the original benchmark measured something different.
 
 | Benchmark | Before | After | Change |
 | --- | --- | --- | --- |
-| Passcode key derivation (210,000 iterations) | 0.527 | 0.045 | 12x faster |
-| 5,000 items: move 50 to Trash | 0.334 | 0.057 | 6x faster |
-| 5,000 items: five pages of one search (old cost reproduced by saving between pages) | 1.166 | 0.270 | 4.3x faster |
-| 5,000 items: Albums tab first appearance (old method replicated, fresh context) | 0.201 | 0.054 | 3.7x faster |
-| Draw 48 newly loaded thumbnails on the main thread | 0.228 | 0.092 | 2.5x less main-thread time |
-| Open a 12 MP photo (old 4096 px decode vs. screen-size decode) | 0.110 | 0.063 | 1.7x faster |
-| A page of 48 thumbnails reaches the screen | 0.230 | 0.173 | within noise |
-| 5,000 items: reconcile storage after unlock | 0.405 | 0.345 | within noise; no longer on the unlock path |
-| 5,000 items: first search page | 0.285 | 0.291 | unchanged (still one scan) |
+| Passcode key derivation (210,000 iterations) | 0.637 | 0.056 | 11x faster |
+| 5,000 items: move 50 to Trash | 0.362 | 0.084 | 4.3x faster |
+| 5,000 items: five pages of one search (same build; old cost reproduced by saving between pages) | 1.642 | 0.308 | 5.3x faster |
+| 5,000 items: Albums tab counts (same build, fresh context: old queries vs. store counts) | 0.301 | 0.079 | 3.8x faster |
+| Encrypt 32 MiB while the main thread is busy, with import progress delivery | 0.137 | 0.081 | 1.7x faster |
+| Draw 48 newly loaded thumbnails on the main thread | 0.244 | 0.121 | 2x less main-thread time |
+| Scroll back to the first 48 of 160 thumbnails | 0.281 | 0.170 | 1.7x faster |
+| A page of 48 thumbnails reaches the screen | 0.287 | 0.204 | 1.4x, at the edge of the noise |
+| Open a 12 MP photo (old 4096 px decode vs. screen-size decode) | 0.087 | 0.077 | within noise here; 1.7x in run 41405788548 |
+
+Within the noise in this run: decrypting 60 thumbnails, encrypting 32 MiB, importing eight photos, making one
+thumbnail, opening the gallery, paging deep, refreshing after the viewer, reconciling (no longer on the unlock path)
+and the Trash purge check (a few milliseconds either way). Three rows came out slower; none is a code regression:
+
+- First search page, 0.302 vs. 0.413: one candidate run was slow throughout (0.48-0.62 per iteration); the other
+  matched the baseline (0.30 vs. 0.28-0.32), as did run 41405788548 (0.291 vs. 0.285).
+- Full-size 12 MP decode, 0.087 vs. 0.099: same decode options, priority and entry point on both sides. The app no
+  longer decodes at this size until the photo is zoomed.
+- Decrypting a 48 MiB video to a temporary file, 0.058 vs. 0.074: the code is unchanged on this path, which now
+  serves only Share and Save to Photos. The difference is most likely the fsync of 48 MiB right after the new 48 MiB
+  streaming benchmark; P20 removes that fsync.
+
+The original benchmark for Albums counts used the warm shared context and took 1.26 s at the baseline; that figure
+is not comparable with the fresh-context rows above.
 
 Deterministic effects, computed from the code rather than measured:
 
