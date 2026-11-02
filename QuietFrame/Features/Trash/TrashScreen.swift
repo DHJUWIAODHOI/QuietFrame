@@ -62,6 +62,8 @@ private struct TrashScreenContent: View {
                 if try await dependencies.trashService.purgeExpiredItems() > 0 {
                     dependencies.thumbnailService.clearCache()
                 }
+            } catch is CancellationError {
+                return
             } catch {
                 userMessage = (error as? VaultError)?.localizedDescription
                     ?? VaultError.fileOperationFailed.localizedDescription

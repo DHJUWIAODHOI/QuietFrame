@@ -57,7 +57,7 @@ struct GalleryGridView: View {
 
     var body: some View {
         Group {
-            if viewModel.items.isEmpty, viewModel.isLoading {
+            if viewModel.items.isEmpty, viewModel.isLoading || !viewModel.hasLoaded {
                 loadingGrid
             } else if viewModel.items.isEmpty {
                 emptyView
