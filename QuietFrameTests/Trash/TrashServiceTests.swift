@@ -55,10 +55,58 @@ final class TrashServiceTests: XCTestCase {
         container.mainContext.insert(media)
         try container.mainContext.save()
 
-        let deletedCount = try await service.purgeExpiredItems()
+        let purged = try await service.purgeExpiredItems()
 
-        XCTAssertEqual(deletedCount, 1)
+        XCTAssertEqual(purged.deletedCount, 1)
         XCTAssertEqual(try container.mainContext.fetchCount(FetchDescriptor<VaultMedia>()), 0)
+    }
+
+    func testPurgeReportsOnlyTheExpiredItemsThumbnails() async throws {
+        let container = try makeContainer()
+        let service = TrashService(modelContext: container.mainContext, storage: MockSecureFileStorage())
+        let expiredThumbnail = UUID().uuidString.lowercased()
+        let expired = makeMedia(album: nil, thumbnailIdentifier: expiredThumbnail)
+        expired.trashedAt = Calendar.current.date(byAdding: .day, value: -8, to: Date())
+        let recent = makeMedia(album: nil, thumbnailIdentifier: UUID().uuidString.lowercased())
+        recent.trashedAt = Date()
+        let active = makeMedia(album: nil, thumbnailIdentifier: UUID().uuidString.lowercased())
+        container.mainContext.insert(AppSettings(trashRetentionPeriod: .sevenDays))
+        container.mainContext.insert(expired)
+        container.mainContext.insert(recent)
+        container.mainContext.insert(active)
+        try container.mainContext.save()
+
+        let purged = try await service.purgeExpiredItems()
+        let purgedAgain = try await service.purgeExpiredItems()
+
+        XCTAssertEqual(purged, PermanentDeletion(deletedCount: 1, thumbnailIdentifiers: [expiredThumbnail]))
+        XCTAssertEqual(purgedAgain, PermanentDeletion.nothing)
+        XCTAssertEqual(try container.mainContext.fetchCount(FetchDescriptor<VaultMedia>()), 2)
+    }
+
+    func testEmptyTrashReportsTheDeletedItemsThumbnails() async throws {
+        let container = try makeContainer()
+        let storage = MockSecureFileStorage()
+        let service = TrashService(modelContext: container.mainContext, storage: storage)
+        let trashedThumbnail = UUID().uuidString.lowercased()
+        let withThumbnail = makeMedia(album: nil, thumbnailIdentifier: trashedThumbnail)
+        let withoutThumbnail = makeMedia(album: nil)
+        for item in [withThumbnail, withoutThumbnail] {
+            item.trashedAt = Date()
+            container.mainContext.insert(item)
+        }
+        let active = makeMedia(album: nil, thumbnailIdentifier: UUID().uuidString.lowercased())
+        container.mainContext.insert(active)
+        try container.mainContext.save()
+
+        let emptied = try await service.emptyTrash()
+        let emptiedAgain = try await service.emptyTrash()
+
+        XCTAssertEqual(emptied, PermanentDeletion(deletedCount: 2, thumbnailIdentifiers: [trashedThumbnail]))
+        XCTAssertEqual(emptiedAgain, PermanentDeletion.nothing)
+        XCTAssertEqual(try container.mainContext.fetchCount(FetchDescriptor<VaultMedia>()), 1)
+        let deleteCount = await storage.deleteCount
+        XCTAssertEqual(deleteCount, 3)
     }
 
     func testFailedMoveToTrashPutsMovedFilesBack() async throws {

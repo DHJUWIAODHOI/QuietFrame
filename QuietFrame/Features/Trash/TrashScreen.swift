@@ -59,9 +59,8 @@ private struct TrashScreenContent: View {
         .safeAreaInset(edge: .bottom) { selectionBar }
         .task {
             do {
-                if try await dependencies.trashService.purgeExpiredItems() > 0 {
-                    dependencies.thumbnailService.clearCache()
-                }
+                let purged = try await dependencies.trashService.purgeExpiredItems()
+                dependencies.thumbnailService.removeImages(forThumbnailIdentifiers: purged.thumbnailIdentifiers)
             } catch is CancellationError {
                 return
             } catch {
@@ -271,20 +270,24 @@ private struct TrashScreenContent: View {
         let ids = viewModel.selectedIDs
         perform {
             try await dependencies.trashService.restore(ids: ids)
+            return .none
         }
     }
 
     private func permanentlyDeleteSelection() {
         let ids = viewModel.selectedIDs
         let thumbnailIdentifiers = viewModel.items.filter { ids.contains($0.id) }.compactMap(\.thumbnailIdentifier)
-        perform(evicting: .thumbnails(thumbnailIdentifiers)) {
+        perform(evictingOnFailure: .thumbnails(thumbnailIdentifiers)) {
             try await dependencies.trashService.permanentlyDelete(ids: ids)
+            return .thumbnails(thumbnailIdentifiers)
         }
     }
 
+    /// A failed Empty Trash does not say which items it removed, so it empties the whole cache, as before.
     private func emptyTrash() {
-        perform(evicting: .allThumbnails) {
-            try await dependencies.trashService.emptyTrash()
+        perform(evictingOnFailure: .allThumbnails) {
+            let emptied = try await dependencies.trashService.emptyTrash()
+            return .thumbnails(emptied.thumbnailIdentifiers)
         }
     }
 
@@ -306,19 +309,22 @@ private struct TrashScreenContent: View {
         }
     }
 
-    private func perform(evicting eviction: ThumbnailEviction = .none, _ operation: @escaping () async throws -> Void) {
+    private func perform(
+        evictingOnFailure failureEviction: ThumbnailEviction = .none,
+        _ operation: @escaping () async throws -> ThumbnailEviction
+    ) {
         guard !isWorking else { return }
         isWorking = true
         Task {
             do {
-                try await operation()
+                let eviction = try await operation()
                 viewModel.endSelection()
                 evictThumbnails(eviction)
                 await viewModel.refreshLoadedItems()
                 HapticFeedback.success()
             } catch {
                 // A delete can fail after removing some items, so their thumbnails leave the cache either way.
-                evictThumbnails(eviction)
+                evictThumbnails(failureEviction)
                 userMessage = (error as? VaultError)?.localizedDescription
                     ?? VaultError.fileOperationFailed.localizedDescription
             }

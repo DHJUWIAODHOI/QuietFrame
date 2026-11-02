@@ -97,7 +97,8 @@ final class AppDependencies {
             },
             postUnlockMaintenance: {
                 _ = try await storageReconciliationService.reconcile()
-                _ = try await trashService.purgeExpiredItems()
+                let purged = try await trashService.purgeExpiredItems()
+                await thumbnailService.removeImages(forThumbnailIdentifiers: purged.thumbnailIdentifiers)
             }
         )
     }

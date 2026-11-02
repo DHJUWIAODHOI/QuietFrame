@@ -1,13 +1,21 @@
 import Foundation
 import SwiftData
 
+/// Media removed for good, with the thumbnails that leave the memory cache with it.
+struct PermanentDeletion: Sendable, Equatable {
+    static let nothing = PermanentDeletion(deletedCount: 0, thumbnailIdentifiers: [])
+
+    let deletedCount: Int
+    let thumbnailIdentifiers: [String]
+}
+
 @MainActor
 protocol TrashServicing: AnyObject {
     func moveToTrash(ids: Set<UUID>) async throws
     func restore(ids: Set<UUID>) async throws
     func permanentlyDelete(ids: Set<UUID>) async throws
-    func emptyTrash() async throws
-    func purgeExpiredItems() async throws -> Int
+    func emptyTrash() async throws -> PermanentDeletion
+    func purgeExpiredItems() async throws -> PermanentDeletion
 }
 
 @MainActor
@@ -98,12 +106,12 @@ final class TrashService: TrashServicing {
     }
 
     func permanentlyDelete(ids: Set<UUID>) async throws {
-        try await operationGate.withLock {
+        _ = try await operationGate.withLock {
             try await self.permanentlyDeleteExclusively(ids: ids)
         }
     }
 
-    private func permanentlyDeleteExclusively(ids: Set<UUID>) async throws {
+    private func permanentlyDeleteExclusively(ids: Set<UUID>) async throws -> PermanentDeletion {
         let media = try fetchMedia(ids: ids).filter(\.isTrashed)
         guard media.count == ids.count else { throw VaultError.persistenceFailure }
 
@@ -114,6 +122,10 @@ final class TrashService: TrashServicing {
             }
             return files
         }
+        let deletion = PermanentDeletion(
+            deletedCount: media.count,
+            thumbnailIdentifiers: media.compactMap(\.thumbnailIdentifier)
+        )
         media.forEach { modelContext.delete($0) }
         do {
             try modelContext.save()
@@ -128,20 +140,21 @@ final class TrashService: TrashServicing {
             // Metadata is already gone, so inaccessible encrypted orphans are removed by reconciliation.
             throw VaultError.fileOperationFailed
         }
+        return deletion
     }
 
-    func emptyTrash() async throws {
+    func emptyTrash() async throws -> PermanentDeletion {
         try await operationGate.withLock {
             let descriptor = FetchDescriptor<VaultMedia>(
                 predicate: #Predicate { media in media.trashedAt != nil }
             )
             let ids = Set(try modelContext.fetch(descriptor).map(\.id))
-            guard !ids.isEmpty else { return }
-            try await permanentlyDeleteExclusively(ids: ids)
+            guard !ids.isEmpty else { return PermanentDeletion.nothing }
+            return try await permanentlyDeleteExclusively(ids: ids)
         }
     }
 
-    func purgeExpiredItems() async throws -> Int {
+    func purgeExpiredItems() async throws -> PermanentDeletion {
         try await operationGate.withLock {
             var settingsDescriptor = FetchDescriptor<AppSettings>()
             settingsDescriptor.fetchLimit = 1
@@ -154,9 +167,8 @@ final class TrashService: TrashServicing {
                 guard let trashedAt = media.trashedAt, trashedAt <= cutoff else { return nil }
                 return media.id
             })
-            guard !expiredIDs.isEmpty else { return 0 }
-            try await permanentlyDeleteExclusively(ids: expiredIDs)
-            return expiredIDs.count
+            guard !expiredIDs.isEmpty else { return PermanentDeletion.nothing }
+            return try await permanentlyDeleteExclusively(ids: expiredIDs)
         }
     }
 
