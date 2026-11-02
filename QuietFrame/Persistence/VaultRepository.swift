@@ -25,7 +25,7 @@ protocol VaultRepositoryProtocol: AnyObject {
 
 @MainActor
 final class VaultRepository: VaultRepositoryProtocol {
-    /// The IDs a search matched, in sort order, so later pages of the same search skip the full scan.
+    /// The IDs a search matched, in sort order, so its later pages and refreshes skip the full scan.
     private struct SearchSnapshot {
         let query: GalleryQuery
         let fingerprint: SearchFingerprint
@@ -33,7 +33,8 @@ final class VaultRepository: VaultRepositoryProtocol {
     }
 
     /// Changes whenever a search's results could: every edit to an item or album stamps its `modifiedAt`, items
-    /// joining or leaving the scope change its count, and dates match in the current locale and time zone.
+    /// joining or leaving the scope change its count, and dates match in the current locale, time zone, calendar
+    /// and date format.
     private struct SearchFingerprint: Equatable {
         let scopeCount: Int
         let latestScopeChange: Date?
@@ -42,6 +43,8 @@ final class VaultRepository: VaultRepositoryProtocol {
         let libraryGeneration: Int
         let localeIdentifier: String
         let timeZoneIdentifier: String
+        let calendarIdentifier: Calendar.Identifier
+        let mediumDateSample: String
     }
 
     let modelContext: ModelContext
@@ -179,8 +182,9 @@ final class VaultRepository: VaultRepositoryProtocol {
             return (Array(fetched.prefix(limit)), fetched.count > limit)
         }
 
-        let fingerprint = try searchFingerprint(for: descriptor)
-        if offset > 0, let snapshot = searchSnapshot, snapshot.query == query, snapshot.fingerprint == fingerprint {
+        let dateFormatter = Self.searchDateFormatter()
+        let fingerprint = try searchFingerprint(for: descriptor, dateFormatter: dateFormatter)
+        if let snapshot = searchSnapshot, snapshot.query == query, snapshot.fingerprint == fingerprint {
             guard offset < snapshot.mediaIDs.count else { return ([], false) }
             let end = min(offset + limit, snapshot.mediaIDs.count)
             let pageIDs = Array(snapshot.mediaIDs[offset..<end])
@@ -192,20 +196,8 @@ final class VaultRepository: VaultRepositoryProtocol {
         }
 
         let allMatchingScope = try modelContext.fetch(descriptor)
-        let calendar = Calendar.current
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateStyle = .medium
-        dateFormatter.timeStyle = .none
-        let searched = allMatchingScope.filter { media in
-            media.originalFilename?.localizedCaseInsensitiveContains(search) == true
-                || media.album?.name.localizedCaseInsensitiveContains(search) == true
-                || media.tags.contains(where: { $0.localizedCaseInsensitiveContains(search) })
-                || dateFormatter.string(from: media.importedAt).localizedCaseInsensitiveContains(search)
-                || media.originalCreationDate.map {
-                    dateFormatter.string(from: $0).localizedCaseInsensitiveContains(search)
-                } == true
-                || Int(calendar.component(.year, from: media.importedAt)).description == search
-        }
+        var matcher = GallerySearchMatcher(search: search, dateFormatter: dateFormatter, calendar: Calendar.current)
+        let searched = allMatchingScope.filter { matcher.matches($0) }
         searchSnapshot = SearchSnapshot(query: query, fingerprint: fingerprint, mediaIDs: searched.map(\.id))
         guard offset < searched.count else { return ([], false) }
         let end = min(offset + limit, searched.count)
@@ -334,7 +326,10 @@ final class VaultRepository: VaultRepositoryProtocol {
         return try modelContext.fetch(descriptor).first
     }
 
-    private func searchFingerprint(for scope: FetchDescriptor<VaultMedia>) throws -> SearchFingerprint {
+    private func searchFingerprint(
+        for scope: FetchDescriptor<VaultMedia>,
+        dateFormatter: DateFormatter
+    ) throws -> SearchFingerprint {
         var latestScopeChange = scope
         latestScopeChange.sortBy = [SortDescriptor(\VaultMedia.modifiedAt, order: .reverse)]
         latestScopeChange.fetchLimit = 1
@@ -347,8 +342,22 @@ final class VaultRepository: VaultRepositoryProtocol {
             latestAlbumChange: try modelContext.fetch(latestAlbumChange).first?.modifiedAt,
             libraryGeneration: changes.generation,
             localeIdentifier: Locale.current.identifier,
-            timeZoneIdentifier: TimeZone.current.identifier
+            timeZoneIdentifier: TimeZone.current.identifier,
+            calendarIdentifier: Calendar.current.identifier,
+            mediumDateSample: Self.mediumDateSample(dateFormatter)
         )
+    }
+
+    private static func searchDateFormatter() -> DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }
+
+    /// Formats 3 February 2001: a single-digit day and month and a four-digit year show any change to the pattern.
+    private static func mediumDateSample(_ formatter: DateFormatter) -> String {
+        formatter.string(from: Date(timeIntervalSinceReferenceDate: 2_894_400))
     }
 
     private func baseMediaDescriptor(for query: GalleryQuery) -> FetchDescriptor<VaultMedia> {
@@ -494,5 +503,67 @@ final class VaultRepository: VaultRepositoryProtocol {
             throw VaultError.persistenceFailure
         }
         changes.recordChange()
+    }
+}
+
+/// Matches media against a search exactly as checking every field of every item would, but within one scan it
+/// formats and compares each calendar day once and each album's name once.
+struct GallerySearchMatcher {
+    /// Holds on to the album so its object identifier cannot be reused by another album during the scan.
+    private struct AlbumMatch {
+        let album: VaultAlbum
+        let matches: Bool
+    }
+
+    private let search: String
+    private let searchedYear: Int?
+    private let calendar: Calendar
+    private let dateFormatter: DateFormatter
+    private let dayCalendar: Calendar
+    private var dateMatchesByDay: [Date: Bool] = [:]
+    private var albumMatches: [ObjectIdentifier: AlbumMatch] = [:]
+
+    /// `search` is trimmed. Dates match as `dateFormatter` writes them; the import year is read in `calendar`.
+    init(search: String, dateFormatter: DateFormatter, calendar: Calendar) {
+        self.search = search
+        // Only an integer's own spelling can equal the `description` of a year.
+        if let year = Int(search), year.description == search {
+            searchedYear = year
+        } else {
+            searchedYear = nil
+        }
+        self.calendar = calendar
+        self.dateFormatter = dateFormatter
+        var dayCalendar = dateFormatter.calendar ?? calendar
+        dayCalendar.timeZone = dateFormatter.timeZone ?? calendar.timeZone
+        self.dayCalendar = dayCalendar
+    }
+
+    mutating func matches(_ media: VaultMedia) -> Bool {
+        if media.originalFilename?.localizedCaseInsensitiveContains(search) == true { return true }
+        if let album = media.album, albumNameMatches(album) { return true }
+        if media.tags.contains(where: { $0.localizedCaseInsensitiveContains(search) }) { return true }
+        if dateMatches(media.importedAt) { return true }
+        if let creationDate = media.originalCreationDate, dateMatches(creationDate) { return true }
+        guard let searchedYear else { return false }
+        return calendar.component(.year, from: media.importedAt) == searchedYear
+    }
+
+    /// Whether the date as written contains the search. A date without a time reads the same all day, in the
+    /// formatter's own calendar and time zone, so each day is formatted once.
+    mutating func dateMatches(_ date: Date) -> Bool {
+        let day = dayCalendar.startOfDay(for: date)
+        if let known = dateMatchesByDay[day] { return known }
+        let matches = dateFormatter.string(from: date).localizedCaseInsensitiveContains(search)
+        dateMatchesByDay[day] = matches
+        return matches
+    }
+
+    private mutating func albumNameMatches(_ album: VaultAlbum) -> Bool {
+        let key = ObjectIdentifier(album)
+        if let known = albumMatches[key] { return known.matches }
+        let matches = album.name.localizedCaseInsensitiveContains(search)
+        albumMatches[key] = AlbumMatch(album: album, matches: matches)
+        return matches
     }
 }

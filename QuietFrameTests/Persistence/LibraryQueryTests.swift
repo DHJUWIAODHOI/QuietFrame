@@ -166,7 +166,7 @@ final class LibraryQueryTests: XCTestCase {
         XCTAssertTrue(laterPage.hasMore)
     }
 
-    func testTheFirstSearchPageAlwaysScansAgain() throws {
+    func testTheFirstSearchPageReusesTheScanUntilTheLibraryChanges() throws {
         let container = try makeContainer()
         let media = insertMedia(count: 6, in: container)
         let repository = VaultRepository(modelContext: container.mainContext)
@@ -177,12 +177,30 @@ final class LibraryQueryTests: XCTestCase {
         media[4].originalFilename = "renamed.jpg"
         try container.mainContext.save()
         XCTAssertEqual(
-            try repository.fetchMedia(query: query, offset: 3, limit: 3).items.map(\.id),
-            [media[3].id, media[4].id, media[5].id]
+            try repository.fetchMedia(query: query, offset: 0, limit: 6).items.map(\.id),
+            media.map(\.id)
         )
 
+        repository.changes.recordChange()
         let refreshed = try repository.fetchMedia(query: query, offset: 0, limit: 6)
         XCTAssertEqual(refreshed.items.map(\.id), [media[0].id, media[1].id, media[2].id, media[3].id, media[5].id])
+        XCTAssertFalse(refreshed.hasMore)
+    }
+
+    func testARecentlyAddedSearchScansAgainOnceAnItemAgesOut() throws {
+        let container = try makeContainer()
+        let threeDaysAgo = Date().addingTimeInterval(-3 * 86_400)
+        let media = insertMedia(count: 3, in: container, importedFrom: threeDaysAgo, step: 86_400)
+        let repository = VaultRepository(modelContext: container.mainContext)
+        let query = GalleryQuery(collection: .recentlyAdded, sort: .name, searchText: "IMG_")
+        XCTAssertEqual(try repository.fetchMedia(query: query, offset: 0, limit: 3).items.map(\.id), media.map(\.id))
+
+        // Stands in for the clock passing the 30-day cutoff, which moves without any save.
+        media[0].importedAt = Date().addingTimeInterval(-31 * 86_400)
+        try container.mainContext.save()
+
+        let refreshed = try repository.fetchMedia(query: query, offset: 0, limit: 3)
+        XCTAssertEqual(refreshed.items.map(\.id), [media[1].id, media[2].id])
         XCTAssertFalse(refreshed.hasMore)
     }
 
