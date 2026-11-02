@@ -232,6 +232,7 @@ actor ChunkedEncryptionService: FileEncrypting {
         }
     }
 
+    /// Writes a temporary plaintext copy that is deleted after use, on lock and at launch, so it is not synced to disk.
     func decryptFile(
         at inputURL: URL,
         to outputURL: URL,
@@ -263,7 +264,6 @@ actor ChunkedEncryptionService: FileEncrypting {
             ) { plaintext in
                 try output.write(contentsOf: plaintext)
             }
-            try output.synchronize()
             completed = true
         } catch is CancellationError {
             throw VaultError.importCancelled
