@@ -204,6 +204,11 @@ final class VaultRepository: VaultRepositoryProtocol {
         return (Array(searched[offset..<end]), end < searched.count)
     }
 
+    /// Forgets the last search's text and matches, so they do not stay in memory while the vault is locked.
+    func clearSearchSnapshot() {
+        searchSnapshot = nil
+    }
+
     func createAlbum(name: String) throws -> VaultAlbum {
         let validatedName = try validateAlbumName(name)
         guard try !albumNameExists(validatedName, excluding: nil) else {

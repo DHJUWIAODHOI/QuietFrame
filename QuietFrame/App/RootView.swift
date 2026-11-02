@@ -112,6 +112,7 @@ private struct AuthenticatedRootView: View {
         .onChange(of: coordinator.state) { _, newState in
             if newState != .unlocked {
                 dependencies.thumbnailService.clearCache()
+                dependencies.repository.clearSearchSnapshot()
             }
         }
         .onPreferenceChange(PasscodeIrisPreferenceKey.self) { snapshot in
