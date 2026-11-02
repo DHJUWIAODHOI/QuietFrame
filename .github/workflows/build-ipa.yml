@@ -22,7 +22,7 @@ jobs:
   build:
     name: Archive QuietFrame
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 75
 
     env:
       BENCHMARK_CLASSES: CryptoBenchmarks ThumbnailBenchmarks LibraryBenchmarks ViewerBenchmarks ImportBenchmarks CryptoEngineBenchmarks StorageBenchmarks GalleryBenchmarks ImportPipelineBenchmarks VideoScrubbingBenchmarks ReconcileBenchmarks
@@ -40,6 +40,7 @@ jobs:
       # Simulator apps need an (ad-hoc) code signature for Keychain access;
       # an unsigned test host fails every SecItem call.
       # The benchmarks are skipped here and run on their own in an optimized build below.
+      # One simulator clone: a second clone has failed to launch on these runners and once crashed xcodebuild.
       - name: Run full tests
         timeout-minutes: 30
         run: |
@@ -55,6 +56,7 @@ jobs:
             -sdk iphonesimulator \
             -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=latest' \
             -destination-timeout 120 \
+            -parallel-testing-worker-count 1 \
             -resultBundlePath "$RUNNER_TEMP/QuietFrameTests.xcresult" \
             "${SKIP_BENCHMARKS[@]}" \
             CODE_SIGN_STYLE=Manual \
@@ -64,7 +66,7 @@ jobs:
             test \
             | tee "$RUNNER_TEMP/xctest.log"
 
-      # The runner has no iOS 17 simulator; iOS 18.5 is the oldest available check of SwiftData query shapes.
+      # SwiftData query shapes again on an older runtime the image includes; iOS 17 runs at the end of the job.
       - name: Run SwiftData tests on iOS 18.5
         timeout-minutes: 15
         run: |
@@ -76,6 +78,7 @@ jobs:
             -sdk iphonesimulator \
             -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=18.5' \
             -destination-timeout 120 \
+            -parallel-testing-worker-count 1 \
             -only-testing:QuietFrameTests/GallerySortingTests \
             -only-testing:QuietFrameTests/LibraryQueryTests \
             -only-testing:QuietFrameTests/AlbumServiceTests \
@@ -213,6 +216,66 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      # SwiftData query shapes on the deployment target. The image has no iOS 17 simulator, so one is installed
+      # here, after the IPA is uploaded: an iOS 17 failure never blocks the IPA, and this check still runs when an
+      # earlier step fails. It was a separate job, which often never got a macOS runner.
+      - name: Install an iOS 17 simulator
+        id: ios17
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          xcrun simctl shutdown all || true
+          if ! xcrun simctl list runtimes | grep -q '^iOS 17\.'; then
+            xcodebuild -downloadPlatform iOS -buildVersion 17.5
+          fi
+          RUNTIME=$(xcrun simctl list runtimes -j | jq -r '[.runtimes[] | select(.isAvailable and (.name | startswith("iOS 17.")))] | last | .identifier')
+          test -n "$RUNTIME" && test "$RUNTIME" != null
+          UDID=$(xcrun simctl create "QuietFrame iOS 17" com.apple.CoreSimulator.SimDeviceType.iPhone-15 "$RUNTIME")
+          echo "IOS17_SIMULATOR=$UDID" >> "$GITHUB_ENV"
+
+      # Same ad-hoc signing as the main test step: an unsigned test host has no Keychain access.
+      - name: Run SwiftData tests on iOS 17
+        id: ios17_tests
+        if: ${{ !cancelled() && steps.ios17.outcome == 'success' }}
+        timeout-minutes: 30
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project QuietFrame.xcodeproj \
+            -scheme QuietFrame \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "id=$IOS17_SIMULATOR" \
+            -destination-timeout 180 \
+            -parallel-testing-enabled NO \
+            -resultBundlePath "$RUNNER_TEMP/SwiftDataIOS17.xcresult" \
+            -only-testing:QuietFrameTests/LibraryQueryTests \
+            -only-testing:QuietFrameTests/GallerySortingTests \
+            -only-testing:QuietFrameTests/AlbumServiceTests \
+            -only-testing:QuietFrameTests/TrashServiceTests \
+            -only-testing:QuietFrameTests/StorageReconciliationServiceTests \
+            -only-testing:QuietFrameTests/MediaExportServiceTests \
+            -only-testing:QuietFrameTests/AlbumCountsTests \
+            -only-testing:QuietFrameTests/AlbumsScreenTests \
+            -only-testing:QuietFrameTests/GalleryRefreshTests \
+            -only-testing:QuietFrameTests/GallerySearchMatcherTests \
+            -only-testing:QuietFrameTests/StorageAnalysisServiceTests \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY=- \
+            DEVELOPMENT_TEAM= \
+            PROVISIONING_PROFILE_SPECIFIER= \
+            test
+
+      - name: Upload iOS 17 results on failure
+        if: ${{ cancelled() || steps.ios17_tests.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuietFrame-swiftdata-ios17
+          path: ${{ runner.temp }}/SwiftDataIOS17.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
+
   compare:
     name: Compare benchmarks with a baseline
     if: github.event_name == 'workflow_dispatch' && inputs.compare
@@ -302,41 +365,3 @@ jobs:
             ${{ runner.temp }}/candidate-*.log
           if-no-files-found: ignore
           retention-days: 30
-
-  # SwiftData query shapes are only proven on the deployment target here. The runner image has no iOS 17
-  # simulator, so this job installs one; it runs alongside the main job and does not touch its timings.
-  swiftdata-ios17:
-    name: SwiftData on iOS 17
-    runs-on: macos-15
-    timeout-minutes: 60
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Install an iOS 17 simulator
-        run: |
-          set -euo pipefail
-          if ! xcrun simctl list runtimes | grep -q '^iOS 17\.'; then
-            xcodebuild -downloadPlatform iOS -buildVersion 17.5
-          fi
-          RUNTIME=$(xcrun simctl list runtimes -j | jq -r '[.runtimes[] | select(.isAvailable and (.name | startswith("iOS 17.")))] | last | .identifier')
-          test -n "$RUNTIME" && test "$RUNTIME" != null
-          UDID=$(xcrun simctl create "QuietFrame iOS 17" com.apple.CoreSimulator.SimDeviceType.iPhone-15 "$RUNTIME")
-          echo "IOS17_SIMULATOR=$UDID" >> "$GITHUB_ENV"
-
-      # Same ad-hoc signing as the main test step: an unsigned test host has no Keychain access.
-      - name: Run SwiftData tests on iOS 17
-        timeout-minutes: 30
-        run: |
-          set -o pipefail
-          xcodebuild             -project QuietFrame.xcodeproj             -scheme QuietFrame             -configuration Debug             -sdk iphonesimulator             -destination "id=$IOS17_SIMULATOR"             -destination-timeout 180             -parallel-testing-enabled NO             -resultBundlePath "$RUNNER_TEMP/SwiftDataIOS17.xcresult"             -only-testing:QuietFrameTests/LibraryQueryTests             -only-testing:QuietFrameTests/GallerySortingTests             -only-testing:QuietFrameTests/AlbumServiceTests             -only-testing:QuietFrameTests/TrashServiceTests             -only-testing:QuietFrameTests/StorageReconciliationServiceTests             -only-testing:QuietFrameTests/MediaExportServiceTests             -only-testing:QuietFrameTests/AlbumCountsTests             -only-testing:QuietFrameTests/AlbumsScreenTests             -only-testing:QuietFrameTests/GalleryRefreshTests             -only-testing:QuietFrameTests/GallerySearchMatcherTests             -only-testing:QuietFrameTests/StorageAnalysisServiceTests             CODE_SIGN_STYLE=Manual             CODE_SIGN_IDENTITY=-             DEVELOPMENT_TEAM=             PROVISIONING_PROFILE_SPECIFIER=             test
-
-      - name: Upload iOS 17 results on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: QuietFrame-swiftdata-ios17
-          path: ${{ runner.temp }}/SwiftDataIOS17.xcresult
-          if-no-files-found: ignore
-          retention-days: 7

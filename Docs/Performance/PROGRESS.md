@@ -9,9 +9,9 @@ risks and strategy) is in [AUDIT.md](AUDIT.md).
 - Nothing can be built on the development machine (Windows, no Xcode). Every change was pushed to `perf-rewrite` and
   checked by CI: `gh workflow run build-ipa.yml --ref perf-rewrite -R DHJUWIAODHOI/QuietFrame`. The repository is
   public, so CI minutes are free.
-- CI runs the full unit and UI suite on iOS 26.2, the SwiftData test classes again on iOS 18.5 and, in a parallel job,
-  on an installed iOS 17.5 simulator (the deployment target). It then runs the benchmarks in
-  `QuietFrameTests/Benchmarks/` on their own, serially, with `-O` and whole-module optimisation.
+- CI runs the full unit and UI suite on iOS 26.2 and the SwiftData test classes again on iOS 18.5, then the benchmarks
+  in `QuietFrameTests/Benchmarks/` on their own, serially, with `-O` and whole-module optimisation. After the IPA is
+  uploaded, the same job installs an iOS 17.5 simulator (the deployment target) and runs the SwiftData classes there.
 - `-f compare=true` adds a job that builds the baseline (`6d83bea`, the original app plus the first benchmarks) and HEAD
   on one runner and runs each side's own benchmarks alternately, twice each. Only numbers from the same job are
   compared; unchanged code moves by about 25-30% even there.

@@ -8,7 +8,7 @@ The app targets iOS 17 or later and uses the installed iOS SDK, so it can be bui
 
 The project and shared scheme are checked in at `QuietFrame.xcodeproj`. All source, resource, unit-test, and UI-test targets are present.
 
-The GitHub Actions macOS workflow (Xcode 16.4) runs the full unit and UI test suite on an iPhone 16 Pro simulator, runs the SwiftData tests again on iOS 18.5 and iOS 17.5, runs the performance benchmarks in a separate optimized step, and then archives an unsigned device build and publishes the IPA. It runs on every push to `main` and on manual dispatch.
+The GitHub Actions macOS workflow (Xcode 16.4) runs the full unit and UI test suite on an iPhone 16 Pro simulator, runs the SwiftData tests again on iOS 18.5, runs the performance benchmarks in a separate optimized step, archives an unsigned device build and publishes the IPA, and finally runs the SwiftData tests on an installed iOS 17.5 simulator. It runs on every push to `main` and on manual dispatch.
 
 ## Setup
 
