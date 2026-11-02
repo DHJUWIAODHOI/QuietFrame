@@ -10,7 +10,11 @@ final class CryptoBenchmarks: XCTestCase {
         let iterations = AuthenticationService.Policy.production.derivationIterations
 
         measure(metrics: [XCTClockMetric()], options: Benchmark.options) {
-            XCTAssertNoThrow(try PBKDF2.deriveSHA256Key(password: passcode, salt: salt, iterations: iterations))
+            do {
+                _ = try PBKDF2.deriveSHA256Key(password: passcode, salt: salt, iterations: iterations)
+            } catch {
+                XCTFail("Key derivation failed: \(error)")
+            }
         }
     }
 
