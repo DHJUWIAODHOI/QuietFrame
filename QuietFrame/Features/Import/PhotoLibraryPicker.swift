@@ -63,7 +63,6 @@ struct PhotoLibraryPickerOutput {
     let pickerFailureCount: Int
 }
 
-/// One picker result: its provider and the asset identifier Photos shared for it, if any.
 struct PhotoLibraryPickedItem {
     let provider: NSItemProvider
     let assetIdentifier: String?

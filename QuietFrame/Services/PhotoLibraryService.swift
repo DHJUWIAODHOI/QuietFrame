@@ -21,7 +21,6 @@ enum PhotoLibraryDeletionCheck: Sendable, Equatable {
     }
 }
 
-/// The asset properties the deletion rule reads.
 struct PhotoLibraryAssetProfile {
     let mediaType: PHAssetMediaType
     let mediaSubtypes: PHAssetMediaSubtype
@@ -121,7 +120,7 @@ actor PhotoLibraryService: PhotoLibraryServing {
                 }
             }
         } catch {
-            return checks.map { _ in nil }
+            return checks.map { _ -> String? in nil }
         }
     }
 
@@ -157,7 +156,6 @@ actor PhotoLibraryService: PhotoLibraryServing {
         }
     }
 
-    /// One fetch by identifier, accepted only when it finds exactly one asset.
     static func libraryAssetProfile(localIdentifier: String) -> PhotoLibraryAssetProfile? {
         let assets = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
         guard assets.count == 1 else { return nil }

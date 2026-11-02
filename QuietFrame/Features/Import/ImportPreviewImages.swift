@@ -1,6 +1,5 @@
 import UIKit
 
-/// Where review tiles fall on screen: how wide they are, at what scale, and how many fit on the first screen.
 struct ImportPreviewLayout: Equatable, Sendable {
     let tileWidth: CGFloat
     let scale: CGFloat
@@ -97,7 +96,6 @@ final class ImportPreviewImages {
         cache.removeAllObjects()
     }
 
-    /// Marks the previews that still need decoding at this size as loading and returns what to decode.
     private func beginDecoding(
         _ candidates: [ImportPreviewCandidate],
         tileWidth: CGFloat,

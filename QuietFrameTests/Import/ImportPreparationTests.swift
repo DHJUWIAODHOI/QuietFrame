@@ -399,7 +399,7 @@ private actor IdlePhotoLibrary: PhotoLibraryServing {
     func deleteOriginals(localIdentifiers: [String]) async throws {}
 
     func sourceIdentifiers(for checks: [PhotoLibraryDeletionCheck]) async -> [String?] {
-        checks.map { _ in nil }
+        checks.map { _ -> String? in nil }
     }
 }
 
